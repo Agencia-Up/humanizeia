@@ -3,7 +3,7 @@
 // wa-sync-reconcile — reconciliacao incremental da caixa UAZAPI (cron 10min).
 //
 // NAO importa nada por si: apenas DESPACHA wa-sync-ai-conversations (que faz a
-// importacao idempotente/read-only) para cada instancia de IA dos tenants na
+// importacao idempotente/read-only) para cada instancia elegivel dos tenants na
 // allowlist WA_SYNC_TENANT_IDS (piloto). Vazio/ausente => no-op (nenhum tenant).
 // Cap por rodada. O lock por (tenant,instancia) vive no checkpoint do syncer, que
 // impede execucoes concorrentes. Mensagens importadas vao para wa_synced_messages
@@ -34,24 +34,39 @@ Deno.serve(async (req) => {
   const windowDays = Number(body?.window_days ?? 30);
   const maxChats = Number(body?.max_chats ?? 40); // incremental por rodada
 
-  // Instancias de IA dos tenants da allowlist: nao-vendedor, vinculadas a agente, conectadas.
-  const { data: agents } = await admin.from("wa_ai_agents").select("user_id, instance_id, instance_ids").in("user_id", allowlist);
-  const wanted = new Map<string, string>(); // instance_id -> tenant
-  for (const a of (agents || []) as any[]) {
-    const ids = [a.instance_id, ...(Array.isArray(a.instance_ids) ? a.instance_ids : [])].filter(Boolean);
-    for (const id of ids) if (!wanted.has(id)) wanted.set(id, a.user_id);
-  }
-  if (!wanted.size) return json({ ok: true, dispatched: 0, note: "sem_instancia_de_ia_na_allowlist" });
-
+  // Todas as linhas UAZAPI do tenant: linha de IA entra inteira; linha de
+  // vendedor e filtrada pelo proprio syncer para somente leads atribuidos no CRM.
+  // Nao depender de wa_ai_agents evita esconder a linha quando o agente esta
+  // desligado, fora do horario ou com um vinculo antigo de instancia.
   const { data: insts } = await admin.from("wa_instances")
     .select("id, user_id, seller_member_id, status, provider")
-    .in("id", Array.from(wanted.keys()));
+    .in("user_id", allowlist);
   const eligible = (insts || []).filter((i: any) =>
-    !i.seller_member_id && i.provider !== "meta" && String(i.status || "").toLowerCase() !== "disconnected");
+    i.provider !== "meta" && String(i.status || "").toLowerCase() !== "disconnected");
+
+  // O limite por rodada nao pode escolher sempre as primeiras instancias: isso
+  // deixava as demais sem sincronizar para sempre. Priorizamos quem nunca rodou
+  // e, depois, o checkpoint mais antigo (round-robin persistente no banco).
+  const eligibleIds = eligible.map((i: any) => i.id);
+  const { data: checkpoints } = eligibleIds.length
+    ? await admin.from("wa_sync_checkpoint")
+      .select("instance_id, updated_at")
+      .in("instance_id", eligibleIds)
+    : { data: [] as any[] };
+  const checkpointTime = new Map<string, number>(
+    (checkpoints || []).map((c: any) => [String(c.instance_id), new Date(c.updated_at || 0).getTime()]),
+  );
+  const scheduled = [...eligible].sort((a: any, b: any) => {
+    const aTime = checkpointTime.get(String(a.id));
+    const bTime = checkpointTime.get(String(b.id));
+    if (aTime === undefined && bTime !== undefined) return -1;
+    if (aTime !== undefined && bTime === undefined) return 1;
+    return (aTime ?? 0) - (bTime ?? 0);
+  });
 
   const results: any[] = [];
   let dispatched = 0;
-  for (const inst of eligible.slice(0, maxInstances)) {
+  for (const inst of scheduled.slice(0, maxInstances)) {
     try {
       const r = await fetch(`${SUPA_URL}/functions/v1/wa-sync-ai-conversations`, {
         method: "POST",
@@ -68,5 +83,12 @@ Deno.serve(async (req) => {
       results.push({ instance: inst.id, error: String(e?.message || e).slice(0, 160) });
     }
   }
-  return json({ ok: true, dispatched, tenants: allowlist.length, results });
+  return json({
+    ok: true,
+    dispatched,
+    eligible: eligible.length,
+    remaining_for_next_round: Math.max(eligible.length - dispatched, 0),
+    tenants: allowlist.length,
+    results,
+  });
 });

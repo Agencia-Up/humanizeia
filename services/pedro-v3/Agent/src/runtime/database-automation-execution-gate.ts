@@ -22,10 +22,13 @@ export class DatabaseAutomationExecutionGate implements AutomationExecutionGate 
   constructor(private readonly gateway: V3DatabaseGateway) {}
 
   async decide(input: Parameters<AutomationExecutionGate["decide"]>[0]): Promise<AutomationExecutionDecision> {
-    const result = await this.gateway.rpc<JsonValue>("is_ai_automation_allowed", {
+    const result = await this.gateway.rpc<JsonValue>("is_ai_automation_allowed_v2", {
       p_tenant: input.ref.tenantId,
       p_agent_id: input.ref.agentId,
       p_lead_id: input.leadId,
+      p_v3_conversation_id: input.conversationId,
+      p_instance_id: null,
+      p_phone: null,
       p_action_kind: input.actionKind,
       p_origin: "ai",
     });

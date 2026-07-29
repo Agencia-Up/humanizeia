@@ -11,6 +11,7 @@ export interface AutomationExecutionGate {
   decide(input: {
     readonly ref: TenantAgentRef;
     readonly leadId: string | null;
+    readonly conversationId: string | null;
     readonly actionKind: AutomationActionKind;
   }): Promise<AutomationExecutionDecision>;
 }

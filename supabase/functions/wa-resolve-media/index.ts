@@ -44,6 +44,11 @@ function isRenderableUrl(url: string | null | undefined) {
   return /^https?:\/\//.test(u);
 }
 
+function isDurableWaMediaUrl(url: string | null | undefined) {
+  const u = String(url || "").toLowerCase();
+  return isRenderableUrl(url) && u.includes("/storage/v1/object/public/wa-media/");
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
@@ -74,15 +79,60 @@ Deno.serve(async (req) => {
       .select("id")
       .eq("id", messageId)
       .maybeSingle();
-    if (readableError || !readableRow?.id) return json({ error: "Message not found" }, 404);
+    if (readableError) return json({ error: "Message lookup failed" }, 500);
 
-    const { data: msg, error: msgError } = await service
-      .from("wa_inbox")
-      .select("id, user_id, instance_id, phone, message_type, media_url, remote_message_id")
-      .eq("id", messageId)
-      .maybeSingle();
-    if (msgError || !msg) return json({ error: "Message not found" }, 404);
-    if (isRenderableUrl(msg.media_url)) return json({ media_url: msg.media_url, cached: true });
+    let sourceTable: "wa_inbox" | "wa_synced_messages" = "wa_inbox";
+    let msg: any = null;
+    if (readableRow?.id) {
+      const { data, error } = await service
+        .from("wa_inbox")
+        .select("id, user_id, instance_id, phone, message_type, media_url, remote_message_id")
+        .eq("id", messageId)
+        .maybeSingle();
+      if (error || !data) return json({ error: "Message not found" }, 404);
+      msg = data;
+    } else {
+      // Mensagens importadas sao expostas por RPC (inclusive ao vendedor apenas
+      // quando o lead esta atribuido). Validamos pelo mesmo contrato antes de
+      // usar service-role para baixar a midia.
+      const { data: synced, error: syncedError } = await service
+        .from("wa_synced_messages")
+        .select("id, tenant_id, instance_id, phone_canonical, message_type, media_url, provider_message_id")
+        .eq("id", messageId)
+        .maybeSingle();
+      if (syncedError || !synced) return json({ error: "Message not found" }, 404);
+      const { data: allowedRows, error: allowedError } = await authClient.rpc(
+        "get_ai_conversation_messages_v2",
+        {
+          p_instance_id: synced.instance_id,
+          p_phone: synced.phone_canonical,
+          p_limit: 1000,
+          p_before: null,
+        },
+      );
+      const allowed = !allowedError && (allowedRows || []).some((r: any) =>
+        r.source === "synced" && String(r.id) === messageId
+      );
+      if (!allowed) return json({ error: "Message not found" }, 404);
+      sourceTable = "wa_synced_messages";
+      msg = {
+        id: synced.id,
+        user_id: synced.tenant_id,
+        instance_id: synced.instance_id,
+        phone: synced.phone_canonical,
+        message_type: synced.message_type,
+        media_url: synced.media_url,
+        remote_message_id: synced.provider_message_id,
+      };
+    }
+
+    // URL da UAZAPI expira. Para a fonte sincronizada, so consideramos cache a
+    // URL permanente do nosso Storage.
+    if (sourceTable === "wa_synced_messages"
+      ? isDurableWaMediaUrl(msg.media_url)
+      : isRenderableUrl(msg.media_url)) {
+      return json({ media_url: msg.media_url, cached: true });
+    }
     if (!msg.remote_message_id) {
       return json({ error: "Mensagem sem identificador de midia para recuperar" }, 422);
     }
@@ -133,7 +183,7 @@ Deno.serve(async (req) => {
     if (!base64) {
       const fallbackUrl = media.fileURL || media.fileUrl || media.url || null;
       if (isRenderableUrl(fallbackUrl)) {
-        await service.from("wa_inbox").update({ media_url: fallbackUrl }).eq("id", msg.id);
+        await service.from(sourceTable).update({ media_url: fallbackUrl }).eq("id", msg.id);
         return json({ media_url: fallbackUrl, cached: false });
       }
       return json({ error: "UAZAPI did not return media bytes" }, 422);
@@ -151,7 +201,7 @@ Deno.serve(async (req) => {
     const publicUrl = pub?.publicUrl;
     if (!publicUrl) return json({ error: "Failed to build public URL" }, 500);
 
-    await service.from("wa_inbox").update({ media_url: publicUrl }).eq("id", msg.id);
+    await service.from(sourceTable).update({ media_url: publicUrl }).eq("id", msg.id);
     return json({ media_url: publicUrl, cached: false });
   } catch (err) {
     console.error("wa-resolve-media error:", err);

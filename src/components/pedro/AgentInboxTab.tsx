@@ -36,6 +36,7 @@ interface Agent {
 
 interface Lead {
   id: string;
+  conversation_id?: string | null;
   remote_jid: string;
   lead_name: string | null;
   status: string;
@@ -234,6 +235,10 @@ function isRenderableMedia(url: string | null | undefined): boolean {
   if (u.startsWith('data:') || u.startsWith('blob:')) return true;
   if (u.includes('mmg.whatsapp.net') || u.includes('.enc')) return false;
   return /^https?:\/\//.test(u);
+}
+
+function isDurableSyncedMedia(url: string | null | undefined): boolean {
+  return Boolean(url && url.toLowerCase().includes('/storage/v1/object/public/wa-media/'));
 }
 
 function msgHasRenderableMedia(m: Pick<Message, 'media_url' | 'media_list'>): boolean {
@@ -455,6 +460,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
       if (sellerFilterIds && sellerFilterIds.length > 0) rows = rows.filter(r => r.assigned_to_id && sellerFilterIds.includes(r.assigned_to_id));
       const mapped: Lead[] = rows.map((r: any): Lead => ({
         id: r.crm_lead_id || `conv:${r.conversation_id}`,
+        conversation_id: r.conversation_id || null,
         remote_jid: r.phone || '',
         lead_name: r.contact_name || null,
         status: '',
@@ -736,7 +742,11 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
             direction: r.direction,
             content: r.content ?? '',
             message_type: r.message_type || 'text',
-            media_url: r.media_url || null,
+            // Links retornados pela UAZAPI expiram. Na fonte sincronizada,
+            // forca a resolucao lazy para o Storage permanente da Logos.
+            media_url: r.source === 'synced' && !isDurableSyncedMedia(r.media_url)
+              ? null
+              : (r.media_url || null),
             media_list: null,
             remote_message_id: r.remote_message_id || null,
             created_at: r.created_at,
@@ -945,6 +955,8 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'v3_inbox', filter: `tenant_id=eq.${userId}` }, signal)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'v3_effect_outbox', filter: `tenant_id=eq.${userId}` }, signal)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'v3_conversation_state', filter: `tenant_id=eq.${userId}` }, signal)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_conversation_index', filter: `user_id=eq.${userId}` }, signal)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wa_synced_messages', filter: `tenant_id=eq.${userId}` }, signal)
       .subscribe();
     return () => {
       if (rtDebounceRef.current) clearTimeout(rtDebounceRef.current);
@@ -977,16 +989,29 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
     paused: boolean,
     reason: string,
   ): Promise<boolean> => {
-    const { data, error } = await (supabase as any).rpc('set_conversation_ai_paused', {
-      p_lead_id: lead.id,
-      p_paused: paused,
-      p_reason: paused ? reason : null,
-      p_source: 'agent_inbox',
-    });
+    const usesProjection = !!lead.conversation_id;
+    const { data, error } = await (supabase as any).rpc(
+      usesProjection ? 'set_ai_conversation_paused' : 'set_conversation_ai_paused',
+      usesProjection
+        ? {
+            p_conversation_id: lead.conversation_id,
+            p_paused: paused,
+            p_reason: paused ? reason : null,
+            p_source: 'agent_inbox',
+          }
+        : {
+            p_lead_id: lead.id,
+            p_paused: paused,
+            p_reason: paused ? reason : null,
+            p_source: 'agent_inbox',
+          },
+    );
     if (error) throw error;
 
     const authoritative = Array.isArray(data) ? data[0] : data;
-    if (!authoritative || authoritative.id !== lead.id || authoritative.ai_paused !== paused) {
+    const authoritativeId = usesProjection ? authoritative?.conversation_id : authoritative?.id;
+    const expectedId = usesProjection ? lead.conversation_id : lead.id;
+    if (!authoritative || authoritativeId !== expectedId || authoritative.ai_paused !== paused) {
       throw new Error('A pausa nao foi confirmada pelo servidor. Tente novamente.');
     }
 
@@ -1000,7 +1025,6 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   };
 
   const handleTogglePause = async (lead: Lead) => {
-    if (String(lead.id).startsWith('conv:')) return; // orfa: sem lead no CRM
     setTogglingPause(true);
     const newPaused = !lead.ai_paused;
     try {
@@ -2037,7 +2061,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                           : 'border-amber-500/40 text-amber-400 hover:bg-amber-500/10'
                       }`}
                       onClick={() => handleTogglePause(selectedLead)}
-                      disabled={togglingPause || isOrphanSelected}
+                      disabled={togglingPause}
                     >
                       {togglingPause ? (
                         <Loader2 className="h-4 w-4 animate-spin" />

@@ -65,7 +65,7 @@ async function main(): Promise<void> {
   // eu esqueci de allowlistar -> toda ingestao virava OPERATION_NOT_ALLOWED -> bridge caia no v2.
   // R13-D/1 (audit Codex): a RPC de WM outcome DEVE estar no allowlist (senao a promocao accepted-safe vira
   // OPERATION_NOT_ALLOWED e a lembranca de foto nunca persiste). Este teste FALHA se a entrada for removida.
-  for (const rpc of ["v3_upsert_conversation_routing", "v3_find_settled_conversations", "v3_commit_working_memory_outcome", "is_ai_automation_allowed"]) {
+  for (const rpc of ["v3_upsert_conversation_routing", "v3_find_settled_conversations", "v3_commit_working_memory_outcome", "is_ai_automation_allowed_v2"]) {
     const cap: { url?: string } = {};
     await gw(cap).rpc(rpc, { p_tenant_id: "11111111-1111-1111-1111-111111111111" });
     check(`RPC '${rpc}' no allowlist (chega no transport, nao bloqueia)`, !!cap.url && cap.url.includes(`rpc/${rpc}`), cap.url);
@@ -91,14 +91,16 @@ async function main(): Promise<void> {
   const pauseDecision = await automationGate.decide({
     ref: { tenantId: "tenant-1", agentId: "agent-1" },
     leadId: "lead-1",
+    conversationId: "wa:conversation-1",
     actionKind: "effect_dispatch",
   });
   check("autoridade central preserva decisao de pausa", pauseDecision.allowed === false && pauseDecision.reason === "lead_paused", JSON.stringify(pauseDecision));
   check("autoridade central envia identidade e acao completas", rpcCalls.length === 1
-    && rpcCalls[0]?.name === "is_ai_automation_allowed"
+    && rpcCalls[0]?.name === "is_ai_automation_allowed_v2"
     && rpcCalls[0]?.args.p_tenant === "tenant-1"
     && rpcCalls[0]?.args.p_agent_id === "agent-1"
     && rpcCalls[0]?.args.p_lead_id === "lead-1"
+    && rpcCalls[0]?.args.p_v3_conversation_id === "wa:conversation-1"
     && rpcCalls[0]?.args.p_action_kind === "effect_dispatch"
     && rpcCalls[0]?.args.p_origin === "ai", JSON.stringify(rpcCalls));
 

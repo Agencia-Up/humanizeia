@@ -865,13 +865,14 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: true, accepted: true, routed: "seller_ignored_already_handled", build: PEDRO_V2_BUILD });
   }
 
-  // ── GATE DE PAUSA DA IA (fonte unica: is_ai_automation_allowed) ─────────────
+  // ── GATE DE PAUSA DA IA (CRM + identidade oficial da conversa) ─────────────
   // Antes de despachar o lead pro V3: se a CONVERSA estiver pausada (ai_paused) ou
   // o AGENTE desligado, a IA NAO gera resposta. A mensagem do cliente NUNCA se perde
   // — e registrada no wa_inbox (aparece em Conversas). Efeitos JA enfileirados no
   // v3_effect_outbox sao responsabilidade do servico V3 externo (revalidar a pausa
   // ao reservar e antes de enviar — ver docs/v3-transfer-confirmation-spec.md).
-  // Falha-aberto: lead nao encontrado / decisao indisponivel => segue o fluxo atual.
+  // Falha de decisao e fail-closed: a mensagem ja foi persistida, mas nao pode
+  // seguir ao V3 sem confirmar que a automacao esta autorizada.
   //
   // O V3 e global; a pausa tambem precisa ser global. Seller ACK e operacoes
   // manuais continuam fora deste gate pela origem operacional acima.
@@ -885,13 +886,20 @@ Deno.serve(async (req) => {
         .eq("user_id", _pauseTenant).eq("remote_jid", _pauseJid).maybeSingle();
       _pauseLead = data;
     }
-    const { data: _pauseDecision } = await supabase.rpc("is_ai_automation_allowed", {
+    const { data: _pauseDecision, error: _pauseDecisionError } = await supabase.rpc("is_ai_automation_allowed_v2", {
       p_tenant: _pauseTenant,
       p_agent_id: (agent as any).id,
       p_lead_id: _pauseLead?.id ?? null,
+      p_v3_conversation_id: null,
+      p_instance_id: waInstance.id,
+      p_phone: _pauseJid,
       p_action_kind: "v3_effect",
       p_origin: "ai",
     });
+    if (_pauseDecisionError) {
+      console.error(`[Webhook] ai_decision_unavailable instance=${waInstance.id} error=${_pauseDecisionError.message}`);
+      return jsonResponse({ ok: true, accepted: true, routed: "ai_decision_unavailable", reason: "automation_gate_unavailable", build: PEDRO_V2_BUILD });
+    }
     if (_pauseLead?.ai_paused === true || (_pauseDecision && _pauseDecision.allowed === false)) {
       // FASE 2: a mensagem JÁ foi persistida antes do selectActiveAgent. Durante a
       // pausa apenas NÃO despachamos ao V3 (sem resposta, sem follow-up).

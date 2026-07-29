@@ -25,8 +25,13 @@ const OWNER_EMAILS = ["wandercarvalho31@gmail.com", "douglasaloan@gmail.com"];
 const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-// phone_canonical = digitos completos do JID (mesma fonte/formato do webhook -> merge sem duplicar)
-const phoneCanonical = (jidOrPhone: unknown) => digits(String(jidOrPhone ?? "").split("@")[0]);
+// Espelha public.logos_phone_canonical: identidade nacional estavel, nunca last-8.
+const phoneCanonical = (jidOrPhone: unknown) => {
+  const value = digits(String(jidOrPhone ?? "").split("@")[0]);
+  if (value.length >= 12 && value.startsWith("55")) return value;
+  if (value.length === 10 || value.length === 11) return `55${value}`;
+  return value;
+};
 
 async function uaFetch(baseUrl: string, token: string, path: string, body: any) {
   const r = await fetch(baseUrl.replace(/\/+$/, "") + path, {
@@ -234,7 +239,7 @@ Deno.serve(async (req) => {
               user_id: tenantId, instance_id: instanceId, phone_canonical: pc, phone_raw: digits(chat.phone || jid),
               contact_name: last.contact_name, last_message: last.content, last_message_type: last.message_type,
               last_message_direction: last.direction, last_message_at: last.wa_timestamp,
-              ai_line: true, updated_at: nowIso,
+              ai_line: mode === "ia", updated_at: nowIso,
             }, { onConflict: "user_id,instance_id,phone_canonical", ignoreDuplicates: false }).then(() => {}, () => {});
           }
           // checkpoint apos cada chat

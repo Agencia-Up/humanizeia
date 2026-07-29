@@ -257,10 +257,11 @@ export class PilotActiveRoot {
   async automationDecision(
     actionKind: AutomationActionKind,
     leadId: string | null = this.leadId,
+    conversationId: string | null = null,
   ): Promise<AutomationExecutionDecision> {
     if (!this.automationGate) return { allowed: true, reason: "gate_not_configured" };
     try {
-      return await this.automationGate.decide({ ref: this.ref, leadId, actionKind });
+      return await this.automationGate.decide({ ref: this.ref, leadId, conversationId, actionKind });
     } catch {
       // Fail-closed: se nao e possivel provar que a automacao segue ativa, nao
       // disputa a conversa com o atendimento humano.
@@ -560,7 +561,7 @@ export class PilotActiveRoot {
       25,
       {
         authorize: async () => {
-          const decision = await this.automationDecision("effect_dispatch", effectLeadId);
+          const decision = await this.automationDecision("effect_dispatch", effectLeadId, input.conversationId);
           return { ...decision, reason: sanitizeAutomationReason(decision.reason) };
         },
       },
@@ -596,7 +597,7 @@ export class PilotActiveRoot {
   ): Promise<PilotEffectMaintenanceResult> {
     const snapshot = await input.persistence.load(input.conversationId);
     const effectLeadId = snapshot?.state.leadId ?? this.leadId;
-    const automation = await this.automationDecision("effect_dispatch", effectLeadId);
+    const automation = await this.automationDecision("effect_dispatch", effectLeadId, input.conversationId);
     if (!automation.allowed) {
       return {
         maintained: false,
@@ -629,7 +630,7 @@ export class PilotActiveRoot {
       // T3 deve usar a identidade durável da conversa para não perder a
       // transferência por depender apenas do snapshot de inicialização.
       const followupLeadId = snapshot.state.leadId ?? this.leadId;
-      const automation = await this.automationDecision("followup", followupLeadId);
+      const automation = await this.automationDecision("followup", followupLeadId, input.conversationId);
       if (!automation.allowed) {
         commitFailureReason = `automation_blocked:${sanitizeAutomationReason(automation.reason)}`;
         console.log(JSON.stringify({

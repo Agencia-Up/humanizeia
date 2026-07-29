@@ -659,7 +659,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       }));
       return;
     }
-    const automation = await root.automationDecision("conversation_turn", turnLeadId);
+    const automation = await root.automationDecision("conversation_turn", turnLeadId, settled.conversationId);
     if (!automation.allowed) {
       console.log(JSON.stringify({
         event: "pedro_v3_automation_blocked",

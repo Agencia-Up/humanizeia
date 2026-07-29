@@ -33,7 +33,7 @@ const RPC_ALLOWLIST = new Set([
   "v3_upsert_conversation_routing",
   "v3_find_settled_conversations",
   // Pausa central: revalidada antes da LLM, follow-up e cada efeito.
-  "is_ai_automation_allowed",
+  "is_ai_automation_allowed_v2",
 ]);
 
 const TABLE_ALLOWLIST = new Set([
