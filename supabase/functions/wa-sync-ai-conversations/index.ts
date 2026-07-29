@@ -12,12 +12,23 @@
 //
 // Contrato UAZAPI validado (read-only) na instancia piloto:
 //   POST /chat/find     { limit, offset, sort:'-wa_lastMsgTimestamp' } -> chats[]
-//   POST /message/find  { where:{chatid}, limit, sort:'-messageTimestamp' } -> msgs[]
+//   POST /message/find  { chatid, limit, offset } -> msgs[]
 //   auth: header token (= token da instancia). Campos: wa_chatid, wa_isGroup, phone,
 //   wa_name; messageid, fromMe, messageTimestamp(ms), messageType, text, fileURL.
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { classifyActor, digits, isGroupOrSpecial, logosPhoneKey, mapMessageType, msgTs, type V3Sig } from "../_shared/wa-sync/classify.ts";
+import {
+  buildMessageFindRequest,
+  classifyActor,
+  digits,
+  isGroupOrSpecial,
+  isMessageFromRequestedChat,
+  logosPhoneKey,
+  mapMessageType,
+  msgTs,
+  providerMessageChatId,
+  type V3Sig,
+} from "../_shared/wa-sync/classify.ts";
 
 const SUPA_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -126,6 +137,7 @@ Deno.serve(async (req) => {
 
   const sinceMs = Date.now() - windowDays * 86400e3;
   const counters = { chats_found: 0, messages_found: 0, messages_imported: 0, duplicates: 0, failures: 0 };
+  let rejectedWrongChat = 0;
   let status = "ok"; let errText: string | null = null;
 
   try {
@@ -200,12 +212,25 @@ Deno.serve(async (req) => {
 
         // Mensagens do chat (paginadas, dentro da janela)
         const rows: any[] = [];
-        let mOff = 0; let lastForConv: any = null;
-        while (rows.length < maxMsgs) {
-          const msgs = await uaFetch(baseUrl, uaToken, "/message/find", { where: { chatid: jid }, limit: 50, offset: mOff, sort: "-messageTimestamp" });
+        let mOff = 0; let scannedForChat = 0; let lastForConv: any = null;
+        while (scannedForChat < maxMsgs) {
+          const requestLimit = Math.min(50, maxMsgs - scannedForChat);
+          const msgs = await uaFetch(
+            baseUrl,
+            uaToken,
+            "/message/find",
+            buildMessageFindRequest(jid, requestLimit, mOff),
+          );
           if (!msgs.length) break;
+          scannedForChat += msgs.length;
           let stop = false;
           for (const m of msgs) {
+            if (!isMessageFromRequestedChat(jid, m)) {
+              rejectedWrongChat++;
+              throw new Error(
+                `uazapi_chat_filter_mismatch requested=${jid} actual=${providerMessageChatId(m) || "missing"}`,
+              );
+            }
             const ts = msgTs(m);
             if (incrementalCycle && ts <= previousSyncedMs) { stop = true; break; }
             if (ts < sinceMs) { stop = true; break; } // fora da janela -> para (ordenado desc)
@@ -222,14 +247,19 @@ Deno.serve(async (req) => {
               message_type: type, content: (m.text || m.content || null),
               media_url: (m.fileURL || null), wa_timestamp: new Date(ts).toISOString(),
               sender_raw: (m.sender || m.participant || null),
-              raw: { messageid: mid, messageType: m.messageType, source: m.source ?? null },
+              raw: {
+                messageid: mid,
+                messageType: m.messageType,
+                source: m.source ?? null,
+                chatid: providerMessageChatId(m),
+              },
             };
             rows.push(row);
             if (ts > maxTsSeen) maxTsSeen = ts;
             if (!lastForConv || ts > msgTs({ messageTimestamp: new Date(lastForConv.wa_timestamp).getTime() })) lastForConv = row;
           }
-          if (stop || msgs.length < 50) break;
-          mOff += 50;
+          if (stop || msgs.length < requestLimit) break;
+          mOff += msgs.length;
           await sleep(120); // rate limit
         }
         counters.messages_found += rows.length;
@@ -282,5 +312,15 @@ Deno.serve(async (req) => {
     }
   }
 
-  return json({ ok: status !== "error", dry_run: dryRun, run_id: runId, tenant_id: tenantId, instance_id: instanceId, mode, ...counters, error: errText });
+  return json({
+    ok: status !== "error",
+    dry_run: dryRun,
+    run_id: runId,
+    tenant_id: tenantId,
+    instance_id: instanceId,
+    mode,
+    ...counters,
+    rejected_wrong_chat: rejectedWrongChat,
+    error: errText,
+  });
 });

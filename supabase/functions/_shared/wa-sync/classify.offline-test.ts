@@ -1,6 +1,16 @@
 // Testes offline da classificacao/canonicalizacao da sync UAZAPI. Deno, sem rede.
 //   deno run classify.offline-test.ts
-import { classifyActor, isGroupOrSpecial, logosPhoneKey, mapMessageType, msgTs, type V3Sig } from "./classify.ts";
+import {
+  buildMessageFindRequest,
+  classifyActor,
+  isGroupOrSpecial,
+  isMessageFromRequestedChat,
+  logosPhoneKey,
+  mapMessageType,
+  msgTs,
+  providerMessageChatId,
+  type V3Sig,
+} from "./classify.ts";
 
 let ok = 0, failed = 0;
 const check = (n: string, p: boolean) => { p ? (ok++, console.log("  OK  " + n)) : (failed++, console.error("  RED " + n)); };
@@ -40,6 +50,16 @@ check("ia_v3: fromMe=true casa assinatura V3", classifyActor({ fromMe: true, tex
 check("humano_manual: fromMe=true SEM casar V3", classifyActor({ fromMe: true, text: "vou te ligar", messageTimestamp: 1785326179000 }, key, v3map).actor === "humano_manual");
 check("humano_manual: fromMe=true sem assinaturas (nunca IA por instancia)", classifyActor({ fromMe: true, text: "x", messageTimestamp: 1785326179000 }, "9999999999", v3map).actor === "humano_manual");
 check("direcao: fromMe=false incoming / true outgoing", classifyActor({ fromMe: false }, key, v3map).dir === "incoming" && classifyActor({ fromMe: true }, key, v3map).dir === "outgoing");
+
+const messageFind = buildMessageFindRequest("5512997971988@s.whatsapp.net", 50, 100);
+check("message/find: chatid fica no nivel principal", messageFind.chatid === "5512997971988@s.whatsapp.net");
+check("message/find: nao envia where", !("where" in messageFind));
+check("chatid: le o campo oficial", providerMessageChatId({ chatid: "5512997971988@s.whatsapp.net" }) === "5512997971988@s.whatsapp.net");
+check("chatid: aceita key.remoteJid", providerMessageChatId({ key: { remoteJid: "5512997971988@s.whatsapp.net" } }) === "5512997971988@s.whatsapp.net");
+check("filtro: aceita mensagem do chat solicitado", isMessageFromRequestedChat("5512997971988@s.whatsapp.net", { chatid: "5512997971988@s.whatsapp.net" }));
+check("filtro: rejeita mensagem de outro chat", !isMessageFromRequestedChat("5512997971988@s.whatsapp.net", { chatid: "5512888888888@s.whatsapp.net" }));
+check("filtro: rejeita mensagem sem chatid", !isMessageFromRequestedChat("5512997971988@s.whatsapp.net", { messageid: "x" }));
+check("filtro: nunca confunde dominios diferentes", !isMessageFromRequestedChat("5512997971988@s.whatsapp.net", { chatid: "5512997971988@lid" }));
 
 console.log(`\nRESULT ok=${ok} failed=${failed}`);
 if (failed > 0) Deno.exit(1);

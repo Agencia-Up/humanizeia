@@ -38,6 +38,43 @@ export const msgTs = (m: any): number => {
   return n > 1e12 ? n : n * 1000; // aceita s ou ms
 };
 
+// Contrato oficial da UAZAPI para POST /message/find. Manter este builder
+// testavel evita voltar ao formato antigo { where: { chatid } }, que a API
+// ignora e pode devolver mensagens de outros chats.
+export function buildMessageFindRequest(chatid: string, limit: number, offset: number) {
+  return { chatid, limit, offset };
+}
+
+export function providerMessageChatId(message: any): string {
+  return String(
+    message?.chatid
+      ?? message?.chatId
+      ?? message?.wa_chatid
+      ?? message?.key?.remoteJid
+      ?? message?.remoteJid
+      ?? "",
+  ).trim();
+}
+
+const normalizeProviderChatId = (raw: unknown): { phone: string; domain: string } => {
+  const value = String(raw ?? "").trim().toLowerCase();
+  const [local = "", domain = ""] = value.split("@", 2);
+  return { phone: digits(local), domain };
+};
+
+// Quando ambos possuem dominio, ele tambem deve coincidir. Se apenas um lado
+// vier sem dominio, o numero completo ainda precisa ser identico. Nunca usa
+// last-8 como identidade.
+export function isMessageFromRequestedChat(requestedChatId: string, message: any): boolean {
+  const actualChatId = providerMessageChatId(message);
+  if (!actualChatId) return false;
+  const requested = normalizeProviderChatId(requestedChatId);
+  const actual = normalizeProviderChatId(actualChatId);
+  if (!requested.phone || requested.phone !== actual.phone) return false;
+  if (requested.domain && actual.domain && requested.domain !== actual.domain) return false;
+  return true;
+}
+
 // Assinaturas do que o V3 enviou, por chave de telefone: [{ b: minuteBucket, t: text }]
 export type V3Sig = { b: number; t: string };
 
