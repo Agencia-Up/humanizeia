@@ -26,6 +26,7 @@ import {
   logosPhoneKey,
   mapMessageType,
   msgTs,
+  providerChatIds,
   providerMessageChatId,
   type V3Sig,
 } from "../_shared/wa-sync/classify.ts";
@@ -202,6 +203,7 @@ Deno.serve(async (req) => {
         offset++;
         if (isGroupOrSpecial(chat)) continue;
         const jid = String(chat.wa_chatid || chat.id || "");
+        const trustedChatAliases = providerChatIds(chat);
         const pc = phoneCanonical(chat.phone || jid);
         const pkey = logosPhoneKey(chat.phone || jid);
         if (!pc || pkey.length < 8) continue;
@@ -225,7 +227,7 @@ Deno.serve(async (req) => {
           scannedForChat += msgs.length;
           let stop = false;
           for (const m of msgs) {
-            if (!isMessageFromRequestedChat(jid, m)) {
+            if (!isMessageFromRequestedChat(jid, m, trustedChatAliases)) {
               rejectedWrongChat++;
               throw new Error(
                 `uazapi_chat_filter_mismatch requested=${jid} actual=${providerMessageChatId(m) || "missing"}`,
@@ -252,6 +254,8 @@ Deno.serve(async (req) => {
                 messageType: m.messageType,
                 source: m.source ?? null,
                 chatid: providerMessageChatId(m),
+                requested_chatid: jid,
+                trusted_chatlid: chat.wa_chatlid ?? null,
               },
             };
             rows.push(row);

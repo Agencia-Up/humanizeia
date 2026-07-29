@@ -8,6 +8,7 @@ import {
   logosPhoneKey,
   mapMessageType,
   msgTs,
+  providerChatIds,
   providerMessageChatId,
   type V3Sig,
 } from "./classify.ts";
@@ -60,6 +61,30 @@ check("filtro: aceita mensagem do chat solicitado", isMessageFromRequestedChat("
 check("filtro: rejeita mensagem de outro chat", !isMessageFromRequestedChat("5512997971988@s.whatsapp.net", { chatid: "5512888888888@s.whatsapp.net" }));
 check("filtro: rejeita mensagem sem chatid", !isMessageFromRequestedChat("5512997971988@s.whatsapp.net", { messageid: "x" }));
 check("filtro: nunca confunde dominios diferentes", !isMessageFromRequestedChat("5512997971988@s.whatsapp.net", { chatid: "5512997971988@lid" }));
+check(
+  "filtro: aceita LID apenas quando declarado no mesmo chat",
+  isMessageFromRequestedChat(
+    "5512997971988@s.whatsapp.net",
+    { chatid: "168856723177632@lid" },
+    providerChatIds({ wa_chatid: "5512997971988@s.whatsapp.net", wa_chatlid: "168856723177632@lid" }),
+  ),
+);
+check(
+  "filtro: rejeita LID de outro chat",
+  !isMessageFromRequestedChat(
+    "5512997971988@s.whatsapp.net",
+    { chatid: "999999999999999@lid" },
+    providerChatIds({ wa_chatid: "5512997971988@s.whatsapp.net", wa_chatlid: "168856723177632@lid" }),
+  ),
+);
+check(
+  "aliases: remove vazios e duplicados",
+  JSON.stringify(providerChatIds({
+    wa_chatid: "5512997971988@s.whatsapp.net",
+    chatid: "5512997971988@s.whatsapp.net",
+    wa_chatlid: "168856723177632@lid",
+  })) === JSON.stringify(["5512997971988@s.whatsapp.net", "168856723177632@lid"]),
+);
 
 console.log(`\nRESULT ok=${ok} failed=${failed}`);
 if (failed > 0) Deno.exit(1);

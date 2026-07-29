@@ -56,6 +56,22 @@ export function providerMessageChatId(message: any): string {
   ).trim();
 }
 
+// A UAZAPI pode listar o chat pelo numero (wa_chatid) e devolver as mensagens
+// pelo identificador privado LID (wa_chatlid). O LID so e confiavel quando veio
+// no MESMO objeto de chat retornado por /chat/find; nunca inferimos a relacao por
+// sufixo de telefone, nome ou last-8.
+export function providerChatIds(chat: any): string[] {
+  const candidates = [
+    chat?.wa_chatid,
+    chat?.wa_chatlid,
+    chat?.chatid,
+    chat?.chatId,
+    chat?.jid,
+    chat?.id,
+  ];
+  return [...new Set(candidates.map((value) => String(value ?? "").trim()).filter(Boolean))];
+}
+
 const normalizeProviderChatId = (raw: unknown): { phone: string; domain: string } => {
   const value = String(raw ?? "").trim().toLowerCase();
   const [local = "", domain = ""] = value.split("@", 2);
@@ -65,14 +81,25 @@ const normalizeProviderChatId = (raw: unknown): { phone: string; domain: string 
 // Quando ambos possuem dominio, ele tambem deve coincidir. Se apenas um lado
 // vier sem dominio, o numero completo ainda precisa ser identico. Nunca usa
 // last-8 como identidade.
-export function isMessageFromRequestedChat(requestedChatId: string, message: any): boolean {
+export function isMessageFromRequestedChat(
+  requestedChatId: string,
+  message: any,
+  trustedChatAliases: string[] = [],
+): boolean {
   const actualChatId = providerMessageChatId(message);
   if (!actualChatId) return false;
-  const requested = normalizeProviderChatId(requestedChatId);
+  const trustedIds = [requestedChatId, ...trustedChatAliases]
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+  if (trustedIds.some((value) => value.toLowerCase() === actualChatId.toLowerCase())) return true;
+
   const actual = normalizeProviderChatId(actualChatId);
-  if (!requested.phone || requested.phone !== actual.phone) return false;
-  if (requested.domain && actual.domain && requested.domain !== actual.domain) return false;
-  return true;
+  return trustedIds.some((trustedId) => {
+    const trusted = normalizeProviderChatId(trustedId);
+    if (!trusted.phone || trusted.phone !== actual.phone) return false;
+    if (trusted.domain && actual.domain && trusted.domain !== actual.domain) return false;
+    return true;
+  });
 }
 
 // Assinaturas do que o V3 enviou, por chave de telefone: [{ b: minuteBucket, t: text }]
