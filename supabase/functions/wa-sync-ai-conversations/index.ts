@@ -69,6 +69,15 @@ Deno.serve(async (req) => {
   const triggerSource = String(body?.trigger_source || "manual");
   if (!tenantId || !instanceId) return json({ ok: false, error: "tenant_id_and_instance_id_required" }, 400);
 
+  // ── ALLOWLIST DO PILOTO (fail-closed) ───────────────────────────────────────
+  // O dispatcher ja respeita WA_SYNC_TENANT_IDS, mas o worker tambem precisa: sem
+  // isto, uma chamada direta (service_role/superadmin) sincronizaria qualquer
+  // tenant. Vazia/ausente => NENHUM tenant e sincronizado.
+  const allowlist = (Deno.env.get("WA_SYNC_TENANT_IDS") || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (!allowlist.includes(tenantId)) {
+    return json({ ok: false, error: "tenant_fora_da_allowlist", tenant_id: tenantId, allowlist_size: allowlist.length }, 403);
+  }
+
   // ── Instancia: validar tenant + NAO-vendedor + vinculada a agente de IA ─────
   const { data: inst } = await admin.from("wa_instances")
     .select("id, user_id, instance_name, api_url, api_key_encrypted, provider, seller_member_id, status")
