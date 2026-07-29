@@ -10,6 +10,7 @@
 import {
   hasAmbiguousBusinessHours,
   isAmbiguousNeverDirective,
+  isAmbiguousWarrantyCoverageDirective,
   isRedundantInventoryProviderDirective,
   isRedundantFirstContactDirective,
   isRigidFunnelSequencingDirective,
@@ -122,7 +123,8 @@ export interface TenantFunnelConfigIssue {
     | "redundant_operational_directive"
     | "undefined_qualification_criterion"
     | "first_contact_conflict"
-    | "ambiguous_prohibition_wording";
+    | "ambiguous_prohibition_wording"
+    | "ambiguous_warranty_scope";
   path?: string;
   message: string;
 }
@@ -304,6 +306,9 @@ export function validateTenantFunnelConfig(input: unknown): TenantFunnelConfigIs
   for (const instruction of listValues(b8.never)) {
     if (isAmbiguousNeverDirective(instruction)) {
       issues.push({ severity: "warning", code: "ambiguous_prohibition_wording", path: "bloco8_regras.never", message: `A regra “${instruction}” está como negativa dentro do campo “Nunca” e será reescrita como proibição inequívoca.` });
+    }
+    if (isAmbiguousWarrantyCoverageDirective(instruction)) {
+      issues.push({ severity: "warning", code: "ambiguous_warranty_scope", path: "bloco8_regras.never", message: `A regra “${instruction}” mistura a cobertura da garantia da loja com eventual garantia de fábrica. A geração deixará explícito que a restrição se refere à garantia da loja.` });
     }
   }
 

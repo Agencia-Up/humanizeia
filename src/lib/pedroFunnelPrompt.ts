@@ -2,6 +2,7 @@
 // Supabase/Deno. Vite and TypeScript also support it via allowImportingTsExtensions.
 import { buildTenantPolicyPromptSection, type TenantFunnelPolicy } from "./pedroFunnelPolicyContract.ts";
 import {
+  isAmbiguousWarrantyCoverageDirective,
   isRedundantInventoryProviderDirective,
   isRedundantFirstContactDirective,
   isProhibitionDirective,
@@ -472,6 +473,9 @@ export function validateAiGeneratedFunnelPrompt(
   }
   if (promptLines.some(isSubjectiveFinancialQualificationCriterion)) {
     reasons.push("qualificação baseada em julgamento financeiro subjetivo sem critério objetivo");
+  }
+  if (promptLines.some(isAmbiguousWarrantyCoverageDirective)) {
+    reasons.push("regra de garantia sem separar cobertura da loja e eventual garantia de fábrica");
   }
 
   const cfg = sanitizeTenantFunnelPromptConfig(config);

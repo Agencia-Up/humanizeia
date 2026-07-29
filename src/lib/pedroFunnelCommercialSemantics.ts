@@ -16,7 +16,7 @@ const normalize = (value: string): string => value
 
 const isNegatedAt = (normalized: string, index: number): boolean => {
   const before = normalized.slice(Math.max(0, index - 24), index);
-  return /\b(?:nao|nunca|jamais|sem|nem|evite)\s+$/.test(before);
+  return /\b(?:nao|nunca|jamais|sem|nem|evite)\s+(?:(?:deve|deveria|pode|poderia|precisa|vai)\s+)?$/.test(before);
 };
 
 const hasNonNegatedMatch = (value: string, pattern: RegExp): boolean => {
@@ -32,10 +32,10 @@ const hasNonNegatedMatch = (value: string, pattern: RegExp): boolean => {
 export const isRigidFunnelSequencingDirective = (value: string): boolean => {
   const normalized = normalize(value);
   return [
-    /\b(?:pular|pule|ignorar|ignore)\b.{0,30}\b(?:etapas?|funil)\b/,
-    /\b(?:nao|nunca)\b.{0,12}\b(?:pular|pule|ignorar|ignore)\b.{0,30}\b(?:etapas?|funil)\b/,
-    /\b(?:seguir|siga|cumprir|cumpra|respeitar|respeite)\b.{0,30}\b(?:etapas?|funil)\b.{0,45}\b(?:ordem|sequencia|sem excecao|rigid\w*)\b/,
-    /\b(?:seguir|siga|cumprir|cumpra|respeitar|respeite)\b.{0,24}\b(?:o\s+)?funil(?:\s+de\s+vendas)?(?:\s+do\s+prompt)?\b/,
+    /\b(?:pul\w*|ignor\w*)\b.{0,30}\b(?:etapas?|funil)\b/,
+    /\b(?:nao|nunca)\b.{0,12}\b(?:pul\w*|ignor\w*)\b.{0,30}\b(?:etapas?|funil)\b/,
+    /\b(?:segu\w*|sig\w*|cumpr\w*|respeit\w*)\b.{0,30}\b(?:etapas?|funil)\b.{0,45}\b(?:ordem|sequencia|sem excecao|rigid\w*)\b/,
+    /\b(?:segu\w*|sig\w*|cumpr\w*|respeit\w*)\b.{0,24}\b(?:o\s+)?funil(?:\s+de\s+vendas)?(?:\s+do\s+prompt)?\b/,
     /\b(?:etapas?|funil)\b.{0,35}\b(?:ordem fixa|sequencia obrigatoria|obrigatoriamente)\b/,
   ].some((pattern) => pattern.test(normalized));
 };
@@ -104,6 +104,10 @@ const hasFinancialContext = (trigger: string, instructions: string[]): boolean =
 
 const UNSUPPORTED_STOCK_ATTRIBUTE = String.raw`(?:cor|cinza|pret[oa]|branc[oa]|prata|vermelh[oa]|azul|verde|amarel[oa]|marrom|bege|dourad[oa]|grafite|laranja|vinho|acabamento|teto\s+solar|opciona(?:l|is))`;
 const INVENTORY_ABSENCE = String.raw`(?:nao\s+(?:tem|temos|ha|existe|existem|possui|possuimos)|indisponiv\w*|esgotad\w*)`;
+// “falar” e “falhar” compartilham o prefixo "fal". O lookahead impede que
+// uma orientação segura sobre falha de consulta seja lida como ordem para
+// afirmar ausência de estoque.
+const STOCK_ASSERTION_ACTION = String.raw`(?:diz\w*|dig\w*|fal(?!h)\w*|inform\w*|avis\w*|declar\w*|afirm\w*|respond\w*|consider\w*)`;
 
 /**
  * Regra livre que manda concluir a ausência de uma característica que a busca
@@ -116,9 +120,37 @@ export const isUnsupportedStockAttributeAbsenceDirective = (value: string): bool
   const normalized = normalize(value);
   if (!new RegExp(`\\b${UNSUPPORTED_STOCK_ATTRIBUTE}\\b`).test(normalized)) return false;
   if (!new RegExp(`\\b${INVENTORY_ABSENCE}\\b`).test(normalized)) return false;
-  if (/\b(?:nao|nunca)\s+(?:diga|fale|informe|avise|declare|afirme|conclua)\b/.test(normalized)) return false;
   if (/\b(?:nao foi possivel confirmar|nao confirmad\w*|sem confirmacao|nao comprovad\w*|sem prova)\b/.test(normalized)) return false;
-  return /\b(?:diga|fale|informe|avise|declare|afirme|responda|considere|mande|envie|mostre|apresente)\w*\b/.test(normalized);
+  if (/\bnao\s+(?:temos?\s+como|consegu\w*)\b.{0,35}\b(?:confirm\w*|verific\w*|inform\w*)\b/.test(normalized)) return false;
+  return hasNonNegatedMatch(normalized, new RegExp(`\\b${STOCK_ASSERTION_ACTION}\\b`, "i"));
+};
+
+/**
+ * Uma restrição da garantia da loja pode coexistir com garantia de fábrica,
+ * mas frases como “qualquer outro item não tem garantia” apagam essa distinção
+ * e transformam duas políticas compatíveis em uma contradição factual.
+ */
+export const isAmbiguousWarrantyCoverageDirective = (value: string): boolean => {
+  const normalized = normalize(value);
+  if (!/\bgaranti\w*\b/.test(normalized)) return false;
+  if (/\bgarantia\s+(?:da|de)\s+loja\b/.test(normalized)) return false;
+  const mentionsCoverage = /\b(?:motor|cambio|transmissao)\b/.test(normalized);
+  const restrictsCoverage = /\b(?:nao\s+seja|somente|apenas|so)\b.{0,40}\b(?:motor|cambio|transmissao)\b/.test(normalized)
+    || /\b(?:qualquer|todo)\s+outro\s+(?:item|componente)\b.{0,24}\bnao\s+tem\b.{0,12}\bgaranti\w*\b/.test(normalized);
+  return mentionsCoverage && restrictsCoverage;
+};
+
+const normalizeWarrantyCoverageDirective = (value: string): string | null => {
+  if (!isAmbiguousWarrantyCoverageDirective(value)) return null;
+  const normalized = normalize(value);
+  const covered: string[] = [];
+  if (/\bmotor\b/.test(normalized)) covered.push("motor");
+  if (/\b(?:cambio|transmissao)\b/.test(normalized)) covered.push("câmbio");
+  if (covered.length === 0) return null;
+  const coverage = covered.length === 1
+    ? covered[0]
+    : `${covered.slice(0, -1).join(", ")} e ${covered[covered.length - 1]}`;
+  return `Não afirmar cobertura da garantia da loja além de ${coverage}.`;
 };
 
 /** Diretiva operacional duplicada que amarra o prompt a um provedor interno. */
@@ -199,6 +231,8 @@ export function normalizeNeverInstructions(rawInstructions: unknown): string[] {
     : [];
   return uniqueInstructions(source.map((value) => {
     const cleaned = value.replace(/\s+/g, " ").trim().replace(/[.;]+$/, "");
+    const warrantyCoverage = normalizeWarrantyCoverageDirective(cleaned);
+    if (warrantyCoverage) return warrantyCoverage;
     const explicitNever = cleaned.match(/^nunca\s+(.+)$/i);
     if (explicitNever) return prohibition(explicitNever[1]);
     const noServices = cleaned.match(/^n[aã]o\s+(?:fazemos|realizamos|oferecemos|aceitamos)\s+(.+)$/i);

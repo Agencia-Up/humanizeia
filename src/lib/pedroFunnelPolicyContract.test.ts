@@ -12,6 +12,11 @@ import {
   sanitizeTenantFunnelPromptConfig,
   validateAiGeneratedFunnelPrompt,
 } from './pedroFunnelPrompt';
+import {
+  isAmbiguousWarrantyCoverageDirective,
+  isRigidFunnelSequencingDirective,
+  isUnsupportedStockAttributeAbsenceDirective,
+} from './pedroFunnelCommercialSemantics';
 
 describe('Pedro v3 tenant funnel policies', () => {
   const noEntry = {
@@ -677,9 +682,9 @@ Identifique o horário atual e cumprimente conforme o momento. Em seguida, apres
         always: [
           'Variar tom e aberturas das mensagens',
           'Máximo 2 linhas por mensagem — uma ideia por vez',
-          'Se o cliente pergunta quero o Jeep Renegade cinza mas no estoque tem um preto, mande o preto e informe que não tem o cinza; assim deve ser feito com todos os veículos do estoque',
+          'Se o cliente pergunta quero o Jepp Renegede cinza mas no estoque tem um preto manda o preto e fala que não tem o cinza, assim deve ser feito com todos os veículos do estoque',
           'Sempre consultar o BNDV para confirmar se o carro está no estoque e se é o carro pedido, ou similar.',
-          'Respeitar o funil de vendas do prompt',
+          'Respeita o funil de vendas do prompt',
           'Sempre dar a saudação na primeira mensagem',
           'Nunca inventar dados de ano, km, preço ou câmbio',
         ],
@@ -698,6 +703,7 @@ Identifique o horário atual e cumprimente conforme o momento. Em seguida, apres
       bloco8_regras: { always: string[]; never: string[] };
     };
     const prompt = buildTenantSdrSystemPrompt(config);
+    const editorRequest = buildFunnelPromptEditorRequest(config, prompt);
     const safeRules = safe.bloco8_regras.always.join('\n');
 
     expect(safe.bloco3_abordagem.avoid).toEqual([
@@ -712,16 +718,26 @@ Identifique o horário atual e cumprimente conforme o momento. Em seguida, apres
       'Demonstrou interesse em avançar',
       expect.stringContaining('dados preferenciais ainda ausentes não bloqueiam'),
     ]));
-    expect(safeRules).not.toMatch(/BNDV|não tem o cinza|saudação na primeira mensagem|Nunca inventar|Máximo 2 linhas|Respeitar o funil/i);
+    expect(safeRules).not.toMatch(/BNDV|não tem o cinza|saudação na primeira mensagem|Nunca inventar|Máximo 2 linhas|Respeit\w*\s+o funil/i);
     expect(safeRules).toContain('não foi confirmada no resultado atual');
     expect(safeRules).toContain('Depois da apresentação literal do primeiro contato');
     expect(safe.bloco8_regras.never).toEqual([
       'Não afirmar nem oferecer vendas de veículos na promissória como prática da empresa.',
       'Não afirmar que é possível contratar garantia estendida da loja.',
-      'Não dar garantia que não seja câmbio e motor; qualquer outro item não tem garantia.',
+      'Não afirmar cobertura da garantia da loja além de motor e câmbio.',
       'Não inventar dados de ano, km, preço ou câmbio.',
     ]);
     expect(prompt).toContain('Sua identidade configurada é **Aline**. Seu cargo configurado é **consultor**');
+    expect(prompt).toContain('Não afirmar cobertura da garantia da loja além de motor e câmbio.');
+    expect(prompt).not.toMatch(/manda o preto|fala que não tem o cinza|respeit\w*\s+o funil|qualquer outro item não tem garantia/i);
+    for (const unsafeSourceRule of [
+      'Se o cliente pergunta quero o Jepp Renegede cinza mas no estoque tem um preto manda o preto e fala que não tem o cinza, assim deve ser feito com todos os veículos do estoque',
+      'Respeita o funil de vendas do prompt',
+      'Dar garantia que não seja câmbio e motor; qualquer outro item não tem garantia.',
+    ]) {
+      expect(editorRequest).not.toContain(unsafeSourceRule);
+    }
+    expect(editorRequest).toContain('Não afirmar cobertura da garantia da loja além de motor e câmbio.');
     expect(prompt).toContain('nunca mostre `{nome}` ao lead');
     expect(prompt).not.toContain('Você é **Aline**, consultor');
     expect(validateAiGeneratedFunnelPrompt(prompt, prompt, config)).toEqual({ valid: true, reasons: [] });
@@ -736,7 +752,45 @@ Identifique o horário atual e cumprimente conforme o momento. Em seguida, apres
       'undefined_qualification_criterion',
       'first_contact_conflict',
       'ambiguous_prohibition_wording',
+      'ambiguous_warranty_scope',
     ]));
+  });
+
+  it('classifies conjugation families instead of accepting equivalent Monaco rules by wording', () => {
+    for (const directive of [
+      'Respeita o funil de vendas do prompt',
+      'Respeitem o funil de vendas do prompt',
+      'Siga o funil em ordem',
+      'Seguindo o funil de vendas do prompt',
+      'Nunca pule etapas do funil',
+    ]) {
+      expect(isRigidFunnelSequencingDirective(directive), directive).toBe(true);
+    }
+
+    for (const directive of [
+      'Manda o preto e fala que não tem o cinza',
+      'Mandem o preto e avisem que não temos o cinza',
+      'Apresente o preto e informe que o cinza está indisponível',
+      'Responda que não existe a cor cinza',
+    ]) {
+      expect(isUnsupportedStockAttributeAbsenceDirective(directive), directive).toBe(true);
+    }
+
+    for (const safeDirective of [
+      'Não diga que não temos o cinza; apresente o preto como alternativa real',
+      'Não foi possível confirmar a cor cinza; apresente apenas fatos retornados',
+      'Não temos como confirmar se existe a cor cinza nesta consulta',
+      'Se a consulta falhar, não diga que não temos o cinza',
+    ]) {
+      expect(isUnsupportedStockAttributeAbsenceDirective(safeDirective), safeDirective).toBe(false);
+    }
+
+    expect(isAmbiguousWarrantyCoverageDirective(
+      'Não dar garantia que não seja cambio e motor, qualquer outro item não tem garantia',
+    )).toBe(true);
+    expect(isAmbiguousWarrantyCoverageDirective(
+      'Não afirmar cobertura da garantia da loja além de motor e câmbio.',
+    )).toBe(false);
   });
 
   it('drops an undefined mandatory-data qualification criterion when no preferred data exists', () => {
@@ -767,10 +821,12 @@ Identifique o horário atual e cumprimente conforme o momento. Em seguida, apres
     };
     const canonical = buildTenantSdrSystemPrompt(config);
     const candidate = `${canonical}
-- Informe que não temos a cor cinza e apresente o preto.
+- Manda o preto e fala que não tem o cinza.
 - Sempre consultar o BNDV antes de responder.
 - Sempre dar a saudação na primeira mensagem.
 - Variar tom e aberturas das mensagens.
+- Respeita o funil de vendas do prompt.
+- Não dar garantia que não seja câmbio e motor; qualquer outro item não tem garantia.
 - Considere qualificado quando tiver condições financeiras compatíveis.
 - Considere qualificado quando fornecer todos os dados obrigatórios.`;
     const result = validateAiGeneratedFunnelPrompt(candidate, canonical, config);
@@ -781,6 +837,8 @@ Identifique o horário atual e cumprimente conforme o momento. Em seguida, apres
       'instrução de provedor de estoque concorrente com o contrato operacional v3',
       'regra de saudação duplicada fora do contrato literal do primeiro contato',
       'variação de abertura concorrente com a apresentação literal do primeiro contato',
+      'regra de runtime ou condução rígida concorrente com o Pedro v3',
+      'regra de garantia sem separar cobertura da loja e eventual garantia de fábrica',
       'qualificação baseada em julgamento financeiro subjetivo sem critério objetivo',
       'qualificação condicionada a dados obrigatórios não definidos objetivamente',
     ]));
