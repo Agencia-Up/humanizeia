@@ -15,6 +15,7 @@
 //   wa_name; messageid, fromMe, messageTimestamp(ms), messageType, text, fileURL.
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { classifyActor, digits, isGroupOrSpecial, logosPhoneKey, mapMessageType, msgTs, type V3Sig } from "../_shared/wa-sync/classify.ts";
 
 const SUPA_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -22,36 +23,8 @@ const OWNER_EMAILS = ["wandercarvalho31@gmail.com", "douglasaloan@gmail.com"];
 const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-const digits = (s: unknown) => String(s ?? "").replace(/[^0-9]/g, "");
 // phone_canonical = digitos completos do JID (mesma fonte/formato do webhook -> merge sem duplicar)
 const phoneCanonical = (jidOrPhone: unknown) => digits(String(jidOrPhone ?? "").split("@")[0]);
-// chave canonica do projeto (DDD + ultimos 8; dedup real e por messageid, nao por isto)
-function logosPhoneKey(raw: unknown): string {
-  const d = digits(raw);
-  const nat = d.length > 11 && d.slice(0, 2) === "55" ? d.slice(2) : d;
-  if (nat.length >= 10 && nat.length <= 11) return nat.slice(0, 2) + nat.slice(-8);
-  if (nat.length >= 8) return nat.slice(-8);
-  return nat;
-}
-function isGroupOrSpecial(chat: any): boolean {
-  const jid = String(chat?.wa_chatid || chat?.id || "");
-  return chat?.wa_isGroup === true || jid.endsWith("@g.us") || jid.endsWith("@broadcast")
-    || jid.endsWith("@newsletter") || jid.includes("status@") || jid.startsWith("status");
-}
-function mapMessageType(t: unknown): string {
-  const s = String(t || "").toLowerCase();
-  if (s.includes("image")) return "image";
-  if (s.includes("audio") || s.includes("ptt")) return "audio";
-  if (s.includes("video")) return "video";
-  if (s.includes("document")) return "document";
-  if (s.includes("sticker")) return "sticker";
-  return "text";
-}
-const msgTs = (m: any) => {
-  const n = Number(m?.messageTimestamp ?? m?.timestamp ?? 0);
-  return n > 1e12 ? n : n * 1000; // aceita s ou ms
-};
 
 async function uaFetch(baseUrl: string, token: string, path: string, body: any) {
   const r = await fetch(baseUrl.replace(/\/+$/, "") + path, {
@@ -140,7 +113,7 @@ Deno.serve(async (req) => {
     const internalKeys = new Set<string>((Array.isArray(internalRows) ? internalRows : []).map((k: any) => String(k)));
 
     // Assinaturas do que o V3 ENVIOU (para autoria ia_v3) — 1 query.
-    const v3map = new Map<string, Array<{ b: number; t: string }>>();
+    const v3map = new Map<string, V3Sig[]>();
     try {
       const { data: sigs } = await admin.rpc("get_v3_sent_signatures_bulk", { p_tenant: tenantId, p_since: new Date(sinceMs).toISOString() });
       for (const s of (sigs || []) as any[]) {
@@ -149,19 +122,6 @@ Deno.serve(async (req) => {
         v3map.get(k)!.push({ b: Number(s.minute_bucket), t: String(s.sig || "") });
       }
     } catch { /* sem V3 -> tudo fromMe vira humano_manual */ }
-
-    const classify = (m: any, phoneKey: string): { actor: string; dir: string } => {
-      if (m?.fromMe === false) return { actor: "cliente", dir: "incoming" };
-      // fromMe = true: precisa de EVIDENCIA para ser ia_v3, senao humano_manual.
-      const list = v3map.get(phoneKey);
-      if (list && list.length) {
-        const bucket = Math.floor(msgTs(m) / 60000);
-        const txt = String(m?.text || m?.content || "").toLowerCase().trim();
-        const match = list.some((s) => Math.abs(s.b - bucket) <= 1 && s.t !== "" && s.t === txt);
-        if (match) return { actor: "ia_v3", dir: "outgoing" };
-      }
-      return { actor: "humano_manual", dir: "outgoing" };
-    };
 
     let offset = Number(ck?.last_chat_offset || 0);
     let processedChats = 0; let maxTsSeen = Number(ck?.last_synced_ts ? new Date(ck.last_synced_ts).getTime() : 0);
@@ -193,7 +153,7 @@ Deno.serve(async (req) => {
             if (ts < sinceMs) { stop = true; break; } // fora da janela -> para (ordenado desc)
             const mid = String(m.messageid || m.id || "");
             if (!mid) { counters.failures++; continue; }
-            const { actor, dir } = classify(m, pkey);
+            const { actor, dir } = classifyActor(m, pkey, v3map);
             const type = mapMessageType(m.messageType || m.type);
             const row = {
               tenant_id: tenantId, instance_id: instanceId, chatid: jid,

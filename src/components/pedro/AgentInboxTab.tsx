@@ -72,6 +72,8 @@ interface Message {
   // Quem falou de verdade (vem da RPC): 'cliente' | 'ia' | 'vendedor'.
   // Cobre o Pedro V3, cujas mensagens da IA NÃO têm prefixo "wch-".
   actor?: string | null;
+  actor_source?: string | null;   // cliente | ia_v3 | humano_manual | desconhecido (por evidencia)
+  ingestion_source?: string | null; // webhook | v3 | painel | sincronizacao_uazapi
 }
 
 interface TransferSeller {
@@ -723,6 +725,8 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
             created_at: r.created_at,
             contact_name: null,
             actor: r.actor || null,
+            actor_source: r.actor_source || null,
+            ingestion_source: r.ingestion_source || null,
           });
         } else {
           inboxRows.push({
@@ -738,6 +742,8 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
             created_at: r.created_at,
             contact_name: null,
             actor: r.actor || null,
+            actor_source: r.actor_source || null,
+            ingestion_source: r.ingestion_source || null,
           });
         }
       }
@@ -1507,13 +1513,17 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
     );
   }
 
-  if (agents.length === 0 && !unified && !loadingLeads && leads.length === 0) {
+  // Empty-state honesto: nao exige agente ATIVO nem CRM. So aparece quando de fato
+  // nao ha NENHUMA conversa carregada (nem sincronizada). Nao afirmar "ative um agente".
+  if (!unified && !loadingLeads && leads.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-center">
         <Bot className="h-12 w-12 text-muted-foreground/30 mb-4" />
-        <h3 className="text-lg font-semibold text-foreground mb-1">Nenhum Agente IA Ativo</h3>
+        <h3 className="text-lg font-semibold text-foreground mb-1">Nenhuma conversa por aqui ainda</h3>
         <p className="text-sm text-muted-foreground max-w-md">
-          Ative um agente IA na aba "Agente IA" para comecar a ver as conversas automatizadas aqui.
+          As conversas dos numeros conectados aos agentes de IA aparecem aqui — inclusive as
+          atendidas manualmente e as sem lead no CRM. Se voce acabou de conectar o numero,
+          a sincronizacao da caixa pode levar alguns minutos.
         </p>
       </div>
     );
@@ -2078,11 +2088,14 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                   <div className="space-y-2">
                     {messages.map((msg, idx) => {
                       const isOutgoing = msg.direction === 'outgoing';
-                      // #4 — origem REAL do balao: actor da RPC ('ia' cobre Pedro V3 e
-                      // instancias da IA no wa_inbox); fallback legado = id "wch-" (V2).
-                      // vendedor = envio manual (inbox + saida); lead = qualquer entrada.
-                      const isIa = isOutgoing && (msg.actor === 'ia' || String(msg.id).startsWith('wch-'));
-                      const isSeller = isOutgoing && !isIa;
+                      // #4 — autoria REAL do balao. Preferir actor_source (por EVIDENCIA):
+                      // ia_v3 -> IA; humano_manual -> atendente; desconhecido -> so "Enviado"
+                      // (nunca afirmar IA so porque saiu de instancia de IA). Fallback legado:
+                      // actor='ia' / id "wch-" (V2) quando a mensagem nao traz actor_source.
+                      const asrc = msg.actor_source || null;
+                      const isIa = isOutgoing && (asrc ? asrc === 'ia_v3' : (msg.actor === 'ia' || String(msg.id).startsWith('wch-')));
+                      const isUnknownSender = isOutgoing && asrc === 'desconhecido';
+                      const isSeller = isOutgoing && !isIa && !isUnknownSender;
                       // #1 — divisoria de dia quando muda o dia da mensagem anterior.
                       const prevMsg = idx > 0 ? messages[idx - 1] : null;
                       const showDaySep = !prevMsg || new Date(prevMsg.created_at).toDateString() !== new Date(msg.created_at).toDateString();
