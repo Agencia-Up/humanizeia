@@ -9,6 +9,7 @@ import {
   buildFunnelPromptEditorRequest,
   buildTenantSdrSystemPrompt,
   enforceCanonicalV3Sections,
+  sanitizeTenantFunnelPromptConfig,
   validateAiGeneratedFunnelPrompt,
 } from './pedroFunnelPrompt';
 
@@ -494,5 +495,135 @@ Identifique o horário atual e cumprimente conforme o momento. Em seguida, apres
 
     expect(result.valid).toBe(false);
     expect(result.reasons).toContain('regra de runtime ou condução rígida concorrente com o Pedro v3');
+  });
+
+  it('reconciles the real Monaco branch conflicts before either AI or fallback can publish them', () => {
+    const config = {
+      agent_type: 'sdr',
+      bloco1_identidade: { agent_name: 'Aline', role: 'Marketing', company: 'Mônaco Automóveis', niche: 'automóveis' },
+      bloco3_abordagem: {
+        presentation: '[PERIODO]! Muito prazer, meu nome é Aline e sou do Marketing da Mônaco Automóveis 😊',
+        avoid: ['Pular etapas do funil', 'Repetir perguntas já respondidas'],
+      },
+      bloco5_ramificacoes: {
+        branches: [
+          {
+            trigger: 'Financiamento',
+            questions: ['Coletar CPF, data de nascimento, parcela ideal e valor de entrada. Avançar para aprovação comercial.'],
+          },
+          {
+            trigger: 'Veículo na troca',
+            questions: ['Coletar modelo, ano e km do carro. Dar faixa de avaliação e coletar contato para o avaliador.'],
+          },
+        ],
+      },
+      bloco8_regras: {
+        always: ['Sempre repassar um consultor caso o cliente queira uma avaliação no carro que quer dar na troca.'],
+        never: ['Nunca avaliar quanto vale o carro do cliente.'],
+      },
+      bloco9_empresa: {
+        name: 'Mônaco Automóveis',
+        hours: 'SEGUNDA À SEXTA 08:00 às 18:30. Sábado é feriado 8:30 às 14:30',
+      },
+    };
+
+    const safe = sanitizeTenantFunnelPromptConfig(config) as {
+      bloco3_abordagem: { avoid: string[] };
+      bloco9_empresa: { hours: string };
+    };
+    const prompt = buildTenantSdrSystemPrompt(config);
+    const branches = prompt.slice(prompt.indexOf('## RAMIFICAÇÕES DO FUNIL'), prompt.indexOf('## QUALIFICAÇÃO, DESQUALIFICAÇÃO'));
+
+    expect(safe.bloco3_abordagem.avoid).toEqual(['Repetir perguntas já respondidas']);
+    expect(safe.bloco9_empresa.hours).toBe('SEGUNDA À SEXTA 08:00 às 18:30. Sábados e feriados 8:30 às 14:30');
+    expect(branches).not.toContain('Coletar CPF, data de nascimento');
+    expect(branches).not.toContain('Avançar para aprovação comercial');
+    expect(branches).not.toContain('Dar faixa de avaliação');
+    expect(branches).toContain('CPF ou data de nascimento só podem ser solicitados se uma análise escolhida pelo lead realmente exigir esses dados');
+    expect(branches).toContain('use handoff quando disponível; não afirme aprovação');
+    expect(branches).toContain('Coletar modelo, ano e km do carro');
+    expect(branches).toContain('use handoff quando disponível; não estime nem afirme o valor do veículo');
+    expect(prompt).toContain('Nunca avaliar quanto vale o carro do cliente.');
+    expect(prompt).not.toContain('Pular etapas do funil');
+    expect(validateAiGeneratedFunnelPrompt(prompt, prompt, config)).toEqual({ valid: true, reasons: [] });
+  });
+
+  it('rejects an AI edit that reintroduces impossible commercial actions or unconditional PII collection', () => {
+    const config = {
+      agent_type: 'sdr',
+      bloco1_identidade: { agent_name: 'Aline', company: 'Mônaco Automóveis' },
+      bloco3_abordagem: { presentation: '[PERIODO]! Sou Aline, da Mônaco Automóveis 😊' },
+      bloco9_empresa: { name: 'Mônaco Automóveis' },
+    };
+    const canonical = buildTenantSdrSystemPrompt(config);
+    const candidate = `${canonical}\n- Dar faixa de avaliação do carro para troca.\n- Avançar para aprovação comercial.\n- Coletar CPF e data de nascimento.\n- Não pular etapas do funil.`;
+    const result = validateAiGeneratedFunnelPrompt(candidate, canonical, config);
+
+    expect(result.valid).toBe(false);
+    expect(result.reasons).toEqual(expect.arrayContaining([
+      'avaliação de veículo prometida sem fonte ou mecanismo executável',
+      'aprovação comercial ou financeira prometida sem mecanismo executável',
+      'coleta obrigatória de dado sensível sem necessidade e explicação contextual',
+      'regra de runtime ou condução rígida concorrente com o Pedro v3',
+    ]));
+  });
+
+  it('surfaces commercial reconciliation warnings without blocking prompt generation', () => {
+    const issues = validateTenantFunnelConfig({
+      bloco1_identidade: { agent_name: 'Aline', company: 'Mônaco Automóveis' },
+      bloco3_abordagem: { presentation: '[PERIODO]! Sou Aline.', avoid: ['Pular etapas do funil'] },
+      bloco4_qualificacao: {},
+      bloco5_ramificacoes: {
+        branches: [{
+          trigger: 'Financiamento',
+          questions: ['Coletar CPF e data de nascimento. Avançar para aprovação comercial.'],
+        }],
+      },
+      bloco6_criterios: {},
+      bloco7_transferencia: {},
+      bloco8_regras: {},
+      bloco9_empresa: { name: 'Mônaco Automóveis', hours: 'Sábado é feriado 8:30 às 14:30' },
+    });
+
+    expect(issues.filter((issue) => issue.severity === 'warning').map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      'rigid_funnel_sequence',
+      'unsupported_commercial_action',
+      'sensitive_data_requires_context',
+      'ambiguous_business_hours',
+    ]));
+    expect(issues.some((issue) => issue.severity === 'error')).toBe(false);
+  });
+
+  it('reconciles unsupported actions from Always while preserving explicit prohibitions from Never', () => {
+    const config = {
+      agent_type: 'sdr',
+      bloco1_identidade: { agent_name: 'Aline', company: 'Mônaco Automóveis' },
+      bloco3_abordagem: { presentation: '[PERIODO]! Sou Aline.' },
+      bloco8_regras: {
+        always: [
+          'Dar faixa de avaliação do carro da troca',
+          'Avançar para aprovação comercial',
+          'Coletar CPF e data de nascimento',
+        ],
+        never: [
+          'Nunca avaliar quanto vale o carro do cliente',
+          'Nunca coletar CPF sem necessidade',
+        ],
+      },
+      bloco9_empresa: { name: 'Mônaco Automóveis' },
+    };
+
+    const safe = sanitizeTenantFunnelPromptConfig(config) as {
+      bloco8_regras: { always: string[]; never: string[] };
+    };
+    const prompt = buildTenantSdrSystemPrompt(config);
+
+    expect(safe.bloco8_regras.always.join('\n')).not.toMatch(/Dar faixa de avaliação|Avançar para aprovação|Coletar CPF/);
+    expect(safe.bloco8_regras.always.join('\n')).toContain('use handoff quando disponível');
+    expect(safe.bloco8_regras.never).toEqual([
+      'Nunca avaliar quanto vale o carro do cliente',
+      'Nunca coletar CPF sem necessidade',
+    ]);
+    expect(validateAiGeneratedFunnelPrompt(prompt, prompt, config)).toEqual({ valid: true, reasons: [] });
   });
 });

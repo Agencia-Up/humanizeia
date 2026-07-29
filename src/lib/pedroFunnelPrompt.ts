@@ -1,6 +1,14 @@
 // The .ts extension is required when this shared compiler is bundled by
 // Supabase/Deno. Vite and TypeScript also support it via allowImportingTsExtensions.
 import { buildTenantPolicyPromptSection, type TenantFunnelPolicy } from "./pedroFunnelPolicyContract.ts";
+import {
+  isRigidFunnelSequencingDirective,
+  isUnconditionalSensitiveDataDirective,
+  isUnsupportedFinancingApprovalDirective,
+  isUnsupportedVehicleValuationDirective,
+  normalizeBusinessHours,
+  reconcileBranchInstructions,
+} from "./pedroFunnelCommercialSemantics.ts";
 
 type FunnelRecord = Record<string, unknown>;
 
@@ -162,7 +170,7 @@ const conversationalDisqualificationCriteria = (value: unknown): string[] =>
  */
 const isCompetingRuntimeDirective = (value: string): boolean => {
   const normalized = normalizeInstruction(value);
-  return [
+  return isRigidFunnelSequencingDirective(value) || [
     /\b(?:toda|cada) mensagem\b.{0,35}\b(?:termina|termine|finaliza|finalize)\b.{0,30}\bpergunta\b/,
     /\bfollow[ -]?up\b.{0,45}\b(?:minim|depois|apos|hora|horas|minuto|minutos|dia|dias)\b/,
     /\bnunca (?:deixe|deixar) (?:a )?conversa (?:terminar|encerrar)\b.{0,55}\b(?:capturar|pedir|obter|coletar)\b.{0,20}\bcontato\b/,
@@ -217,6 +225,7 @@ export function sanitizeTenantFunnelPromptConfig(input: unknown): Record<string,
   const cfg = record(input);
   const b1 = record(cfg.bloco1_identidade);
   const b3 = record(cfg.bloco3_abordagem);
+  const b5 = record(cfg.bloco5_ramificacoes);
   const b6 = record(cfg.bloco6_criterios);
   const b8 = record(cfg.bloco8_regras);
   const b9 = record(cfg.bloco9_empresa);
@@ -225,7 +234,21 @@ export function sanitizeTenantFunnelPromptConfig(input: unknown): Record<string,
     bloco3_abordagem: {
       ...b3,
       presentation: normalizeFirstContactPresentation(b3.presentation, b1),
-      avoid: items(b3.avoid).filter((rule) => !isFactWithholdingAvoidRule(rule)),
+      avoid: items(b3.avoid).filter((rule) => !isFactWithholdingAvoidRule(rule) && !isCompetingRuntimeDirective(rule)),
+    },
+    bloco5_ramificacoes: {
+      ...b5,
+      branches: Array.isArray(b5.branches)
+        ? b5.branches.map((rawBranch) => {
+            const branch = record(rawBranch);
+            const trigger = text(branch, "trigger", "");
+            return {
+              ...branch,
+              trigger,
+              questions: reconcileBranchInstructions(trigger, branch.questions),
+            };
+          })
+        : [],
     },
     bloco6_criterios: {
       ...b6,
@@ -234,14 +257,17 @@ export function sanitizeTenantFunnelPromptConfig(input: unknown): Record<string,
     },
     bloco8_regras: {
       ...b8,
-      always: conversationalBusinessRules(b8.always).filter((rule) => !isFactAnswerGatedByQualification(rule)),
+      always: reconcileBranchInstructions(
+        "Regras específicas da empresa",
+        conversationalBusinessRules(b8.always).filter((rule) => !isFactAnswerGatedByQualification(rule)),
+      ),
       never: conversationalBusinessRules(b8.never).filter((rule) => !isFactWithholdingAvoidRule(rule)),
     },
     bloco9_empresa: {
       ...b9,
       name: stripRepeatedFieldLabel(b9.name, "Empresa"),
       address: stripRepeatedFieldLabel(b9.address, "Endereço"),
-      hours: stripRepeatedFieldLabel(b9.hours, "Horário"),
+      hours: normalizeBusinessHours(stripRepeatedFieldLabel(b9.hours, "Horário")),
       website: stripRepeatedFieldLabel(b9.website, "Site/Instagram"),
       price_range: stripRepeatedFieldLabel(b9.price_range, "Faixa de preço"),
       differentiators: stripRepeatedFieldLabel(b9.differentiators, "Diferenciais"),
@@ -391,6 +417,16 @@ export function validateAiGeneratedFunnelPrompt(
   if (prompt.split(/\r?\n/).some(isFactAnswerGatedByQualification)) {
     reasons.push("resposta factual condicionada à qualificação");
   }
+  const promptLines = prompt.split(/\r?\n/);
+  if (promptLines.some(isUnsupportedVehicleValuationDirective)) {
+    reasons.push("avaliação de veículo prometida sem fonte ou mecanismo executável");
+  }
+  if (promptLines.some(isUnsupportedFinancingApprovalDirective)) {
+    reasons.push("aprovação comercial ou financeira prometida sem mecanismo executável");
+  }
+  if (promptLines.some(isUnconditionalSensitiveDataDirective)) {
+    reasons.push("coleta obrigatória de dado sensível sem necessidade e explicação contextual");
+  }
 
   const cfg = sanitizeTenantFunnelPromptConfig(config);
   const b1 = record(cfg.bloco1_identidade);
@@ -438,6 +474,10 @@ COMO ENRIQUECER SEM INVENTAR:
 - Não invente fatos do negócio. Não crie preços, produtos, prazos, políticas, endereço, horários, condições, garantias, ferramentas ou capacidades que não estejam na configuração ou no contrato canônico.
 - Preserve fatos, exemplos, marcadores como [PERIODO], políticas e instruções específicas do cliente. A abertura literal já foi normalizada no contrato canônico: não recoloque aspas externas, metainstruções, “regra de saudação” nem uma segunda apresentação.
 - Resolva contradições editoriais em vez de publicar as duas ordens. Uma proibição explícita em “Nunca” e a honestidade factual vencem uma orientação de ramo incompatível; mantenha apenas a parte executável. Nunca mande o agente pedir esclarecimento ao “responsável pela configuração” durante a conversa com o lead.
+- Reescreva os textos livres em português correto, claro e profissional. Corrija ortografia, concordância e pontuação sem alterar nomes, números, horários ou fatos inequívocos da empresa.
+- Ramificações são possibilidades adaptativas, nunca etapas em ordem fixa. Remova ordens como “não pular etapas”, “seguir o funil em sequência” ou equivalentes; preserve somente o objetivo comercial útil.
+- O Pedro v3 não calcula avaliação de veículo usado e não aprova financiamento. Em troca, preserve a coleta contextual de modelo, ano e quilometragem e encaminhe a um avaliador com handoff quando disponível, sem estimar valor. Em financiamento, entenda entrada, parcela e forma de pagamento e encaminhe para análise humana quando o lead quiser avançar, sem afirmar aprovação.
+- CPF, data de nascimento e outros dados sensíveis nunca formam uma coleta automática. Só os mantenha de modo condicional quando forem indispensáveis à etapa escolhida pelo lead, com explicação do motivo e sem bloquear estoque, fotos, fatos ou pedido de humano.
 - Não preserve literalmente uma despedida que julgue negativamente a capacidade, a prontidão ou o momento de compra do lead. Reescreva-a como encerramento cordial, neutro e com porta aberta.
 - Falta de produto numa consulta, incompatibilidade pontual de estoque, silêncio e demora não desqualificam a pessoa. Inatividade pertence à cadência automatizada; desqualificação conversacional exige evidência explícita no bloco atual de um critério comercial válido.
 - Explique que perguntas são preferências adaptativas: a LLM usa somente o que ainda falta e nunca repete pergunta ou fato já confirmado.
@@ -452,6 +492,7 @@ REGRAS INEGOCIÁVEIS:
 - A engine não conduz a venda, não escolhe assunto, não inventa pergunta e não pode ser instruída a forçar uma tool.
 - Não crie regex, handlers, roteamento determinístico, etapas obrigatórias ou regras por frase.
 - Não crie regras artificiais como "toda mensagem termina com pergunta", "sempre peça nome/CPF", "encerre se o lead demorar" ou "siga esta ordem sem exceção".
+- Não publique ordem para dar faixa de avaliação, estimar o carro da troca, avançar para aprovação comercial ou declarar financiamento aprovado. Substitua por coleta contextual e encaminhamento humano executável.
 - Não invente produto, preço, política, endereço, horário, tool ou capacidade.
 - Não troque o preço retornado por uma tool pelo teto de orçamento do lead e não apresente estimativa como fato. Não prometa “vou verificar e te aviso” quando não existe tarefa de retorno; use a tool no turno ou encaminhe com handoff real quando isso for útil.
 - Nunca aconselhe o lead a não comprar, nem conclua que ele não está apto ou no momento adequado para comprar. Uma busca vazia descreve somente o recorte consultado e não autoriza encerrar o atendimento.

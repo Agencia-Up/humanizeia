@@ -644,6 +644,24 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
             </div>
           )}
 
+          {validation.funnelIssues.some((issue) => issue.severity === 'warning') && (
+            <div className="flex items-start gap-2 p-2 rounded-md border border-amber-500/30 bg-amber-500/5 text-amber-200/90">
+              <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              <div className="text-[11px] leading-relaxed">
+                <span className="font-medium">A geração encontrou orientações que precisam ser reconciliadas:</span>
+                <ul className="mt-1 list-disc pl-4 space-y-0.5">
+                  {validation.funnelIssues
+                    .filter((issue) => issue.severity === 'warning')
+                    .slice(0, 3)
+                    .map((issue, index) => <li key={`${issue.code}-${index}`}>{issue.message}</li>)}
+                </ul>
+                <div className="text-[10px] text-amber-200/65 mt-1">
+                  O compilador corrige essas instruções antes de montar o prompt e não altera fatos inequívocos da empresa.
+                </div>
+              </div>
+            </div>
+          )}
+
         </CardContent>
       </Card>
 
