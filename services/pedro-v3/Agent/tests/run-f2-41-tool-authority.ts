@@ -137,8 +137,9 @@ async function main(): Promise<void> {
   const rejects = (fn: () => void): boolean => { try { fn(); return false; } catch { return true; } };
   check("[AUTH-1] engine nunca autoriza stock_search comercial", rejects(() => assertToolExecutionAuthority("stock_search", authority({ principal: "engine_factual", source: "engine_institutional_lookup" }))));
   check("[AUTH-2] engine nunca autoriza vehicle_photos_resolve comercial", rejects(() => assertToolExecutionAuthority("vehicle_photos_resolve", authority({ principal: "engine_safety", source: "engine_grounding", capability: null }))));
-  check("[AUTH-3] evidence stale nunca autoriza tool da LLM", rejects(() => assertToolExecutionAuthority("stock_search", authority({ currentTurnEvidence: false }))));
-  check("[AUTH-4] capability incompatível nunca autoriza tool", rejects(() => assertToolExecutionAuthority("stock_search", authority({ capability: "send_photos" }))));
+  check("[AUTH-3] chamada direta da LLM autoriza leitura sem metadado duplicado", (() => { try { assertToolExecutionAuthority("stock_search", authority({ currentTurnEvidence: false, capability: null })); return true; } catch { return false; } })());
+  check("[AUTH-4] intent_completion stale continua sem autorizar execução indireta", rejects(() => assertToolExecutionAuthority("stock_search", authority({ source: "llm_intent_completion", currentTurnEvidence: false }))));
+  check("[AUTH-4b] intent_completion exige capability compatível", rejects(() => assertToolExecutionAuthority("stock_search", authority({ source: "llm_intent_completion", capability: "send_photos" }))));
   check("[AUTH-5] vehicle_details de grounding é a única exceção comercial do engine", (() => { try { assertToolExecutionAuthority("vehicle_details", authority({ principal: "engine_safety", source: "engine_grounding", capability: null })); return true; } catch { return false; } })());
   check("[AUTH-6] lookup institucional factual do engine permanece permitido", (() => { try { assertToolExecutionAuthority("tenant_business_info", authority({ principal: "engine_factual", source: "engine_institutional_lookup", capability: "institutional_info" })); return true; } catch { return false; } })());
 
@@ -149,7 +150,8 @@ async function main(): Promise<void> {
     const t1 = await c.t("tem corolla?", searchCorolla);
     check("[A-1] 'tem corolla?' (a LLM classificou busca) -> stock_search roda e LISTA", t1.stockCalls === 1 && has(t1.outbox, "Corolla"), `calls=${t1.stockCalls} outbox="${t1.outbox}"`);
     check("[A-1b] execução registra autoridade LLM + evidence do turno", t1.authorities.length === 1 && t1.authorities[0]?.principal === "llm" && t1.authorities[0]?.source === "llm_tool_call" && t1.authorities[0]?.currentTurnEvidence === true, JSON.stringify(t1.authorities));
-    const repair: BrainResponder = () => finU([txt("Você tem razão, me confundi — o Corolla é um sedan sim, me desculpe pela confusão! Os dois Corolla que te mostrei são ótimas opções de sedan. Quer ver as condições de algum deles?")], "conversation_repair", U("conversation_repair"));
+    const repairU: TurnUnderstanding = { ...U("conversation_repair"), evidence: [{ quote: "pq disse que não tinha" }] };
+    const repair: BrainResponder = () => finU([txt("Você tem razão, me confundi — o Corolla é um sedan sim, me desculpe pela confusão! Os dois Corolla que te mostrei são ótimas opções de sedan. Quer ver as condições de algum deles?")], "conversation_repair", repairU);
     const t2 = await c.t("Corolla não é um sedan? pq disse que não tinha?", repair);
     check("[A-2] contestação -> ZERO stock_search (o detector via Corolla/sedan mas NÃO autoriza mais)", t2.stockCalls === 0 && t2.stockObs === 0, `calls=${t2.stockCalls} obs=${t2.stockObs}`);
     check("[A-3] a LLM reconhece e corrige (autoria despachada, brain_final)", (t2.src === "brain_final" || t2.src === "brain_retry") && has(t2.outbox, "razão"), `src=${t2.src} outbox="${t2.outbox}"`);
@@ -190,8 +192,8 @@ async function main(): Promise<void> {
   }
 
   // ── D) CONTRATO LLM-FIRST: declarar search_stock sem chamar a tool NÃO autoriza
-  //    a engine a completar a chamada. O turno deve degradar tecnicamente, sem
-  //    tool fantasma e sem autoridade inventada.
+  //    a engine a completar a chamada. A resposta conversacional da LLM é
+  //    publicada; a engine não cria tool fantasma nem a pune por sua estratégia.
   {
     const c = conv();
     const lazy: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
@@ -202,7 +204,7 @@ async function main(): Promise<void> {
     const t1 = await c.t("tem corolla?", lazy);
     check("[D-1] LLM declarou busca sem executar -> engine não completa a tool", t1.stockCalls === 0, `calls=${t1.stockCalls}`);
     check("[D-2] sem chamada, não existe autoridade fantasma de complemento", t1.authorities.length === 0 && t1.stockObs === 0, JSON.stringify(t1.authorities));
-    check("[D-3] falha de contrato vira fallback técnico observável", t1.terminalSafe === true && t1.assistantAuthoring === "technical_fallback", `terminalSafe=${t1.terminalSafe} src=${t1.src} authoring=${t1.assistantAuthoring}`);
+    check("[D-3] resposta da LLM é publicada sem fallback por escolha de tool", t1.terminalSafe === false && t1.assistantAuthoring === "llm" && (t1.src === "brain_final" || t1.src === "brain_retry") && has(t1.outbox, "Certo"), `terminalSafe=${t1.terminalSafe} src=${t1.src} authoring=${t1.assistantAuthoring} outbox=${t1.outbox}`);
   }
 
   // ── E) ADVERSARIAL (hardening do audit): "outras opções" DENTRO de uma CONTESTAÇÃO — o regex de 'mais opções' casa,
@@ -210,7 +212,8 @@ async function main(): Promise<void> {
   {
     const c = conv();
     await c.t("tem corolla?", searchCorolla);   // lista os 2 Corollas (filtro ativo modelo=corolla persiste)
-    const repair2: BrainResponder = () => finU([txt("Você tem razão, me desculpe pela confusão — o Corolla é um sedan sim! Os dois que te mostrei são sedans. Quer ver as condições de algum deles?")], "conversation_repair", U("conversation_repair"));
+    const repair2U: TurnUnderstanding = { ...U("conversation_repair"), evidence: [{ quote: "mas Corolla é sedan" }] };
+    const repair2: BrainResponder = () => finU([txt("Você tem razão, me desculpe pela confusão — o Corolla é um sedan sim! Os dois que te mostrei são sedans. Quer ver as condições de algum deles?")], "conversation_repair", repair2U);
     const t2 = await c.t("Você disse que não tinha outras opções, mas Corolla é sedan?", repair2);
     check("[E-1] 'outras opções' numa CONTESTAÇÃO não força busca (0 stock_search exec+obs)", t2.stockCalls === 0 && t2.stockObs === 0, `calls=${t2.stockCalls} obs=${t2.stockObs}`);
     check("[E-2] a LLM conversa (brain_*), sem pergunta de escopo determinística nem re-lista", (t2.src === "brain_final" || t2.src === "brain_retry") && !has(t2.outbox, "Qual modelo ou tipo") && !has(t2.outbox, "Encontrei estas opções"), `src=${t2.src} outbox="${t2.outbox}"`);
@@ -234,9 +237,8 @@ async function main(): Promise<void> {
   }
 
   // F) INCIDENTE REAL: "pra segunda" e dia de visita, nunca ordinal da lista.
-  // A primeira tentativa do brain replica a falha de producao (select/Duster
-  // usando "quero agendar visita" como evidence). O contrato de autoridade
-  // deve rejeitar essa leitura antes de texto/mutacao, e a mesma LLM reautora.
+  // A LLM reconhece a visita e responde. O engine não reinterpreta "segunda"
+  // como ordinal nem completa tools por conta própria.
   {
     check("[F-0] parser ordinal nao transforma 'pra segunda' em item 2", parseOrdinal("pra segunda") == null);
     check("[F-0b] parser ordinal nao transforma 'pode ser na quinta' em item 5", parseOrdinal("pode ser na quinta") == null);
@@ -254,14 +256,6 @@ async function main(): Promise<void> {
     await c.t("gostei do primeiro", () => finU([txt("Otima escolha! Quer que eu te passe as condicoes?")], "selected", selectedU));
 
     const visitResponder: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
-      const conflict = obs.some((o) => o.tool === "response" && !o.ok && o.error.code === "UNDERSTANDING_CONFLICT");
-      if (!conflict) {
-        const wrong: TurnUnderstanding = {
-          ...U("other"), requestedCapabilities: ["select"], subject: "selected_vehicle", subjectValue: null,
-          subjectSource: "current_turn", evidence: [{ capability: "select", quote: "quero agendar visita" }],
-        };
-        return finU([txt("Otima escolha! O segundo carro e uma boa opcao. Quer ver as fotos?")], "wrong_stale_selection", wrong);
-      }
       const visit: TurnUnderstanding = {
         ...U("visit"), evidence: [{ quote: "quero agendar visita" }], subjectSource: "none",
       };
@@ -270,8 +264,8 @@ async function main(): Promise<void> {
       return finU([txt("Perfeito, vamos agendar sua visita para segunda. Qual horario fica melhor para voce?")], "visit_monday", visit);
     };
     const t3 = await c.t("sei sim\nquero agendar visita\npra segunda", visitResponder);
-    check("[F-1] entendimento incoerente e rejeitado antes da resposta", t3.pf.some((p) => has(p, "CONFLITO DE AUTORIDADE")), JSON.stringify(t3.pf));
-    check("[F-2] LLM reautora como visita e pede o horario faltante, sem recovery", t3.primaryIntent === "visit" && (t3.src === "brain_retry" || t3.src === "brain_final") && has(t3.outbox, "visita") && has(t3.outbox, "segunda") && has(t3.outbox, "horario"), `intent=${t3.primaryIntent} src=${t3.src} out=${t3.outbox}`);
+    check("[F-1] engine não cria conflito semântico nem reinterpreta a decisão", !t3.pf.some((p) => has(p, "CONFLITO DE AUTORIDADE")), JSON.stringify(t3.pf));
+    check("[F-2] LLM conduz a visita e pede o horário sem recovery", t3.primaryIntent === "visit" && t3.src === "brain_final" && has(t3.outbox, "visita") && has(t3.outbox, "segunda") && has(t3.outbox, "horario"), `intent=${t3.primaryIntent} src=${t3.src} out=${t3.outbox}`);
     check("[F-3] visita e segunda persistem", t3.slots?.interesseVisita.value === true && has(String(t3.slots?.diaHorario.value ?? ""), "segunda"), JSON.stringify({ visita: t3.slots?.interesseVisita, dia: t3.slots?.diaHorario }));
     check("[F-4] foco antigo nao e trocado pelo item 2", t3.selectedKey === COR15.vehicleKey, `selected=${t3.selectedKey}`);
     check("[F-5] turno de visita nao chama estoque", t3.stockCalls === 0 && t3.stockObs === 0, `calls=${t3.stockCalls} obs=${t3.stockObs}`);

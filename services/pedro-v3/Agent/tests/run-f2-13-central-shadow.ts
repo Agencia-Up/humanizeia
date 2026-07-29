@@ -249,15 +249,18 @@ async function main(): Promise<void> {
     check("[3b] mais opções lista somente veículo novo", more.status === "committed" && more.composedText.includes("Renegade") && !more.composedText.includes("Kicks") && !more.composedText.includes("CRV"), more.status === "committed" ? more.composedText : more.status);
   }
 
-  // [3c] A pergunta realmente enviada cria objetivo; a resposta curta é ligada ao slot antes do cérebro.
+  // [3c] A pergunta realmente enviada vira memória factual; a resposta curta é ligada ao slot antes do cérebro.
   {
     const p = freshPersistence(); const clock = new FakeClock(NOW); const prep = new FixedPreparer();
     const askBrain = new ScriptedAgentBrain();
     askBrain.setTurnScript([finalStep({ guidance: "Para continuar, qual é o seu nome?" })]);
-    const asked = await runTurn({ persistence: p, clock, brain: askBrain, llm: llmWith(plainText), businessInfo: new FakeBusinessInfo(NO_STORE_INFO), preparer: prep, conv: "c3c", turnId: "c3c-t1", leadText: "tem SUV?", eventSeq: 1, sdrPolicy: SDR_POLICY });
+    // This scenario tests conversational memory, not stock-tool enforcement.
+    // Keep the lead turn neutral so a legacy stock requirement cannot replace
+    // the authored question with an unrelated recovery response.
+    const asked = await runTurn({ persistence: p, clock, brain: askBrain, llm: llmWith(plainText), businessInfo: new FakeBusinessInfo(NO_STORE_INFO), preparer: prep, conv: "c3c", turnId: "c3c-t1", leadText: "Olá", eventSeq: 1, sdrPolicy: SDR_POLICY });
     await settleAccepted(p, clock, "c3c");
-    const pending = (await p.load("c3c"))?.state.currentObjective;
-    check("[3c] pergunta enviada ativou objetivo nome no accepted", asked.status === "committed" && pending?.slot === "nome" && pending.status === "pending", JSON.stringify(pending));
+    const pending = wmOf((await p.load("c3c"))?.state ?? null).pendingAgentQuestion;
+    check("[3c] pergunta enviada registrou pendência factual de nome", asked.status === "committed" && pending?.slot === "nome", `${JSON.stringify(pending)} | ${asked.status === "committed" ? asked.composedText : asked.status}`);
 
     const answerBrain = new ScriptedAgentBrain();
     answerBrain.setResponder((frame) => finalStep({

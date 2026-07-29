@@ -238,6 +238,7 @@ CONTEXTO
   - stock.filtersApplied e stock.scope descrevem o RECORTE realmente pesquisado. scope="restricted" significa que so aquele recorte foi verificado; fora dele o sistema nao tem informacao. scope="global" significa catalogo inteiro.
   - stock.vehicleKeys sao os matches EXATOS da ultima busca. stock.familyCandidateKeys sao candidatos REAIS e aterrados do mesmo modelo-base, porem NAO equivalentes a versao pedida. vehicle_details e vehicle_photos_resolve tambem aterram chave: uma chave aterrada pode vir de qualquer uma dessas origens, nao so da ultima busca.
   - stock.unverifiableDimensions lista o que a fonte nao informa para todos os veiculos consultados (nem confirmavel, nem descartavel).
+  - searchMemory.activeFilters e o recorte de estoque que ficou ativo nos turnos anteriores; searchMemory.shownVehicleKeys sao os veiculos ja apresentados. Isso e memoria factual, nao uma ordem de busca. Se decidir chamar stock_search, declare explicitamente na chamada os filtros que escolheu para o bloco atual.
   - capabilities diz o que este turno consegue EXECUTAR. sendMedia ja considera provedor E tool permitida ao seu perfil: se for false, a foto nao sai por mais que voce a mencione.
   - appointmentBooking, deferredFactCheckTask e individualDeferredCallbackTask sao sempre false: nao ha reserva de horario executavel, nao ha tarefa que re-consulte um fato depois e nao existe tarefa individual de "eu verifico e te retorno" criada por esta conversa.
   - ⚠️Isso NAO significa que o cliente nunca mais sera contatado: existe uma cadencia comercial automatizada da plataforma (follow-up T1/T2/T3), INDEPENDENTE desta conversa, indicada em automatedLeadFollowupEnabled (true = existe; false = nao existe; null = nao informado neste turno). Ela nao e canal para cumprir uma promessa individual sua.
@@ -258,6 +259,7 @@ FATOS ESPECIFICOS DA EMPRESA
 
 UNDERSTANDING SEMANTICO
 - primaryIntent descreve o ATO conversacional principal deste bloco. requestedCapabilities descreve, de forma INDEPENDENTE, quais fatos ou efeitos esse ato precisa agora. Uma selecao, negociacao, troca, financiamento ou correcao pode precisar de stock_search/vehicle_details sem deixar de ser aquele ato.
+- Use primaryIntent="visit" quando o ato atual for combinar ou perguntar sobre comparecimento presencial para conhecer, ver, avaliar ou testar o veiculo/loja, inclusive quando o lead expressar apenas data, periodo ou horario ligado ao assunto comercial ativo. Deliberar que vai pensar, conversar ou verificar algo por conta propria nao e visita. A engine nao reclassifica esse ato depois: esta decisao semantica e sua.
 - Cada capability exige evidence.quote literal do bloco atual. Nao declare tool por memoria ou apenas porque um filtro antigo existe.
 - Classifique TODO valor monetario literal em monetaryMentions com value numerico, quote literal e UM role: search_budget, offer, down_payment, installment, income, trade_in_value, financing_amount, payment_instrument, vehicle_price_reference ou other.
 - search_budget e exclusivamente um teto/faixa que limita QUAIS veiculos procurar. Oferta/proposta, entrada, parcela, renda, valor de troca, montante financiado, forma de pagamento e preco citado nao filtram o estoque. Sem valor no bloco, use monetaryMentions:[].
@@ -268,16 +270,19 @@ TOOLS E SEGURANCA
 - Em stock_search, categoria nunca e modelo: SUV/sedan/hatch usam tipo correspondente; pickup/picape/caminhonete/utilitario usam tipo="pickup". Use modelo somente para nome de modelo real (por exemplo, HB20, Compass ou Tracker).
 - Nao use estoque para carro de troca, pagamento, contestacao ou item ja apresentado. Nao invente disponibilidade, preco, km, cor, foto, aprovacao ou efeito.
 - Resultado de tool volta para voce. Use-o no final e nao repita a mesma consulta. Nao escolha vendedor nem exponha vehicleKey, IDs, PII ou segredos.
+- Pedido de fotos segue uma cadeia factual de tres estados, sem atalhos: (1) se o alvo ainda nao possui vehicleKey aterrada no contexto/observacoes, use stock_search com a identidade atual para aterrar o veiculo e NAO finalize; (2) com a vehicleKey aterrada, mas sem observacao ok de vehicle_photos_resolve para essa mesma chave neste turno, sua proxima saida e a query vehicle_photos_resolve e NAO um FINAL; (3) somente depois dessa observacao ok, finalize uma unica vez com {"kind":"send_media","vehicleKey":"<chave exata da observacao>"}. Nunca forneca photoIds: a tool e a unica autoridade sobre IDs e URLs.
 - Quando um detalhe tecnico pedido nao aparece nos fatos retornados, o fato verificado deste turno e apenas "nao confirmado nos dados disponiveis agora". Isso encerra a verificacao automatica deste turno: nao escreva que vai checar, confirmar, avisar ou retornar depois. Se decidir que uma pessoa deve continuar, inclua handoff no MESMO final; sem handoff, responda com transparencia e siga o prompt do portal.
 - Um resultado de tool com ok:false e FALHA TECNICA, nao "nao temos". NUNCA afirme que a loja nao tem o carro, que o estoque esta vazio ou que o modelo nao existe a partir de uma tool que falhou. Seja transparente sobre a falha; voce pode tentar AGORA outra chamada valida ou incluir um handoff REAL se estiver disponivel. Sem mecanismo executado neste turno, nao prometa confirmacao ou retorno. So um resultado ok:true com items vazio significa que a busca RODOU e nao encontrou aquele filtro — ai sim seja honesto sobre o recorte consultado e conduza conforme o prompt.
 
+- Quando o lead informar data, periodo ou horario para ver um veiculo, reconheca apenas a preferencia que ele realmente declarou. Como appointmentBooking=false e deferredFactCheckTask=false, nao diga que vai confirmar, verificar, avisar ou retornar depois. Uma resposta factual possivel e "Entendi, voce prefere amanha de manha. Qual horario seria melhor?". Se decidir encaminhar a confirmacao a uma pessoa, inclua handoff executavel no MESMO final.
+
 SAIDA E EFEITOS
 - Responda SEMPRE com UM único objeto JSON válido (sem texto fora do JSON, sem cercas markdown como tres crases).
-- Query: {"kind":"query","understanding":{...},"call":{"tool":"<nome>","input":{...}}}
+- Query: {"kind":"query","understanding":{...},"call":{"tool":"<nome>","input":{...}},"reasonCode":null,"confidence":null,"guidance":null,"draft":null,"effects":[]}
 - Nunca omita understanding em uma query. Exemplo valido (troque os valores pelo bloco atual):
-  {"kind":"query","understanding":{"primaryIntent":"search_stock","requestedCapabilities":["stock_search"],"subject":"vehicle_type","subjectValue":"SUV","subjectSource":"current_turn","evidence":[{"capability":"stock_search","quote":"quero SUV"}],"monetaryMentions":[],"isTopicChange":false,"answeredLeadQuestions":[],"policyDecision":null},"call":{"tool":"stock_search","input":{"tipo":"suv"}}}
+  {"kind":"query","understanding":{"primaryIntent":"search_stock","requestedCapabilities":["stock_search"],"subject":"vehicle_type","subjectValue":"SUV","subjectSource":"current_turn","evidence":[{"capability":"stock_search","quote":"quero SUV"}],"monetaryMentions":[],"isTopicChange":false,"answeredLeadQuestions":[],"policyDecision":null},"call":{"tool":"stock_search","input":{"tipo":"suv"}},"reasonCode":null,"confidence":null,"guidance":null,"draft":null,"effects":[]}
 - O quote do exemplo deve ser um trecho literal do bloco atual. Uma query sem understanding e evidence e invalida e deve ser reescrita por voce.
-- Final: {"kind":"final","understanding":{...},"reasonCode":"...","confidence":0.0,"guidance":"...","draft":{"parts":[...]},"effects":[...],"stateMutations":[],"memoryMutations":[],"knowledgeGaps":[]}
+- Final: {"kind":"final","understanding":{...},"call":null,"reasonCode":"...","confidence":0.0,"guidance":"...","draft":{"parts":[...]},"effects":[...]}
 - Query, tool, mídia, handoff, mutação ou qualquer efeito diferente de send_message exige understanding com primaryIntent, requestedCapabilities, subject, subjectSource e evidence literal do bloco atual. Uma resposta textual pura pode conter somente text/message_break e send_message.
 - draft.parts aceita apenas text, message_break, vehicle_ref, money_ref e vehicle_offer_list. Atributos e listas precisam de fatos aterrados; mídia e handoff ficam em effects.
 - Se voce decidir apresentar alternativas retornadas pela ultima stock_search, use UMA part vehicle_offer_list contendo somente essas chaves. Se decidir falar de um unico veiculo, use vehicle_ref/money_ref da mesma chave quando precisar citar atributos. A consulta disponibiliza fatos, mas nao obriga voce a listar ou mencionar um carro naquele mesmo texto; essa decisao pertence a voce conforme a conversa e o prompt do portal.
@@ -308,7 +313,7 @@ Este endpoint nao aplica json_schema automaticamente. Responda SOMENTE com um ob
 - primaryIntent deve ser exatamente um dos enums declarados; nao use aliases como request_info ou get_vehicle_info.
 - subject e subjectSource tambem devem usar exatamente os enums declarados; nao use advertised_vehicle, vehicle_model, vehicle ou source_context.
 - evidence.quote deve ser um trecho literal do bloco atual. Nunca omita capability/evidence quando declarar uma tool.
-- Query usa call:{"tool":"...","input":{...}}. Draft usa parts com {"type":"text","content":"..."} ou {"type":"message_break"}. Effects usam {"kind":"send_message|send_media|handoff"}.
+- Query usa call:{"tool":"...","input":{...}}. Draft usa parts com {"type":"text","content":"..."} ou {"type":"message_break"}. Effects usam {"kind":"send_message"}, {"kind":"send_media","vehicleKey":"<chave da observacao de fotos>"} ou {"kind":"handoff","reason":"..."}; send_media nunca leva photoIds.
 - Depois de uma tool de estoque/detalhes, atributos do carro no texto precisam estar acompanhados por parts tipadas: vehicle_ref para modelo/ano/km/cor/cambio e money_ref para preco. Nao escreva fatos aterrados apenas em text livre.
 - Nao troque type por text, nao troque kind por type e nao acrescente campos/aliases. Se nao precisar de tool, devolva final valido com understanding completo.
 `;
@@ -372,7 +377,10 @@ function agentStepJsonSchema(allowedTools: readonly string[]): Record<string, un
   const draft = { anyOf: [{ type: "null" }, draftObjectSchema()] };
   // effects = anyOf por KIND.
   const effSend = strictObj(["kind"], { kind: { type: "string", enum: ["send_message"] } });
-  const effMedia = strictObj(["kind", "vehicleKey", "photoIds"], { kind: { type: "string", enum: ["send_media"] }, vehicleKey: S_STR, photoIds: { type: "array", items: S_STR } });
+  // A LLM escolhe o veiculo; IDs/URLs pertencem ao resultado factual da tool.
+  // Exigir photoIds aqui contradizia o protocolo e incentivava o modelo a
+  // repetir ou inventar identificadores opacos que o adapter descartaria.
+  const effMedia = strictObj(["kind", "vehicleKey"], { kind: { type: "string", enum: ["send_media"] }, vehicleKey: S_STR });
   // ⭐DEGRAU 2: handoff_after_closure entra no enum — sem isto a LLM não consegue sequer EMITIR a decisão.
   const effHandoff = strictObj(["kind", "reason"], { kind: { type: "string", enum: ["handoff"] }, reason: { type: "string", enum: ["explicit_human_request", "qualified_handoff", "handoff_after_closure"] } });
   const effects = { type: "array", items: { anyOf: [effSend, effMedia, effHandoff] } };
@@ -703,7 +711,6 @@ export class OpenAiAgentBrain implements AgentBrainPort {
         resolvedTools: [...new Set(observations
           .filter((observation) => observation.ok)
           .map((observation) => observation.tool))],
-        nextStep: "Use returned facts to finalize the current act; do not repeat the same tool/input.",
       },
       // F7-3: NOMES de modelo distintos do estoque (contexto de ancoragem read-only). A LLM os usa para reconhecer o
       // modelo pedido e corrigir a digitação por semântica (ex.: "danster" -> "Duster"); não é lista de oferta nem
@@ -1232,7 +1239,11 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       ? { policyId: rawPolicy.policyId.slice(0, 120), action: rawPolicy.action as TenantPolicyDecision["action"], evidence: rawPolicy.evidence.slice(0, 240) }
       : null;
     return {
-      primaryIntent: pi as PrimaryIntent, requestedCapabilities: caps, subject, subjectValue: str(raw.subjectValue),
+      primaryIntent: pi as PrimaryIntent, requestedCapabilities: caps, subject,
+      // A value without a subject is malformed auxiliary metadata. Discard it
+      // at the adapter boundary; it must never become a hidden ordinal/model
+      // selection later in the turn.
+      subjectValue: subject === "none" ? null : str(raw.subjectValue),
       subjectSource, evidence, isTopicChange: raw.isTopicChange === true,
       monetaryMentions,
       answeredLeadQuestions: Array.isArray(raw.answeredLeadQuestions) ? raw.answeredLeadQuestions.filter((q): q is string => typeof q === "string") : [],
@@ -1402,7 +1413,15 @@ export class OpenAiAgentBrain implements AgentBrainPort {
         const photoIds = grounded ? [...grounded.data.photoIds] : proposedPhotoIds;
         if (vehicleKey && photoIds.length > 0) {
           mediaSeen = true;
-          out.push({ kind: "send_media", planId: "media", order: order++, vehicleKey, photoIds, onSuccess: [{ op: "mark_photos_sent", effectId: "x", vehicleKey, photoIds }] } as ProposedEffectPlan);
+          out.push({
+            kind: "send_media",
+            planId: "media",
+            order: order++,
+            vehicleKey,
+            photoIds,
+            ...(grounded?.data.media ? { media: grounded.data.media.map(({ id, url }) => ({ id, url })) } : {}),
+            onSuccess: [{ op: "mark_photos_sent", effectId: "x", vehicleKey, photoIds }],
+          } as ProposedEffectPlan);
         }
       } else if (e.kind === "handoff" && !out.some((x) => x.kind === "handoff")) {
         // HF-1: o cérebro propõe só o ATO + o MOTIVO tipado. leadId/briefing/vendedor são autoridade do

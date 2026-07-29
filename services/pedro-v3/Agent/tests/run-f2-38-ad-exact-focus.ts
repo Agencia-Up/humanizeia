@@ -175,31 +175,15 @@ const brainChoosesAlternative: BrainResponder = (frame, obs) => {
   return finU([txt("Encontrei:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart], "reply", u);
 };
 
-// Reproduz o P0 visto com o gpt-4.1-mini no anuncio do Fastback: a tool retorna
-// o carro certo, mas o primeiro draft usa texto livre em vez da estrutura
-// segura. O engine deve devolver as keys aterradas ao MESMO cerebro e a LLM
-// deve reescrever; a abertura generica nunca pode esconder esse feedback.
+// Texto livre factual sobre um veículo já aterrado é autoria válida da LLM.
+// Referências estruturadas seguem disponíveis para campos isolados, mas a
+// engine não impõe um formato de redação comercial.
 const malformedOpeningThenFocusedVehicle: BrainResponder = (_f, obs) => {
   const currentU: TurnUnderstanding = {
     ...searchCompassU,
     evidence: [{ capability: "stock_search", quote: "desse carro" }],
   };
   const stock = [...obs].reverse().find((o) => o.tool === "stock_search" && o.ok) as Extract<import("../src/domain/agent-brain.ts").AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
-  // O contrato estável é o deny tipado da autoria, não a redação do feedback.
-  // A mensagem mudou quando a engine deixou de impor lista/formato, mas o draft
-  // com preço/modelo livres continua factual e corretamente rejeitado.
-  const groundingFeedback = [...obs].reverse().find((o) => o.tool === "response" && !o.ok
-    && (o.error.code === "RESPONSE_REJECTED" || o.error.code === "FINAL_RESPONSE_REJECTED"));
-  if (groundingFeedback && stock) {
-    const vehicle = stock.data.items[0]!;
-    return finU([
-      txt("Bom dia! Sou o Carvalho da Icom Motors.\n\nVi que voce se interessou no "),
-      { type: "vehicle_ref", vehicleKey: vehicle.vehicleKey, field: "marca" },
-      { type: "vehicle_ref", vehicleKey: vehicle.vehicleKey, field: "modelo" },
-      { type: "vehicle_ref", vehicleKey: vehicle.vehicleKey, field: "ano" },
-      txt(". Quer ver as fotos dele?"),
-    ], "ad_exact_offer", currentU);
-  }
   if (stock) return finU([txt("Tenho um Jeep Compass 2019 por R$ 96.990 para voce. Quer fotos?")], "malformed_free_text_offer", currentU);
   return qU({ tool: "stock_search", input: { modelo: "Compass", marca: "Jeep", anos: [2019] } }, currentU);
 };
@@ -225,9 +209,9 @@ const proactivePhotoThenList: BrainResponder = (_f, obs) => {
       txt(". Quer ver as fotos dele?"),
     ], "ad_offer", u);
   }
-  const photoDenied = obs.some((o) => o.tool === "response" && !o.ok && o.error.message.includes("nao pediu nem aceitou fotos"));
-  if (photoDenied) return qU({ tool: "stock_search", input: { modelo: "Compass", marca: "Jeep", anos: [2019] } }, u);
-  return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: "rm:cmp19" } } }, u);
+  // Oferecer fotos não é enviá-las: a LLM aterra o veículo e conclui em texto,
+  // sem chamar a ferramenta de mídia antes de o lead pedir.
+  return qU({ tool: "stock_search", input: { modelo: "Compass", marca: "Jeep", anos: [2019] } }, u);
 };
 
 type Cap = { outbox: string; committed: boolean; hasMedia: boolean; mediaKey: string | null; mediaPhotoIds: string[]; photoResolveCalls: number; stockInput: Record<string, unknown> | null; src: string | null };
@@ -310,12 +294,12 @@ async function main(): Promise<void> {
     check("[AD-V3] mudança explícita do lead vence normalmente o anúncio visual", has(String(t2.stockInput?.modelo ?? ""), "onix") && !has(String(t2.stockInput?.modelo ?? ""), "compass"), `input=${JSON.stringify(t2.stockInput)}`);
   }
 
-  // P0: o feedback factual de listagem deve vencer a orientacao generica de
-  // abertura. A LLM continua sendo a autora e converge em brain_retry.
+  // A engine valida fatos estruturados e efeitos, mas não obriga a LLM a usar
+  // vehicle_ref para redigir uma frase factual sobre item já aterrado.
   {
     const c = conv();
     const t1 = await c.t("Boa tarde, queria saber mais desse carro", { ad: adCompass19, responder: malformedOpeningThenFocusedVehicle });
-    check("[AD-1f] draft livre invalido na abertura -> LLM reautora com a key real", t1.src === "brain_retry" && has(t1.outbox, "Compass") && has(t1.outbox, "2019"), `src=${t1.src} outbox="${t1.outbox}"`);
+    check("[AD-1f] texto livre factual sobre item aterrado é aceito sem retry lexical", t1.src === "brain_final" && has(t1.outbox, "Compass") && has(t1.outbox, "2019"), `src=${t1.src} outbox="${t1.outbox}"`);
     check("[AD-1g] abertura corrigida nao cai em fallback, nao lista e nao oferece outro ano", !has(t1.outbox, "2017") && !has(t1.outbox, "nao consegui") && !/\n\s*1[.)]\s/.test(t1.outbox), `outbox="${t1.outbox}"`);
   }
 

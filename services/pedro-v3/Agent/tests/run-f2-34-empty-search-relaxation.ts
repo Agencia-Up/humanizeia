@@ -249,7 +249,7 @@ async function main(): Promise<void> {
     await c.t("quero SUV até 90 mil");
     const t2 = await c.t("na verdade tem Onix?");
     check("[IC-1] T2 busca ONIX (intent nova vence) e NÃO fica preso em tipo=suv", t2.stockInputs.some((i) => has(String(i.modelo ?? ""), "onix")) && t2.stockInputs.every((i) => i.tipo !== "suv"), `inputs=${JSON.stringify(t2.stockInputs)}`);
-    check("[IC-2] T2: LLM conduz nomeando Onix, sem relistar SUVs", has(t2.outbox, "Onix") && (t2.reasonCode === "relaxed_offer" || t2.reasonCode === "stock_empty_conduct") && !has(t2.outbox, "Creta") && !has(t2.outbox, "Renegade"), `rc=${t2.reasonCode} outbox="${t2.outbox}"`);
+    check("[IC-2] T2: LLM conduz nomeando Onix, sem relistar SUVs", has(t2.outbox, "Onix") && (t2.src === "brain_final" || t2.src === "brain_retry") && !t2.degraded && !has(t2.outbox, "Creta") && !has(t2.outbox, "Renegade"), `rc=${t2.reasonCode} src=${t2.src} outbox="${t2.outbox}"`);
   }
 
   // ── P0-4/audit: "me manda fotos do segundo" SEM lista válida -> NUNCA envia mídia inventada; pergunta qual (não finge sucesso). ──

@@ -7,6 +7,8 @@
 import { runCentralConversationTurn, type CentralTurnResult } from "../src/engine/central-engine.ts";
 import { extractAdVehicleConstraints, refersToAd, isBareGreeting, sanitizeAdContext, resolveAdVehicleFromMarket } from "../src/engine/ad-context.ts";
 import { asksLeadContactPhone } from "../src/engine/turn-domain.ts";
+import { detectCommercialConstraints, constraintsToStockInput } from "../src/engine/commercial-constraints.ts";
+import { buildFrameSignals } from "../src/engine/turn-frame-builder.ts";
 import { InMemoryPersistence, FakeClock, FakeIdGen } from "../src/adapters/persistence/in-memory-store.ts";
 import { ScriptedAgentBrain, type BrainResponder } from "../src/adapters/llm/fake-agent-brain.ts";
 import { buildTenantCatalog } from "../src/engine/catalog-utils.ts";
@@ -17,7 +19,7 @@ import type { TurnContextPreparer } from "../src/domain/context.ts";
 import type { DecisionLlm } from "../src/domain/llm.ts";
 import type { TenantBusinessInfoSource } from "../src/engine/tenant-business-info.ts";
 import type { AgentBrainStep, AgentBrainDecision, TurnUnderstanding, PrimaryIntent } from "../src/domain/agent-brain.ts";
-import type { ProposedEffectPlan, QueryCall, QueryResult, ResponsePart, ResponseDraft, TurnRelation } from "../src/domain/decision.ts";
+import type { ProposedEffectPlan, QueryCall, QueryResult, ResponsePart, ResponseDraft, TurnInterpretation, TurnRelation } from "../src/domain/decision.ts";
 import type { VehicleFact } from "../src/domain/types.ts";
 import type { AdContext } from "../src/domain/conversation-state.ts";
 
@@ -140,7 +142,14 @@ const resist: BrainResponder = adAwareSearch;
 // fatos da tool para redigir. A engine nao infere nem executa busca por texto.
 const resistSearch: BrainResponder = (frame, observations) => observations.some((observation) => observation.tool === "stock_search" && observation.ok)
   ? stockAuthoredResponse(frame, observations, true)
-  : qU({ tool: "stock_search", input: {} }, currentSearchUnderstanding(frame));
+  : qU({
+      tool: "stock_search",
+      input: constraintsToStockInput(detectCommercialConstraints({
+        block: frame.block ?? "",
+        signals: buildFrameSignals(frame.block ?? "", { relation: "ambiguous" } as TurnInterpretation),
+        claimExtractor: extractor,
+      })),
+    }, currentSearchUnderstanding(frame));
 
 type Cap = { outbox: string; committed: boolean; hasMedia: boolean; exec: string[]; stockInput: Record<string, unknown> | null; reasonCode: string | null; adVehicleSeen: string | null; hasHandoff: boolean };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, relation: TurnRelation, responder: BrainResponder, ad?: AdContext): Promise<Cap> {

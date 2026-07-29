@@ -21,6 +21,7 @@ import { normalizeText, normalizedTermInText } from "./catalog-utils.ts";
 import { parseOrdinal } from "./ordinal.ts";
 import { VEHICLE_TAXONOMY } from "../adapters/read/vehicle-taxonomy.ts";
 import { BIRTH_DATE_VALID_TOKEN_RX, CPF_VALID_TOKEN_RX, reserveSensitiveNumericSpans } from "../domain/sensitive-data.ts";
+import { loadPersistedWorkingMemory } from "./working-memory.ts";
 
 const NON_NAME = new Set([
   "sim", "nao", "claro", "certo", "ok", "okay", "isso", "beleza", "blz", "opa", "oi", "ola", "eai", "e", "ou", "eh",
@@ -212,6 +213,13 @@ export function inferredQuestionSlot(state: ConversationState): keyof Conversati
   // attach a short answer to an old funnel step.
   const latestQuestion = questionSlotFromAgentText(lastAgentText(state));
   if (latestQuestion != null) return latestQuestion;
+  // The accepted assistant response is persisted as factual working memory in
+  // the same turn. It may be newer than `recentTurns` while the provider event
+  // that mirrors the sent message is still in flight. Reading this fact keeps a
+  // short answer (for example, a bare name) attached to the question the LLM
+  // actually asked without creating an engine-owned funnel objective.
+  const pendingQuestion = loadPersistedWorkingMemory(state.workingMemory).memory.pendingAgentQuestion;
+  if (pendingQuestion?.slot != null) return pendingQuestion.slot;
   if (state.currentObjective?.status === "pending" && state.currentObjective.slot) return state.currentObjective.slot;
   return questionSlotFromAgentText(lastAgentText(state), { legacyFallback: true });
 }

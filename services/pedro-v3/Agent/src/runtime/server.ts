@@ -64,8 +64,9 @@ const EFFECTS_ONLY_MODEL: StructuredConversationModel = {
 
 
 
-// R13-D/4: modo do cérebro do piloto (default OFF). central_active só vale dentro do escopo do piloto (Douglas),
-// que o próprio runtime já garante (PEDRO_V3_PILOT_TENANT_ID). Rollback imediato = voltar a env p/ off.
+// R13-D/4: central_active e o modo global padrao do Pedro v3. `off` continua
+// disponivel apenas como rollback explicito para o handler legado; omitir ou
+// informar um valor invalido nunca desliga silenciosamente o cerebro.
 function resolveBrainMode(): PilotBrainMode {
   const value = process.env.PEDRO_V3_BRAIN_MODE?.trim();
   // LLM-first is the default. `off` remains an explicit rollback only.

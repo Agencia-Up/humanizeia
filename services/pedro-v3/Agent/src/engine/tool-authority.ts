@@ -45,10 +45,18 @@ export function capabilityForTool(tool: AuditedToolName): TurnCapability | null 
 }
 
 /**
- * A commercial tool may only be authorized by the accepted understanding from
- * the current lead block. The sole engine exception is read-only detail
- * grounding for a vehicle action the LLM already chose. Institutional lookup
- * is a local factual read and cannot authorize a commercial action.
+ * Query tools are read-only. A schema-valid `llm_tool_call` is therefore the
+ * LLM's explicit authority to read a fact; requiring a second capability/evidence
+ * label for the same choice creates two competing authorities and can deadlock
+ * an otherwise valid turn. Allowlist, input validation and vehicle-key
+ * provenance remain enforced at their own boundaries.
+ *
+ * `llm_intent_completion` is different: the engine is executing a query on
+ * behalf of semantic metadata rather than a direct tool call. That path must
+ * still prove current-turn evidence and the matching capability. The sole
+ * commercial engine exception is read-only vehicle grounding for an effect the
+ * LLM already authored. Institutional lookup is factual and cannot authorize a
+ * commercial action.
  */
 export function assertToolExecutionAuthority(
   tool: AuditedToolName,
@@ -62,10 +70,11 @@ export function assertToolExecutionAuthority(
   }
 
   if (authority.principal === "llm") {
-    if (!authority.currentTurnEvidence) throw new Error(`TOOL_AUTHORITY_STALE:${tool}`);
     if (authority.source !== "llm_tool_call" && authority.source !== "llm_intent_completion") {
       throw new Error(`TOOL_AUTHORITY_SOURCE:${tool}`);
     }
+    if (authority.source === "llm_tool_call") return;
+    if (!authority.currentTurnEvidence) throw new Error(`TOOL_AUTHORITY_STALE:${tool}`);
     if (authority.capability !== capabilityForTool(tool)) {
       throw new Error(`TOOL_AUTHORITY_CAPABILITY:${tool}`);
     }

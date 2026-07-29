@@ -423,7 +423,7 @@ await expectThrow(
 }
 // ── R13-D (audit Codex): reconcileAcceptedPhotoOutcomes LIGADO em #processCentralActive ────────────────────────
 // Prova o wiring pedido: gap DURÁVEL (send_media accepted, WM NÃO promovida por falha transitória) -> RESTART ->
-// processConversation em central_active RECONCILIA antes do turno -> a resposta LEMBRA a foto -> mídia NÃO reenviada.
+// processConversation em central_active RECONCILIA antes do turno -> o cérebro VÊ a memória -> mídia NÃO reenviada.
 console.log("\nR13-D reconciliação durável no runtime central_active:");
 {
   const CONV = "conv-reconcile-1";
@@ -476,8 +476,6 @@ console.log("\nR13-D reconciliação durável no runtime central_active:");
   const recallBrain = new ScriptedAgentBrain();
   recallBrain.setTurnScript([
     rFinalReply("Deixa eu verificar aqui pra você."),
-    // LLM-first: o engine devolve o label factual no feedback e a mesma LLM reautora.
-    rFinalReply("Você pediu as fotos do Honda CRV 2010. Quer saber mais detalhes dele?"),
   ]);
   const transport = new RecordingUazapiTransport();
   const root = await PilotActiveRoot.create({ mode: "active", tenantId: TENANT_ID, agentId: AGENT_ID }, {
@@ -504,7 +502,7 @@ console.log("\nR13-D reconciliação durável no runtime central_active:");
   check("[reconcile] processConversation promoveu a WM (lastPhotoAction = Honda CRV 2010)", afterWm.lastPhotoAction?.label === "Honda CRV 2010", `label=${afterWm.lastPhotoAction?.label}`);
   check("[reconcile] effect de foto marcado como aplicado (idempotência independente)", !!gapMedia && afterApplied.includes(gapMedia.effectId), JSON.stringify(afterApplied));
   check("[reconcile] o cérebro do turno VIU a memória reconciliada no frame", recallBrain.seenFrames[0]?.workingMemory.lastPhotoAction?.label === "Honda CRV 2010", `frame=${recallBrain.seenFrames[0]?.workingMemory.lastPhotoAction?.label}`);
-  check("[reconcile] a resposta LEMBRA a foto do Honda CRV 2010", sentText.includes("Honda CRV 2010"), sentText.slice(0, 90));
+  check("[reconcile] a engine NÃO exige que a resposta repita uma frase da memória", sentText === "Deixa eu verificar aqui pra você." && recallBrain.seenFrames.length === 1, JSON.stringify({ sentText, brainCalls: recallBrain.seenFrames.length }));
   check("[reconcile] mídia NÃO reenviada (send_media segue succeeded; transporte só a msg de texto)", afterMedia?.status === "succeeded" && transport.calls.length === 1, `media=${afterMedia?.status} calls=${transport.calls.length}`);
   check("[reconcile] turno commitou e despachou exatamente 1 mensagem", result.status === "committed" && result.dispatched === 1, JSON.stringify({ status: result.status, dispatched: result.dispatched }));
 }

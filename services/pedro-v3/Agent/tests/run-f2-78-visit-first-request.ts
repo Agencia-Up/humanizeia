@@ -16,17 +16,14 @@
 // CAUSA (P0-B): a guarda de confirmacao de visita exigia effect `schedule_visit`, que o
 // cerebro NAO consegue emitir (schema strict = send_message|send_media|handoff) e que nao
 // tem execucao ponta a ponta -> deny SEM SAIDA.
-// FIX (rodada 2 do Codex): NENHUM efeito torna verdadeira a frase "visita agendada" — nao existe
-// agendamento executavel no v3, e `handoff` prova apenas que um consultor ASSUME, nunca que um
-// horario foi RESERVADO. Por isso a guarda nega SEMPRE que o texto afirma agendamento/marcacao/
-// confirmacao, INCLUSIVE com handoff valido (regressao [E6a]). A unica saida admissivel — sempre
-// executavel pelo proprio autor — e reescrever com ACOLHIMENTO FACTUAL. Com transferencia
-// disponivel, o maximo honesto e dizer que vai ENCAMINHAR para um consultor confirmar o horario.
-// O feedback nunca cita efeito impossivel NEM ensina promessa de retorno ("vou confirmar"/"te
-// aviso"), que seria recriar o defeito de promessa-sem-mecanismo (P2) dentro da propria correcao.
+// FIX FINAL DA FRONTEIRA: a falta de agendamento chega ANTES da autoria, como capability
+// tipada (`operationalContext.capabilities.appointmentBooking=false`). O `central_active`
+// nao relê a prosa por regex para decidir se aceita a resposta; esse detector permanece
+// somente para replay legado/telemetria. Um agendamento real, quando existir, devera ser
+// provado por efeito estruturado executavel — nunca por classificacao lexical posterior.
 //   npx tsx tests/run-f2-78-visit-first-request.ts
 // ============================================================================
-import { runCentralConversationTurn, type CentralTurnResult } from "../src/engine/central-engine.ts";
+import { promisesVisitScheduled, runCentralConversationTurn, type CentralTurnResult } from "../src/engine/central-engine.ts";
 import { hasActiveCommercialSubject, validateTurnUnderstanding, hasActiveVisitContext } from "../src/engine/turn-understanding.ts";
 import { InMemoryPersistence, FakeClock, FakeIdGen } from "../src/adapters/persistence/in-memory-store.ts";
 import { ScriptedAgentBrain, type BrainResponder } from "../src/adapters/llm/fake-agent-brain.ts";
@@ -38,6 +35,7 @@ import type { DecisionLlm } from "../src/domain/llm.ts";
 import type { AgentBrainStep, AgentBrainDecision, TurnUnderstanding, PrimaryIntent } from "../src/domain/agent-brain.ts";
 import type { ProposedEffectPlan, QueryCall, QueryResult, ResponsePart, ResponseDraft, TurnRelation } from "../src/domain/decision.ts";
 import type { VehicleFact } from "../src/domain/types.ts";
+import { COMPACT_OPERATIONAL_PROMPT } from "../src/adapters/llm/openai-agent-brain.ts";
 
 let ok = 0, fail = 0; const fails: string[] = [];
 function check(name: string, pass: boolean, detail = ""): void {
@@ -117,6 +115,11 @@ const visitU = (quote: string): TurnUnderstanding => U("visit", { subject: "sele
 async function main(): Promise<void> {
   console.log("== F2.78: primeiro pedido de visita (P0-A/P0-B) ==");
 
+  check("[P0] protocolo ativo entrega a classe semantica de visita a LLM", COMPACT_OPERATIONAL_PROMPT.includes('primaryIntent="visit"')
+    && COMPACT_OPERATIONAL_PROMPT.includes("comparecimento presencial")
+    && COMPACT_OPERATIONAL_PROMPT.includes("assunto comercial ativo")
+    && COMPACT_OPERATIONAL_PROMPT.includes("A engine nao reclassifica esse ato depois"));
+
   // ── UNIT: o sinal estruturado de assunto comercial ────────────────────────────────────────────
   check("[U1] veiculo selecionado -> assunto comercial ativo", hasActiveCommercialSubject({ selectedVehicleKey: KEY, renderedOfferCount: 0 }));
   check("[U2] oferta renderizada -> assunto comercial ativo", hasActiveCommercialSubject({ selectedVehicleKey: null, renderedOfferCount: 2 }));
@@ -165,7 +168,7 @@ async function main(): Promise<void> {
   const t4 = await runTurn(bloco4, esposa);
   check("[E4b] o engine nao transforma o bloco em visita", t4.committed && t4.intent !== "visit" && !t4.ts, `intent=${t4.intent} src=${t4.src}`);
 
-  // ── E2E 5: draft afirma visita AGENDADA sem efeito -> nao publica, retry com acolhimento factual ─
+  // ── E2E 5: detector lexical vira telemetria; central_active nao reprova prosa ────────────────
   let tentativa = 0;
   const confirmaSemEfeito: BrainResponder = () => {
     tentativa += 1;
@@ -173,15 +176,12 @@ async function main(): Promise<void> {
     return finU([txt("Entendi, você prefere amanhã de manhã. Qual horário seria melhor?")], visitU("Consigo ver amanhã de manhã?"));
   };
   const t5 = await runTurn("Consigo ver amanhã de manhã?", confirmaSemEfeito);
-  check("[E5] afirmacao de agendamento NAO e publicada", !CLAIMS_SCHEDULED(t5.outbox), `outbox="${t5.outbox}"`);
-  check("[E5] o retry responde com acolhimento factual, sem fallback", t5.committed && t5.src !== "technical_fallback" && !t5.ts, `src=${t5.src}`);
-  check("[E5] a resposta final NAO promete retorno futuro", !PROMISES_RETURN(t5.outbox), `outbox="${t5.outbox}"`);
-  check("[E5] ⭐o feedback NUNCA cita efeito impossivel (schedule_visit)", t5.denies.every((d) => !has(d, "schedule_visit")), JSON.stringify(t5.denies));
-  check("[E5] ⭐o feedback NAO ensina promessa sem mecanismo", t5.denies.every((d) => !has(d, "diga que vai confirmar")), JSON.stringify(t5.denies));
-  check("[E5] o feedback oferece saida admissivel (reescrever/acolher)", t5.denies.some((d) => has(d, "reescreva") && has(d, "acolha")), JSON.stringify(t5.denies));
+  check("[E5] classificador ainda detecta a alegacao para telemetria", promisesVisitScheduled(t5.outbox));
+  check("[E5] central_active nao consome retry julgando a frase", tentativa === 1, `tentativas=${tentativa}`);
+  check("[E5] autoria da LLM e publicada sem technical_fallback", t5.committed && t5.src === "brain_final" && !t5.ts, `src=${t5.src}`);
+  check("[E5] nenhum deny lexical de agendamento foi emitido", t5.denies.every((d) => !has(d, "agendada/marcada/confirmada")), JSON.stringify(t5.denies));
 
-  // ── E2E 6a (REGRESSAO): "visita esta agendada" continua NEGADA mesmo COM handoff ───────────────
-  // handoff prova que um consultor assume — NUNCA que um horario foi reservado.
+  // ── E2E 6a: handoff continua validado pelo plano, nao pela redacao ──────────────────────────────
   let tent6 = 0;
   const agendadaComHandoff: BrainResponder = () => {
     tent6 += 1;
@@ -189,9 +189,8 @@ async function main(): Promise<void> {
     return finU([txt("Entendi, você prefere amanhã de manhã. Vou te encaminhar para um consultor confirmar o horário.")], visitU("Consigo ver amanhã de manhã?"), [reply, handoffEffect], "qualified_handoff");
   };
   const t6a = await runTurn("Consigo ver amanhã de manhã?", agendadaComHandoff, { handoffPlannable: true });
-  check("[E6a] ⭐'visita esta agendada' NEGADA mesmo com handoff", tent6 >= 2 && !CLAIMS_SCHEDULED(t6a.outbox), `tentativas=${tent6} outbox="${t6a.outbox}"`);
-  check("[E6a] o retry com 'encaminhar para consultor' e aceito", t6a.committed && t6a.src !== "technical_fallback" && !t6a.ts, `src=${t6a.src}`);
-  check("[E6a] ⭐a transferencia foi MATERIALIZADA no outbox", t6a.kinds.includes("handoff"), `kinds=${JSON.stringify(t6a.kinds)}`);
+  check("[E6a] texto nao altera nem consome retry do efeito estruturado", tent6 === 1 && t6a.committed && t6a.src === "brain_final", `tentativas=${tent6} src=${t6a.src}`);
+  check("[E6a] a transferencia foi MATERIALIZADA no outbox", t6a.kinds.includes("handoff"), `kinds=${JSON.stringify(t6a.kinds)}`);
 
   // ── E2E 6b: fraseado correto de handoff passa de primeira e materializa o efeito ───────────────
   const encaminha: BrainResponder = () => finU([txt("Entendi, você prefere amanhã de manhã. Vou te encaminhar para um consultor confirmar o horário.")], visitU("Consigo ver amanhã de manhã?"), [reply, handoffEffect], "qualified_handoff");

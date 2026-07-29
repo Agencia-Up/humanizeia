@@ -223,9 +223,8 @@ async function main(): Promise<void> {
     });
     const c = await turn("qual carro eu pedi as fotos?", "ambiguous", [
       fin([txt("Foi o carro que te enviei, um ótimo negócio.")]),
-      fin([txt("Você pediu as fotos do Chevrolet Onix 2018. Quer saber mais detalhes dele?")]),
-    ]);   // cérebro vago -> recebe o label factual e reautora
-    check("[7] a LLM nomeia 'Chevrolet Onix' após feedback e NÃO reenvia mídia", has(c.outbox, "Chevrolet Onix") && !c.hasMedia && !anyKey(c.outbox) && c.src === "brain_retry", `src=${c.src} media=${c.hasMedia} text="${c.outbox}"`);
+    ]);
+    check("[7] resposta natural da LLM é preservada e NÃO reenvia mídia nem vaza chave", !c.hasMedia && !anyKey(c.outbox) && c.src === "brain_final" && !c.degraded, `src=${c.src} media=${c.hasMedia} text="${c.outbox}"`);
   }
   // 8) FORA DE ROTEIRO: "bonito ele" -> resposta contextual, sem menu robótico, engine não injeta funil.
   {
@@ -255,12 +254,13 @@ async function main(): Promise<void> {
     check("[10] a LLM faz a deferência honesta (engine não escreve recovery comercial)", c.committed && !c.degraded && c.src === "brain_retry", `degraded=${c.degraded} src=${c.src}`);
   }
 
-  // 11) CPF CEDO: cérebro pede CPF na qualificação (sem visita agendada) -> BLOQUEADO (não vai CPF no outbox).
+  // 11) O momento comercial de pedir CPF pertence ao prompt/LLM. A engine
+  // protege o valor/ref sensível, mas não cria uma ordem de funil oculta.
   {
     const { turn } = makeConv("c11");
     await turn("Quero financiar", "ambiguous", [fin([txt("Fechado! Tem valor de entrada em mente?")])]);
-    const c = await turn("não tenho", "ambiguous", [fin([txt("Perfeito! Qual o seu CPF?")]), fin([txt("Perfeito! Qual o seu CPF?")]), fin([txt("Perfeito! Qual o seu CPF?")]), fin([txt("Perfeito! Qual o seu CPF?")])]);
-    check("[11] pedido de CPF cedo é BLOQUEADO (sem CPF no outbox)", !/\bcpf\b/i.test(c.outbox) && c.committed, `text="${c.outbox}"`);
+    const c = await turn("não tenho", "ambiguous", [fin([txt("Perfeito! Qual o seu CPF?")])]);
+    check("[11] timing de CPF não vira veto comercial oculto da engine", /\bcpf\b/i.test(c.outbox) && c.committed && c.src === "brain_final" && !c.degraded, `src=${c.src} text="${c.outbox}"`);
   }
   // 12) NEGAÇÃO DE TROCA: agente perguntou troca; "tenho não" -> possuiTroca=false (não repergunta / não vira 'sim').
   {
@@ -287,23 +287,20 @@ async function main(): Promise<void> {
       fin([txt("Ótima! Esse tem"), vref(POP2.vehicleKey, "km"), txt("rodados.")]),   // cita km SEM vehicle_details -> deny específico
       fin([txt("Ótima escolha! Quer que eu te mande as fotos?")]),                   // acolhe (UMA ação) -> ok
     ]);
-    check("[14] feedback ESPECÍFICO de seleção ('acolher, não cite atributo')", c.policyFeedback.some((f) => /acolher a escolha|nao cite|não cite/i.test(f)), JSON.stringify(c.policyFeedback));
+    check("[14] feedback é factual/estruturado, sem instrução comercial", c.policyFeedback.some((f) => /vehicle_ref|fato ausente|nao consultado|não consultado/i.test(f)) && c.policyFeedback.every((f) => !/acolher a escolha/i.test(f)), JSON.stringify(c.policyFeedback));
     check("[14] após o feedback, acolhe e COMMITA (não degrada)", c.committed && !c.degraded && has(c.outbox, "escolha"), `src=${c.src} text="${c.outbox}"`);
   }
-  // 15) DISPONIBILIDADE ("tem Onix?"): em llmFirst, final só sai após stock_search relevante (força + retry).
+  // 15) DISPONIBILIDADE ("tem Onix?"): a própria LLM escolhe stock_search;
+  // a engine executa, sem forçar consulta a partir da frase do lead.
   {
     const { turn } = makeConv("c15");
     await turn("Quero um carro popular", "ambiguous", [q(stockPopular()), fin([txt("Opções:"), offer(POPULAR), txt("Curtiu?")])]);
     const c = await turn("tem Onix?", "ambiguous", (_f, obs) => {
-      if (!obs.some((o) => o.tool === "stock_search" && o.ok)) {
-        // 1º tenta responder sem buscar -> engine força (REQUIRED_TOOL_MISSING; label tool:"response" p/ não inflar a
-        // contagem do smoke) -> o cérebro lê o feedback e busca Onix. Keia no CÓDIGO do feedback, não no label da tool.
-        return obs.some((o) => o.ok === false && o.error.code === "REQUIRED_TOOL_MISSING") ? q({ tool: "stock_search", input: { modelo: "onix" } }) : fin([txt("Sim, temos Onix!")]);
-      }
+      if (!obs.some((o) => o.tool === "stock_search" && o.ok)) return q({ tool: "stock_search", input: { modelo: "onix" } });
       return fin([txt("Temos sim! Olha:"), offer([POP2]), txt("Quer ver as fotos?")]);
     });
     const st = c.exec.find((x) => x.tool === "stock_search");
-    check("[15] forçou stock_search(modelo=onix) antes do final", (st?.input as { modelo?: string })?.modelo === "onix" && c.committed, JSON.stringify(st?.input ?? null));
+    check("[15] executa o stock_search(modelo=onix) escolhido pela LLM", (st?.input as { modelo?: string })?.modelo === "onix" && c.committed, JSON.stringify(st?.input ?? null));
     check("[15] responde Onix (não o assunto anterior)", has(c.outbox, "Onix"), `text="${c.outbox}"`);
   }
   // 16) "não quero foto agora": acolhe e segue -> sem media, sem technical_fallback.
@@ -322,10 +319,10 @@ async function main(): Promise<void> {
     check("[dg2] recusa 'não envio as fotos agora' PASSA (sem media, sem degradar)", c.committed && !c.degraded && !c.hasMedia, `src=${c.src} text="${c.outbox}"`); }
   { const { turn } = makeConv("g3"); const c = await turn("beleza", "ambiguous", [fin([txt("Quer que eu te envie as fotos?")])]);
     check("[dg3] OFERTA 'quer que eu te envie as fotos?' PASSA (sem send_media)", c.committed && !c.degraded && !c.hasMedia, `src=${c.src} text="${c.outbox}"`); }
-  { const { turn } = makeConv("g4"); const c = await turn("beleza", "ambiguous", [fin([txt("Aqui estão as fotos!")]), fin([txt("Aqui estão as fotos!")]), fin([txt("Aqui estão as fotos!")]), fin([txt("Aqui estão as fotos!")])]);
-    check("[dg4] 'Aqui estão as fotos' (sem send_media) continua BLOQUEADO", !has(c.outbox, "aqui estao as fotos") && c.policyFeedback.some((f) => /pediu fotos/i.test(f)), `text="${c.outbox}" fb=${JSON.stringify(c.policyFeedback)}`); }
-  { const { turn } = makeConv("g5"); const c = await turn("beleza", "ambiguous", [fin([txt("Vou enviar as fotos pra você agora!")]), fin([txt("Vou enviar as fotos pra você agora!")]), fin([txt("Vou enviar as fotos pra você agora!")]), fin([txt("Vou enviar as fotos pra você agora!")])]);
-    check("[dg5] 'Vou enviar as fotos' (sem send_media) continua BLOQUEADO", !has(c.outbox, "vou enviar as fotos") && c.policyFeedback.some((f) => /pediu fotos/i.test(f)), `text="${c.outbox}"`); }
+  { const { turn } = makeConv("g4"); const c = await turn("beleza", "ambiguous", [fin([txt("Aqui estão as fotos!")])]);
+    check("[dg4] prosa de foto não fabrica send_media nem provoca retry lexical", has(c.outbox, "aqui estao as fotos") && !c.hasMedia && c.src === "brain_final" && c.policyFeedback.length === 0, `text="${c.outbox}" fb=${JSON.stringify(c.policyFeedback)}`); }
+  { const { turn } = makeConv("g5"); const c = await turn("beleza", "ambiguous", [fin([txt("Vou enviar as fotos pra você agora!")])]);
+    check("[dg5] promessa em prosa não fabrica efeito nem vira veto textual", has(c.outbox, "vou enviar as fotos") && !c.hasMedia && c.src === "brain_final" && c.policyFeedback.length === 0, `text="${c.outbox}"`); }
   // Tests 6-8 (POL-GROUND-YEAR) via validateResponse direto:
   {
     const CRV = { vehicleKey: "revendamais:8065690", marca: "Honda", modelo: "CR-V", ano: 2010, preco: 62990, km: 158000, cambio: "Automatico", cor: "Preto", tipo: "suv" } as VehicleFact;

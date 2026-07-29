@@ -269,20 +269,21 @@ async function main(): Promise<void> {
     check("[V] P1: troca arbitrária search_stock->request_photos sem evidência nova -> ZERO mídia (trava do assunto)", !cap.hasMedia, `media=${cap.hasMedia} intent=${cap.primaryIntent}`);
   }
 
-  // ── AUTORIZAÇÃO TIPADA POR TOOL (P0-2, 2ª auditoria) ──────────────────────────────────────────────────────────
-  // W) smalltalk + evidence "oi" tentando stock_search -> tool NÃO executa.
+  // ── AUTORIDADE DA LLM SOBRE TOOLS (central_active) ───────────────────────────────────────────────────────────
+  // W) A compreensão auxiliar diz smalltalk, mas a própria LLM pede stock_search. A engine não usa o
+  //    classificador paralelo para cancelar uma ação estruturada e permitida do cérebro.
   {
     const c = conv(); await c.seed();
     const uW = U("smalltalk", { evidence: [{ quote: "oi" }] });
     const cap = await c.t("oi, tudo bem?", "ambiguous", (_f, obs) => obs.length > 0 ? finU([txt("Tudo ótimo! Como posso ajudar?")], [reply], "reply", uW) : qU({ tool: "stock_search", input: { tipo: "suv" } } as CentralQueryCall, uW));
-    check("[W] P0-2: smalltalk (evidence 'oi') NÃO autoriza stock_search", cap.committed && !cap.exec.includes("stock_search"), `exec=${JSON.stringify(cap.exec)}`);
+    check("[W] central_active respeita o stock_search escolhido diretamente pela LLM", cap.committed && cap.exec.includes("stock_search") && !cap.degraded, `exec=${JSON.stringify(cap.exec)} src=${cap.src}`);
   }
-  // X) smalltalk + evidence "oi" tentando vehicle_photos_resolve -> tool NÃO executa (cérebro adversarial).
+  // X) O mesmo vale para resolver fotos; executar a consulta não fabrica o efeito send_media.
   {
     const c = conv({ ...sel(ONIX) }); await c.seed();
     const uX = U("smalltalk", { evidence: [{ quote: "oi" }] });
     const cap = await c.t("oi", "ambiguous", (_f, obs) => obs.length > 0 ? finU([txt("Oi! Como posso ajudar?")], [reply], "reply", uX) : photoResolve(ONIX, uX));
-    check("[X] P0-2: smalltalk (evidence 'oi') NÃO autoriza vehicle_photos_resolve, ZERO mídia", cap.committed && !cap.exec.includes("vehicle_photos_resolve") && !cap.hasMedia, `exec=${JSON.stringify(cap.exec)} media=${cap.hasMedia}`);
+    check("[X] LLM pode resolver fotos sem a engine inventar envio", cap.committed && cap.exec.includes("vehicle_photos_resolve") && !cap.hasMedia && !cap.degraded, `exec=${JSON.stringify(cap.exec)} media=${cap.hasMedia}`);
   }
   // Y) smalltalk propondo select_vehicle_focus SEM capability select/evidência -> foco NÃO muda (descartado).
   {
@@ -334,24 +335,19 @@ async function main(): Promise<void> {
   }
 
   // ── IDENTIDADE EXATA DE MODELO (P0, 4ª auditoria) — Onix≠Onix Plus, HB20≠HB20S, C3≠C3 Aircross; sem substring ──────
-  // The brain uses a wrong photo key first. The engine blocks it before the
-  // adapter and returns the grounded target; the same brain retries with the
-  // correct call and authors the response. No silent tool replacement.
+  // The brain uses a wrong photo key first. central_active does not rewrite or
+  // cancel a valid direct tool call. After seeing its own resolved result, the
+  // brain corrects the target. The engine only materializes send_media from the
+  // matching same-turn resolution; no silent tool replacement and no wrong media.
   {
     const c = conv({ ...sel(C3_AIRCROSS), ...offerCtx([C3_AIRCROSS, ONIX]) }); await c.seed();
     const uP4b = U("request_photos", { caps: ["send_photos"], subject: "selected_vehicle", subjectSource: "memory", evidence: [{ capability: "send_photos", quote: "me manda fotos dele" }] });
     let wrongProposals = 0;
-    let mismatchCount = 0;
     const cap = await c.t("me manda fotos dele", "ambiguous", (_f, obs) => {
       if (obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok && o.data.vehicleKey === C3_AIRCROSS.vehicleKey)) {
         return finU([txt("Aqui estao as fotos dele:")], [reply, mediaEff(C3_AIRCROSS)], "send_photos", uP4b);
       }
-      if (obs.some((o) => !o.ok && o.error.code === "PHOTO_TARGET_MISMATCH")) {
-        mismatchCount += 1;
-        if (mismatchCount < 2) {
-          wrongProposals += 1;
-          return photoResolve(ONIX, uP4b);
-        }
+      if (obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok && o.data.vehicleKey === ONIX.vehicleKey)) {
         return photoResolve(C3_AIRCROSS, uP4b);
       }
       wrongProposals += 1;
@@ -360,7 +356,7 @@ async function main(): Promise<void> {
     const executedPhotoKeys = executed
       .filter((call) => call.tool === "vehicle_photos_resolve")
       .map((call) => (call.input as { vehicleRef?: { key?: string } }).vehicleRef?.key ?? "");
-    check("[P4b] wrong key blocked before tool; LLM retries selected vehicle", cap.committed && cap.hasMedia && cap.mediaKey === C3_AIRCROSS.vehicleKey && cap.fromBrain && /^brain_/.test(cap.src) && wrongProposals === 2 && mismatchCount === 2 && executedPhotoKeys.length === 1 && executedPhotoKeys[0] === C3_AIRCROSS.vehicleKey, `src=${cap.src} steps=${cap.brainSteps} wrong=${wrongProposals} mismatch=${mismatchCount} execKeys=${JSON.stringify(executedPhotoKeys)} mediaKey=${cap.mediaKey}`);
+    check("[P4b] LLM corrige a própria consulta e só a mídia do alvo resolvido é materializada", cap.committed && cap.hasMedia && cap.mediaKey === C3_AIRCROSS.vehicleKey && cap.fromBrain && /^brain_/.test(cap.src) && wrongProposals === 1 && executedPhotoKeys.length === 2 && executedPhotoKeys[0] === ONIX.vehicleKey && executedPhotoKeys[1] === C3_AIRCROSS.vehicleKey, `src=${cap.src} steps=${cap.brainSteps} wrong=${wrongProposals} execKeys=${JSON.stringify(executedPhotoKeys)} mediaKey=${cap.mediaKey}`);
   }
 
   const uPhoto = (subjectValue: string, quote: string): TurnUnderstanding => U("request_photos", { caps: ["send_photos"], subject: "explicit_model", subjectValue, subjectSource: "current_turn", evidence: [{ capability: "send_photos", quote }] });

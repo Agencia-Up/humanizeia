@@ -18,7 +18,7 @@ import type { CommercialConstraints } from "../src/engine/commercial-constraints
 import type { TurnContextPreparer } from "../src/domain/context.ts";
 import type { DecisionLlm } from "../src/domain/llm.ts";
 import type { TenantBusinessInfoSource } from "../src/engine/tenant-business-info.ts";
-import type { AgentBrainStep, AgentBrainDecision, TurnUnderstanding } from "../src/domain/agent-brain.ts";
+import type { AgentBrainStep, AgentBrainDecision, TurnFrame, TurnUnderstanding } from "../src/domain/agent-brain.ts";
 import type { ProposedEffectPlan, QueryCall, QueryResult, ResponsePart, ResponseDraft, TurnRelation } from "../src/domain/decision.ts";
 import type { VehicleFact } from "../src/domain/types.ts";
 
@@ -74,17 +74,19 @@ function makeRunQuery(): (c: QueryCall) => Promise<QueryResult> {
 }
 
 // Responder de busca: 1ª chamada -> query; depois de observar stock_search -> final listando (ordenado).
-function searchResponder(u: TurnUnderstanding, input: Record<string, unknown>): BrainResponder {
-  return (_frame, observations) => {
+type BrainSearchInput = Record<string, unknown> | ((frame: TurnFrame) => Record<string, unknown>);
+function searchResponder(u: TurnUnderstanding, input: BrainSearchInput): BrainResponder {
+  return (frame, observations) => {
     const done = observations.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; data: { items: VehicleFact[] } } | undefined;
     if (done) return { kind: "final", understanding: u, decision: { reasonCode: "offer_stock", reasonSummary: "lista", confidence: 0.9,
       responsePlan: { guidance: "g", draft: { parts: [txt("Estas são as opções:"), offer(done.data.items.slice(0, 4).map((v) => v.vehicleKey)), txt("Qual te interessa?")] } },
       proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision } as AgentBrainStep;
-    return { kind: "query", understanding: u, call: { tool: "stock_search", input } as never } as AgentBrainStep;
+    const chosenInput = typeof input === "function" ? input(frame) : input;
+    return { kind: "query", understanding: u, call: { tool: "stock_search", input: chosenInput } as never } as AgentBrainStep;
   };
 }
 
-async function runTurn(seedActive: CommercialConstraints | null, lead: string, u: TurnUnderstanding, brainInput: Record<string, unknown>): Promise<{ executed: Record<string, unknown>; committed: boolean; src: string | null; nextActive: unknown; resultKeys: string[] }> {
+async function runTurn(seedActive: CommercialConstraints | null, lead: string, u: TurnUnderstanding, brainInput: BrainSearchInput): Promise<{ executed: Record<string, unknown>; committed: boolean; src: string | null; nextActive: unknown; resultKeys: string[] }> {
   executedInputs.length = 0; lastResultKeys.length = 0;
   const clock = new FakeClock(NOW); const persistence = new InMemoryPersistence(clock, new FakeIdGen());
   const convId = `wa:f275:${Math.random().toString(36).slice(2)}`;
@@ -116,11 +118,18 @@ async function main(): Promise<void> {
   console.log("== F2.75: troca de direção solta o escopo do anúncio ==");
   const ev = (o: Record<string, unknown>, q: string): TurnUnderstanding => U({ evidence: [{ capability: "stock_search", quote: q }], ...o } as Partial<TurnUnderstanding>);
 
-  // [A1] isTopicChange=false: "esse Peugeot é automático?" -> MANTÉM o Peugeot/2008/suv + adiciona cambio (refinamento).
-  const a1 = await runTurn(AD_SCOPE, "esse Peugeot 2008 é automático?", ev({ isTopicChange: false }, "esse Peugeot 2008"), { cambio: "automatic" });
-  check("[A1] isTopicChange=false mantém marca do anúncio (Peugeot)", a1.executed.marca === "peugeot", JSON.stringify(a1.executed));
-  // (o tipo:suv é corretamente superado pelo modelo reafirmado — regra pré-existente do merge; o que importa é preservar Peugeot 2008)
-  check("[A1b] isTopicChange=false mantém modelo 2008 (refinamento)", String(a1.executed.modelo ?? "").includes("2008"), JSON.stringify(a1.executed));
+  // [A1] Refinamento do mesmo alvo: a memória chega como DADO, e a LLM decide explicitamente manter Peugeot/2008.
+  // A engine não reinjeta filtros antigos numa chamada direta — isso faria dela uma segunda autora da busca.
+  const a1 = await runTurn(AD_SCOPE, "esse Peugeot 2008 é automático?", ev({ isTopicChange: false }, "esse Peugeot 2008"), (frame) => {
+    const remembered = frame.operationalContext?.searchMemory.activeFilters;
+    return {
+      ...(remembered?.marca ? { marca: remembered.marca } : {}),
+      ...(remembered?.modelos?.[0] ? { modelo: remembered.modelos[0] } : {}),
+      cambio: "automatic",
+    };
+  });
+  check("[A1] LLM mantém a marca ao refinar usando searchMemory", a1.executed.marca === "peugeot", JSON.stringify(a1.executed));
+  check("[A1b] LLM mantém o modelo ao refinar usando searchMemory", String(a1.executed.modelo ?? "").includes("2008"), JSON.stringify(a1.executed));
 
   // [A2] isTopicChange=true: "quero todos os automáticos, do menor preço" -> SÓ cambio, SEM peugeot/2008/suv/70000.
   const a2 = await runTurn(AD_SCOPE, "quero todos os automaticos, do menor preco", ev({ isTopicChange: true }, "todos os automaticos"), { cambio: "automatic" });

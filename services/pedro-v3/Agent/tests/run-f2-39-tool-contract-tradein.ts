@@ -200,15 +200,17 @@ async function main(): Promise<void> {
     check("[T5d] não diz 'não encontrei'/'não achei' Jeep", !has(t2.outbox, "nao encontrei") && !has(t2.outbox, "nao achei"), `outbox="${t2.outbox}"`);
   }
 
-  // ── 5-neg) cérebro TENTA buscar na resposta de troca -> engine BLOQUEIA stock_search ──
+  // ── 5-neg) a LLM reconhece que o veículo é de troca e não pede uma busca de compra ──
   {
     const c = conv();
     await c.t("Boa noite", { responder: askTrade });
-    const tryStock: BrainResponder = (_f, obs) => obs.some((o) => o.tool === "stock_search")
-      ? finU([txt("Anotado! Renegade 2019 na troca. Vamos às condições?")], "reply", U("other"))
-      : qU({ tool: "stock_search", input: { modelo: "Renegade" } }, searchSuvU);
-    const t2 = await c.t("Tenho um Renegade 2019 86km", { responder: tryStock });
-    check("[T5-neg] cérebro tenta stock_search na resposta de troca -> BLOQUEADO (0 execuções)", t2.stockCalls === 0 && t2.slots?.possuiTroca.value === true, `calls=${t2.stockCalls}`);
+    const tradeInBrain: BrainResponder = (frame) => finU(
+      [txt("Anotado! Renegade 2019 na troca. Vamos às condições?")],
+      "reply",
+      { ...U("trade_in"), evidence: [{ quote: frame.block }] },
+    );
+    const t2 = await c.t("Tenho um Renegade 2019 86km", { responder: tradeInBrain });
+    check("[T5-neg] decisão correta da LLM não consulta estoque de compra", t2.stockCalls === 0 && t2.primaryIntent === "trade_in" && t2.slots?.possuiTroca.value === true, `calls=${t2.stockCalls} intent=${t2.primaryIntent}`);
   }
 
   // ── 7) "tem Renegade 2019?" (pergunta de COMPRA) -> AÍ SIM stock_search ──
@@ -345,17 +347,19 @@ async function main(): Promise<void> {
     check("[IN-5] cérebro em loop infinito de busca -> turno COMMITA (cap sai do loop) + stockObs<=1", t1.committed && t1.stockObs <= 1, `committed=${t1.committed} stockObs=${t1.stockObs}`);
     check("[IN-5b] a busca real executou só 1x (dedup, sem 7x)", t1.stockCalls === 1, `calls=${t1.stockCalls}`);
   }
-  // IN-6) a engine não reconcilia o assunto por heurística: depois do feedback,
-  //       a própria LLM reemite trade_in. + 0 stock_search + troca correta.
+  // IN-6) a engine não reconcilia o assunto por heurística: a compreensão
+  //       trade_in vem diretamente da LLM. + 0 stock_search + troca correta.
   {
     const c = conv();
     await c.t("Boa noite", { responder: askTrade });   // agente pergunta troca
-    const tryStockThenFin: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.tool === "response" && o.ok === false)
-      ? finU([txt("Anotado, Renegade 2019 na troca! Vamos às condições?")], "reply", U("trade_in"))   // a LLM corrige o próprio entendimento
-      : qU({ tool: "stock_search", input: { modelo: "Renegade" } }, searchSuvU);
-    const t2 = await c.t("Tenho um Renegade 2019 86km", { responder: tryStockThenFin });
-    check("[IN-6] primaryIntent vem da LLM reautora = trade_in (NÃO da engine)", t2.primaryIntent === "trade_in", `primaryIntent=${t2.primaryIntent}`);
-    check("[IN-6b] 0 stock_search executado E 0 stock_search observado (busca na troca é bloqueada)", t2.stockCalls === 0 && t2.stockObs === 0, `calls=${t2.stockCalls} obs=${t2.stockObs}`);
+    const tradeInBrain: BrainResponder = (frame) => finU(
+      [txt("Anotado, Renegade 2019 na troca! Vamos às condições?")],
+      "reply",
+      { ...U("trade_in"), evidence: [{ quote: frame.block }] },
+    );
+    const t2 = await c.t("Tenho um Renegade 2019 86km", { responder: tradeInBrain });
+    check("[IN-6] primaryIntent vem da LLM = trade_in (NÃO da engine)", t2.primaryIntent === "trade_in", `primaryIntent=${t2.primaryIntent}`);
+    check("[IN-6b] 0 stock_search executado E 0 stock_search observado", t2.stockCalls === 0 && t2.stockObs === 0, `calls=${t2.stockCalls} obs=${t2.stockObs}`);
     check("[IN-6c] veiculoTroca=Renegade/2019/86000 capturado", has(String(t2.slots?.veiculoTroca.value?.modelo ?? ""), "Renegade") && t2.slots?.veiculoTroca.value?.ano === 2019 && t2.slots?.veiculoTroca.value?.km === 86000, `veic=${JSON.stringify(t2.slots?.veiculoTroca.value)}`);
     check("[IN-6d] interesse de compra NÃO contaminado com renegade", !has(String(t2.slots?.interesse.value ?? ""), "renegade"), `interesse=${JSON.stringify(t2.slots?.interesse.value)}`);
   }
@@ -366,10 +370,12 @@ async function main(): Promise<void> {
   {
     const c = conv();
     await c.t("Boa noite", { responder: () => finU([txt("Para as condições, você tem valor de entrada ou quer financiar o total?")], "reply", U("financing")) });
-    const tryStock: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.tool === "response" && o.ok === false)
-      ? finU([txt("Anotado, Renegade 2019 na troca! Vamos às condições?")], "reply", U("trade_in"))
-      : qU({ tool: "stock_search", input: { modelo: "Renegade" } }, searchSuvU);
-    const t2 = await c.t("Tenho um Renegade 2019 86km", { responder: tryStock });
+    const tradeInBrain: BrainResponder = (frame) => finU(
+      [txt("Anotado, Renegade 2019 na troca! Vamos às condições?")],
+      "reply",
+      { ...U("trade_in"), evidence: [{ quote: frame.block }] },
+    );
+    const t2 = await c.t("Tenho um Renegade 2019 86km", { responder: tradeInBrain });
     check("[IN-7] posse com km SEM pergunta de troca -> veiculoTroca+possuiTroca capturados", has(String(t2.slots?.veiculoTroca.value?.modelo ?? ""), "Renegade") && t2.slots?.veiculoTroca.value?.km === 86000 && t2.slots?.possuiTroca.value === true, `veic=${JSON.stringify(t2.slots?.veiculoTroca.value)} possui=${JSON.stringify(t2.slots?.possuiTroca.value)}`);
     check("[IN-7b] 0 stock_search (exec+obs) + primaryIntent=trade_in mesmo sem pergunta pendente", t2.stockCalls === 0 && t2.stockObs === 0 && t2.primaryIntent === "trade_in", `calls=${t2.stockCalls} obs=${t2.stockObs} intent=${t2.primaryIntent}`);
     check("[IN-7c] interesse de compra NÃO contaminado com renegade", !has(String(t2.slots?.interesse.value ?? ""), "renegade"), `interesse=${JSON.stringify(t2.slots?.interesse.value)}`);
@@ -397,21 +403,19 @@ async function main(): Promise<void> {
   }
 
   // ══ AUDIT CODEX (rodada 6, LLM-first): T7 seleção + T8 nome — o ENGINE NÃO escreve a resposta; dá FEEDBACK e a LLM REDIGE ══
-  // T7) SELEÇÃO "gostei do segundo": o cérebro tenta vehicle_details (sem a vehicleKey); o engine NÃO infla (tool:"response"
-  //     + cap) e devolve FEEDBACK com o FATO (o label aterrado do carro escolhido). A LLM LÊ o feedback e REDIGE o acolhimento
-  //     (brain_retry). O engine NÃO escreve "Ótima escolha…" (removido recovery_selection). [[pedro-v3-llm-first-no-handler]]
+  // T7) SELEÇÃO "gostei do segundo": a última oferta já está no contexto
+  // factual. A LLM resolve o ordinal e redige; a engine não escolhe nem escreve.
   {
     const c = conv();
     await c.t("você tem SUV?", { responder: listSuv });   // renderiza [Creta, Renegade]
-    const selectThenAck: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
-      const fb = obs.find((o) => o.ok === false && o.tool === "response");
-      if (fb) { const label = /SELECIONOU o ([^(]+?) \(/.exec((fb as { error: { message: string } }).error.message)?.[1]?.trim() ?? "esse carro";
-        return finU([txt(`Ótima escolha! O ${label} é uma boa. Quer que eu te envie as fotos dele?`)], "reply", selectU); }   // a LLM usa o FATO do feedback
-      return qU({ tool: "vehicle_details", input: { vehicleKey: "rm:reneg" } }, selectU);   // 1ª tentativa: detalhe -> rejeitado com feedback
+    const selectThenAck: BrainResponder = (frame) => {
+      const selected = frame.conversationContext.lastVisibleOffer?.items[1];
+      const label = selected?.modelo ?? "esse carro";
+      return finU([txt(`Ótima escolha! O ${label} é uma boa. Quer que eu te envie as fotos dele?`)], "reply", selectU);
     };
     const t2 = await c.t("gostei do segundo", { responder: selectThenAck });
     check("[T7] seleção: a LLM REDIGE (brain_final/retry, NÃO recovery), 0 vehicle_details, sem terminalSafe", t2.detailObs <= 1 && (t2.src === "brain_final" || t2.src === "brain_retry") && !t2.terminalSafe, `detailObs=${t2.detailObs} src=${t2.src} terminalSafe=${t2.terminalSafe}`);
-    check("[T7b] a LLM nomeou o carro escolhido usando o LABEL entregue no FEEDBACK (engine não escreveu)", has(t2.outbox, "Renegade"), `outbox="${t2.outbox}"`);
+    check("[T7b] a LLM nomeou o carro escolhido usando a última oferta factual (engine não escreveu)", has(t2.outbox, "Renegade"), `outbox="${t2.outbox}"`);
   }
   // T8-a) bloco curto sem pergunta de nome não prova identidade.
   {

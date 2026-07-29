@@ -279,7 +279,11 @@ async function main(): Promise<void> {
     await c.t("tem sedan?", searchB({ tipo: "sedan" }));   // 0 sedans no stock -> honesto
     const t2 = await c.t("tem onix?", searchB({ modelo: "Onix" }));
     check("[H-0] setup: lista o Onix com snapshot vazio", has(t2.outbox, "onix"), `input=${JSON.stringify(t2.stockInput)} outbox="${t2.outbox.slice(0, 100)}"`);
-    const t3 = await c.t("Onix nao e um carro? pq disse que nao tinha?", () => finU([txt("Você tem razão, me desculpe pela confusão! Eu quis dizer que não tinha sedans — o Onix que te mostrei é um hatch. Quer ver as condições dele?")], "conversation_repair", U("conversation_repair")));
+    const t3 = await c.t("Onix nao e um carro? pq disse que nao tinha?", (frame) => finU(
+      [txt("Você tem razão, me desculpe pela confusão! Eu quis dizer que não tinha sedans — o Onix que te mostrei é um hatch. Quer ver as condições dele?")],
+      "conversation_repair",
+      { ...U("conversation_repair"), evidence: [{ capability: null, quote: frame.block }] as never },
+    ));
     check("[H-1] contestação: 0 stock_search, brain_*, sem re-lista", t3.stockCalls === 0 && NO_FALLBACK(t3) && !has(t3.outbox, "Encontrei estas opções"), `calls=${t3.stockCalls} src=${t3.src} outbox="${t3.outbox.slice(0, 100)}"`);
     check("[H-2] primaryIntent=conversation_repair", t3.primaryIntent === "conversation_repair", `intent=${t3.primaryIntent}`);
   }
@@ -327,20 +331,20 @@ async function main(): Promise<void> {
     check("[L-2] slots: entrada=8000 + parcelaDesejada=2100 (faixaPreco intacta)", t5.slots?.entrada.value === 8000 && t5.slots?.parcelaDesejada.value === 2100 && t5.slots?.faixaPreco.status !== "known", `entrada=${JSON.stringify(t5.slots?.entrada.value)} parcela=${JSON.stringify(t5.slots?.parcelaDesejada.value)}`);
   }
 
-  // ── M) ADVERSARIAL: a LLM INVENTA um valor calculado (saldo) que o lead NÃO disse -> deny -> re-autora sem ele ──
+  // ── M) A LLM pode fazer aritmética verdadeira com fatos já aterrados: Onix 62 mil - entrada 8 mil = saldo 54 mil.
+  // A engine não interpreta nem censura prosa comercial; grounding estrutural de veículo/chaves segue protegido acima. ──
   {
     const c = conv();
     await c.t("quero um Onix", searchB({ modelo: "Onix" }));
     await c.t("gostei do primeiro", () => finU([txt("Boa escolha! Quer ver as condições de pagamento?")], "reply", { primaryIntent: "select_vehicle", requestedCapabilities: ["select"], subject: "ordinal_from_last_offer", subjectValue: "1", subjectSource: "current_turn", evidence: [{ capability: "select", quote: "primeiro" }], isTopicChange: false, answeredLeadQuestions: [] }));
     await c.t("quais as condições?", () => finU([txt("Perfeito! Você tem algum carro para dar de troca?")], "reply", U("other")));
-    let step = 0;
-    const inventor: BrainResponder = () => {
-      step += 1;
-      if (step === 1) return finU([txt("Perfeito! Com R$ 8.000 de entrada, o saldo fica em R$ 54.000 para financiar.")], "reply", U("financing"));
-      return finU([txt("Perfeito! R$ 8.000 de entrada anotado. Qual parcela caberia no seu orçamento?")], "reply", U("financing"));
-    };
-    const t4 = await c.t("Tenho 8k de entrada", inventor);
-    check("[M-1] valor CALCULADO (54.000) que o lead não disse é NEGADO; o eco do valor dele (8.000) passa no retry", !has(t4.outbox, "54.000") && has(t4.outbox, "8.000") && t4.src === "brain_retry", `src=${t4.src} outbox="${t4.outbox}"`);
+    const calculateBalance: BrainResponder = (frame) => finU(
+      [txt("Perfeito! Com R$ 8.000 de entrada, o saldo fica em R$ 54.000 para financiar.")],
+      "financial_calculation",
+      { ...U("financing"), evidence: [{ capability: null, quote: frame.block }] as never },
+    );
+    const t4 = await c.t("Tenho 8k de entrada", calculateBalance);
+    check("[M-1] cálculo verdadeiro da LLM passa sem veto lexical da engine", has(t4.outbox, "54.000") && has(t4.outbox, "8.000") && t4.src === "brain_final" && t4.slots?.entrada.value === 8000, `src=${t4.src} outbox="${t4.outbox}" entrada=${JSON.stringify(t4.slots?.entrada.value)}`);
   }
 
   console.log(`\n== F2.43: ${ok} OK | ${fail} FALHA ==`);

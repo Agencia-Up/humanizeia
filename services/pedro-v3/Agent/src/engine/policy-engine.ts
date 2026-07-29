@@ -11,6 +11,7 @@ import { leadStatedMoneyValues } from "./lead-extraction.ts";
 import { slotQuestions } from "./question-classify.ts";
 import { isInstitutionalTurn, contactPhoneKnownFromChannel, asksLeadContactPhone, asksToResendInstitutionalInfoViaWhatsApp } from "./turn-domain.ts";
 import { loadPersistedWorkingMemory } from "./working-memory.ts";
+import { responseAuthorityProfile, type ResponseAuthorityInput } from "./response-authority.ts";
 
 // P0 audit Codex: a RESPOSTA é INSTITUCIONAL PURA (nenhum claim de marca/modelo no texto)? Só então as policies de
 // FUNIL se abstêm. Se o texto cita veículo (mesmo lembrado), NÃO é institucional-pura -> funil valida normalmente.
@@ -305,9 +306,10 @@ export const PolicyEngine = {
   },
 
   // (2) PÓS-QUERY: valida a decisão proposta CONTRA OS FATOS.
-  postQuery(proposal: ProposedDecision, facts: QueryResult[], ctx: TurnContext): PolicyVerdict[] {
+  postQuery(proposal: ProposedDecision, facts: QueryResult[], ctx: TurnContext, authorityInput: ResponseAuthorityInput = "legacy_strict"): PolicyVerdict[] {
     const verdicts: PolicyVerdict[] = [];
     const obj = ctx.state.currentObjective;
+    const authority = responseAuthorityProfile(authorityInput);
 
     // POL-TRACK-001: resposta a pergunta de pagamento não vira busca de estoque se relation=answers_pending.
     // ⭐P0-B (Codex — AUTORIDADE LLM-first): o ato comercial EXPLÍCITO do
@@ -319,13 +321,13 @@ export const PolicyEngine = {
       ctx.acceptedPrimaryIntent === "search_stock"
       || ctx.acceptedPrimaryIntent === "request_photos";
     const isPayRelation = ctx.interpretation.relation === "answers_pending" && obj?.type === "perguntou_pagamento" && obj.status === "pending";
-    if (!currentTurnOwnsCommercialAction && isPayRelation && (proposal.proposedAction === "search_stock" || proposal.proposedAction === "send_photos")) {
+    if (authority.commercialPolicyVeto && !currentTurnOwnsCommercialAction && isPayRelation && (proposal.proposedAction === "search_stock" || proposal.proposedAction === "send_photos")) {
       verdicts.push({ policyId: "POL-TRACK-001", outcome: "deny", violations: ["resposta de financiamento virou busca"] });
     }
 
     // POL-STOCK-003: não ofertar veículo acima do teto sem explicar.
     const ceiling = ctx.state.slots.faixaPreco.value?.max;
-    if (ceiling != null) {
+    if (authority.commercialPolicyVeto && ceiling != null) {
       const pm = priceMap(facts);
       for (const k of offeredVehicleKeys(proposal.proposedEffects)) {
         const p = pm.get(k);
@@ -353,18 +355,12 @@ export const PolicyEngine = {
       });
     }
 
-    // POL-CATALOG-OFFER: veículo ofertado deve ter marca e modelo no catálogo do tenant (Fase 1.4).
-    // ⭐Missão P0 (fatos frescos vencem snapshot): key vinda das TOOLS do tenant NESTE turno é catálogo válido —
-    // snapshot vazio/falho não apaga fato fresco (o engine nunca exige uma key e depois a rejeita).
-    for (const k of offeredKeys) {
-      if (!isVehicleKeyGrounded(ctx.tenantCatalog, facts, k)) {
-        verdicts.push({
-          policyId: "POL-GROUND-STOCK",
-          outcome: "deny",
-          violations: [`veículo ofertado '${k}' contém marca/modelo fora do catálogo do tenant`]
-        });
-      }
-    }
+    // `validKeys` é a autoridade única para record_offer: fato fresco do read-side
+    // OU oferta que já foi efetivamente apresentada nesta conversa. Revalidar a
+    // segunda origem contra o snapshot atual do catálogo criava duas autoridades
+    // concorrentes: uma oferta entregue era aceita acima e rejeitada aqui quando o
+    // feed oscilava ou o snapshot vinha vazio. Chave livre da LLM continua fora de
+    // `validKeys` e, portanto, segue fail-closed no bloco anterior.
 
     // Nome enriquece CRM e briefing, mas nunca é pré-condição operacional de
     // handoff. O canal/leadId já identifica o contato; quando existir, o
@@ -374,18 +370,18 @@ export const PolicyEngine = {
     return verdicts;
   },
 
-  // (3) GROUNDING DA RESPOSTA RENDERIZADA: valida referências estruturadas e defende contra alucinações.
-  // ⭐RD1-2 (2026-07-13): `skipStyleChecks` (central_active) PULA as POL de ESTILO (telefone conhecido, "uma pergunta por
-  // vez", reperguntar slot conhecido) — elas viraram advisory. As POL de FATO/PII (grounding, CPF-timing) rodam SEMPRE, e o
-  // fluxo NÃO retorna cedo no estilo (assim o grounding é sempre avaliado). No legado (default false) tudo continua.
-  validateResponse(composed: RenderedResponse, facts: QueryResult[], decision: TurnDecision, ctx: TurnContext, skipStyleChecks = false): PolicyVerdict[] {
-    // P0 ROTEAMENTO POR DOMÍNIO (audit Codex): o bypass é pelo DOMÍNIO DA AFIRMAÇÃO, não da mensagem. Numa mensagem
-    // MISTA ("onde fica a loja e esse Onix é automático?") a parte institucional libera, MAS todo trecho que cite
-    // veículo/atributo/preço/foto continua validado normalmente. Aqui: `instOnlyResponse` = a RESPOSTA não contém NENHUM
-    // claim de veículo (marca/modelo) — só então as policies de FUNIL (reperguntar slot conhecido) se abstêm. As policies
-    // de ATRIBUTO/ESTOQUE (DETAIL/ATTR-VALUE/GROUND-STOCK) ficam SEMPRE ligadas (são claim-scoped por natureza); o NOME
-    // de um veículo LEMBRADO (selecionado/ofertado) é aterrado por memória (abaixo), então nomeá-lo no institucional passa.
-    const instOnlyResponse = isInstitutionalOnlyResponse(composed, ctx);
+  // (3) FRONTEIRA DA RESPOSTA: no central_active somente referências estruturadas
+  // são autoridade para um hard deny. Interpretar prosa depois da autoria (estilo,
+  // funil ou grounding lexical) pertence ao legado e nunca pode derrubar um turno
+  // da LLM ativa. Efeitos continuam validados por postQuery/materialização.
+  validateResponse(composed: RenderedResponse, facts: QueryResult[], decision: TurnDecision, ctx: TurnContext, authorityInput: ResponseAuthorityInput = "legacy_strict"): PolicyVerdict[] {
+    const authority = responseAuthorityProfile(authorityInput);
+    const legacyResponseValidation = authority.mode !== "central_active";
+    const skipStyleChecks = !authority.conversationalTextVeto;
+    // Roteamento lexical mantido apenas para replay legado. No central_active, `legacyResponseValidation=false` e
+    // nenhuma leitura de marca/modelo/atributo/preço em texto livre pode rejeitar a autoria. Referências estruturadas
+    // continuam verificadas independentemente deste domínio.
+    const instOnlyResponse = legacyResponseValidation && isInstitutionalOnlyResponse(composed, ctx);
     // INC2 (P0): no canal WhatsApp o telefone de contato JÁ é conhecido pelo envelope (conversationId "wa:<hash-do-fone>").
     // O agente NUNCA deve pedir o telefone do LEAD (o prompt do portal não coleta telefone) — usa o número do WhatsApp e
     // avança o funil. Se a resposta pede o telefone do lead num canal onde ele já é conhecido -> deny + retry. A exceção
@@ -409,7 +405,7 @@ export const PolicyEngine = {
     // hora. (c) REPERGUNTAR um slot JÁ conhecido (incl. visita/horário já respondidos). A congruência objetivo↔
     // pergunta NÃO é imposta aqui — é RECONCILIADA pós-compose (reconcileObjectiveWithQuestion): o objetivo
     // persistido passa a ser exatamente o slot da pergunta enviada.
-    {
+    if (legacyResponseValidation) {
       const asked = slotQuestions(composed.text); // TODOS os slots perguntados (incl. visita/horário)
       const slotKnown = (slot: string): boolean => {
         const s = (ctx.state.slots as Record<string, { status?: string; value?: unknown } | undefined>)[slot];
@@ -432,9 +428,9 @@ export const PolicyEngine = {
       const iv = (ctx.state.slots as { interesseVisita?: { status?: string; value?: unknown } }).interesseVisita;
       const dh = (ctx.state.slots as { diaHorario?: { status?: string } }).diaHorario;
       const cpfDueNow = iv?.value === true || dh?.status === "known";
-      // ⭐RD1-2: o CPF-timing é SEGURANÇA/PII (não estilo). policyId PRÓPRIO (POL-CPF-TIMING) para continuar HARD no
-      // central_active, mesmo quando as demais POL-QUESTION-OBJECTIVE (uma pergunta / reask de slot) viram advisory.
-      if (asked.includes("cpf") && !cpfDueNow) return [{ policyId: "POL-CPF-TIMING", outcome: "deny", violations: ["pergunta CPF antes da hora (CPF so ao agendar visita/fechar)"] }];
+      // CPF-timing é política comercial de coleta, não proteção contra vazamento. Por isso só permanece no replay
+      // legado (`commercialPolicyVeto`); no central_active o prompt do portal decide quando perguntar.
+      if (authority.commercialPolicyVeto && asked.includes("cpf") && !cpfDueNow) return [{ policyId: "POL-CPF-TIMING", outcome: "deny", violations: ["pergunta CPF antes da hora (CPF so ao agendar visita/fechar)"] }];
       // (c) reperguntar um slot JÁ CONHECIDO (incl. visita/horário já respondidos — não reoferte visita se já quer).
       //     ROTEAMENTO POR DOMÍNIO (audit Codex): abstém-se SÓ quando a PERGUNTA do lead é institucional E a RESPOSTA é
       //     institucional PURA (sem claim de veículo) — aí um CTA leve na resposta de endereço não derruba tudo. Numa
@@ -449,7 +445,7 @@ export const PolicyEngine = {
     // que o veículo SELECIONADO pelo lead esteja ATERRADO nos FATOS DESTE TURNO (vehicle_details/stock_search do
     // MESMO vehicleKey). "Algum veículo aterrado" NÃO basta; fato de OUTRO veículo não autoriza. Sem seleção ->
     // pede esclarecimento. (O modelo citado no texto continua defendido pelo POL-GROUND-STOCK.) Declarativo (sem "?").
-    {
+    if (authority.lexicalGroundingVeto) {
       const t = normalizeText(composed.text);
       // Gatilho ESTREITO: referência POSSESSIVA/pronominal SINGULAR a um veículo (não uma lista numerada de
       // ofertas, que é aterrada por vehicle_offer_list) + afirmação de atributo. Evita falso-positivo em ofertas.
@@ -486,11 +482,13 @@ export const PolicyEngine = {
     // A segurança de combustível passou a vir de ONDE ela sempre deveria vir: do RESULTADO ESTRUTURADO da tool,
     // entregue à LLM ANTES da geração (filtros aplicados, escopo, cobertura, o que não é verificável — ver
     // `operational-context.ts`). `fuel-claims.ts` continua existindo, mas só para TELEMETRIA e avaliação offline.
-    // O engine segue rígido no que é estruturado: vehicleKey, preço/km, PII, ownership, tools, mídia e handoff.
+    // O engine ativo segue rígido somente no que é estruturado/operacional: vehicleKey e refs tipadas, ownership,
+    // allowlist, mídia e handoff executáveis e identificadores internos. Preço/km em prosa ficam a cargo da LLM
+    // alimentada pelos fatos; os validadores lexicais abaixo são exclusivos do replay legado.
 
     // POL-ATTR-VALUE (F-4, Codex): em pergunta de DETALHE, o VALOR do atributo afirmado no texto deve BATER
     // com o VehicleFact do veículo SELECIONADO. "ele é automático" com fato "Manual" -> deny (mismatch de valor).
-    if (ctx.interpretation.relation === "asks_vehicle_detail" && ctx.state.vehicleContext.selected?.key) {
+    if (authority.lexicalGroundingVeto && ctx.interpretation.relation === "asks_vehicle_detail" && ctx.state.vehicleContext.selected?.key) {
       const selFact = factByKey(facts, ctx.state.vehicleContext.selected.key);
       if (selFact) {
         const t = normalizeText(composed.text);
@@ -615,7 +613,7 @@ export const PolicyEngine = {
     // 1. TextPart não pode conter marca/modelo NÃO-ATERRADO (invenção). Modelo aterrado nos fatos do turno é
     //    permitido em texto (conversa natural sobre o que foi ofertado); preço livre segue proibido (grounding).
     for (const part of composed.draft.parts) {
-      if (part.type === "text") {
+      if (part.type === "text" && authority.lexicalGroundingVeto) {
         // Um modelo citado em texto livre deve estar aterrado (fatos do turno OU memória: selecionado/ofertado). Inventar
         // um modelo continua barrado; nomear o carro lembrado passa (grounding de memória acima).
         const claims = ctx.claimExtractor.extractClaims(part.content);
@@ -659,18 +657,20 @@ export const PolicyEngine = {
 
     // 2. Defender o texto final renderizado: marcas e modelos citados devem existir nos fatos do turno OU na MEMÓRIA
     //    (selecionado/ofertado) — inventar continua barrado; nomear o carro lembrado passa.
-    const renderedClaims = ctx.claimExtractor.extractClaims(composed.text);
-    for (const claim of renderedClaims) {
-      const normVal = claim.normalized;
-      if (claim.kind === "brand" || claim.kind === "brand_model") {
-        if (!validBrands.has(normVal) && !isLeadVehicleClaimEchoedOnlyAsAbsence(claim, composed.text, ctx)) {
-          brandModelViolations.push(`marca não-aterrada '${claim.text}' no texto renderizado`);
+    if (authority.lexicalGroundingVeto) {
+      const renderedClaims = ctx.claimExtractor.extractClaims(composed.text);
+      for (const claim of renderedClaims) {
+        const normVal = claim.normalized;
+        if (claim.kind === "brand" || claim.kind === "brand_model") {
+          if (!validBrands.has(normVal) && !isLeadVehicleClaimEchoedOnlyAsAbsence(claim, composed.text, ctx)) {
+            brandModelViolations.push(`marca não-aterrada '${claim.text}' no texto renderizado`);
+          }
         }
-      }
-      if (claim.kind === "model" || claim.kind === "brand_model") {
-        // Aterrado só se EXATO (formatação colapsada) de um modelo REAL do turno — nunca por subconjunto (R10-3).
-        if (!validModels.has(normVal) && !modelGroundedExact(normVal, validModels) && !isLeadVehicleClaimEchoedOnlyAsAbsence(claim, composed.text, ctx)) {
-          brandModelViolations.push(`modelo não-aterrado '${claim.text}' no texto renderizado`);
+        if (claim.kind === "model" || claim.kind === "brand_model") {
+          // Aterrado só se EXATO (formatação colapsada) de um modelo REAL do turno — nunca por subconjunto (R10-3).
+          if (!validModels.has(normVal) && !modelGroundedExact(normVal, validModels) && !isLeadVehicleClaimEchoedOnlyAsAbsence(claim, composed.text, ctx)) {
+            brandModelViolations.push(`modelo não-aterrado '${claim.text}' no texto renderizado`);
+          }
         }
       }
     }
@@ -687,7 +687,7 @@ export const PolicyEngine = {
     // PERMITIDO ("Honda CR-V 2010" quando o CR-V 2010 está nos fatos). Mas um ano JUNTO ao modelo de um veículo aterrado
     // que NÃO corresponde a NENHUM par (modelo, ano) real do turno é HALUCINAÇÃO -> deny; idem um ano atribuído por
     // referência possessiva ao veículo SELECIONADO ("ele é 2020") que diverge do fato. Ano CORRETO passa; inventado bloqueia.
-    {
+    if (authority.lexicalGroundingVeto) {
       const t = normalizeText(composed.text);
       const grounded: { marca?: string | null; modelo?: string | null; ano?: number | null; key: string }[] = [];
       for (const f of facts) {
@@ -722,7 +722,7 @@ export const PolicyEngine = {
     }
 
     // 3. Validação do grounding monetário no texto final renderizado
-    const mentions = parseMoneyMentions(composed.text);
+    const mentions = authority.lexicalGroundingVeto ? parseMoneyMentions(composed.text) : [];
     const realPrices = new Set<number>();
     for (const f of facts) {
       if (f.ok && f.tool === "stock_search") for (const v of stockSearchGroundableVehicles(f.data)) realPrices.add(v.preco);

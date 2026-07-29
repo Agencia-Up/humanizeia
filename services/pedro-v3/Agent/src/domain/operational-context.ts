@@ -16,6 +16,7 @@
 // ============================================================================
 import type { QueryResult } from "./decision.ts";
 import type { VehicleFact } from "./types.ts";
+import type { ActiveSearchConstraints } from "./conversation-state.ts";
 
 /** Estado da consulta de estoque NESTE turno. `not_queried` = a tool não rodou (não é "não existe"). */
 export type StockQueryStatus = "not_queried" | "queried" | "failed";
@@ -40,6 +41,17 @@ export type StockRuntimeFacts = {
  * ⭐As três constantes abaixo são DISTINTAS de propósito: dizer "não existe follow-up" seria MENTIRA (o worker
  * T1/T2/T3 existe e roda). O que não existe é mecanismo para o AGENTE cumprir uma promessa feita nesta conversa.
  */
+/**
+ * Memoria factual de busca entre turnos. Ela informa o recorte que estava ativo
+ * e quais veiculos ja foram mostrados; nao escolhe nem executa a proxima busca.
+ * A LLM continua responsavel por declarar explicitamente os filtros da nova
+ * chamada de stock_search.
+ */
+export type StockSearchMemoryFacts = {
+  readonly activeFilters: Readonly<ActiveSearchConstraints>;
+  readonly shownVehicleKeys: readonly string[];
+};
+
 export type RuntimeCapabilities = {
   readonly sendMessage: boolean;
   /**
@@ -83,6 +95,7 @@ export type AdRuntimeFacts = {
 
 export type OperationalContext = {
   readonly stock: StockRuntimeFacts;
+  readonly searchMemory: StockSearchMemoryFacts;
   readonly capabilities: RuntimeCapabilities;
   readonly ad: AdRuntimeFacts;
 };
@@ -376,6 +389,11 @@ export function buildOperationalContext(input: {
   };
   /** Todas as chaves cuja existência está aterrada no frame atual. */
   readonly groundedVehicleKeys: readonly string[];
+  /** Memoria persistida da busca anterior; contexto, nunca uma ordem de tool. */
+  readonly searchMemory?: {
+    readonly activeFilters?: Readonly<ActiveSearchConstraints> | null;
+    readonly shownVehicleKeys?: readonly string[];
+  };
   /** Chave confirmada por uma `AdIdentityProof` exata e ainda presente no eixo de existência. */
   readonly ad: { readonly identity: string | null; readonly confidence: number | null; readonly referenceKey: string | null };
 }): OperationalContext {
@@ -406,6 +424,11 @@ export function buildOperationalContext(input: {
 
   return {
     stock,
+    searchMemory: {
+      activeFilters: { ...(input.searchMemory?.activeFilters ?? {}) },
+      shownVehicleKeys: [...new Set((input.searchMemory?.shownVehicleKeys ?? [])
+        .filter((key): key is string => typeof key === "string" && key.length > 0))],
+    },
     capabilities: { ...input.capabilities, appointmentBooking: false, deferredFactCheckTask: false, individualDeferredCallbackTask: false },
     ad: {
       identity: input.ad.identity,

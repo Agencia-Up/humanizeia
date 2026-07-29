@@ -2,9 +2,8 @@
 // F2.48 — VERDADE TEMPORAL E SEMÂNTICA POR TURNO (missão SEM 2026-07-10).
 // Reproduz a CONVERSA REAL do incidente (Aircross → fotos → financiamento →
 // "Não" → "Quero financiar ele mesmo / Mas não tenho entrada" → "Até 1200" →
-// "Douglas") com o cérebro emitindo EVIDENCE HERDADA de propósito nos turnos
-// curtos — prova que o deny de proveniência corrige via retry, os slots nascem
-// com autoridade, a WM reconcilia e o CRM não recebe fatos inventados.
+// "Douglas"). Prova que a LLM usa os sinais/fatos do bloco atual, enquanto a
+// engine descarta metadado sem proveniência e nunca aplica mutações inventadas.
 //   npx tsx tests/run-f2-48-semantic-provenance.ts
 // ============================================================================
 import { runCentralConversationTurn, type CentralTurnResult } from "../src/engine/central-engine.ts";
@@ -228,7 +227,7 @@ function extractAfterAgentAsks(agentQuestion: string | null, leadBlock: string):
 async function main(): Promise<void> {
   console.log("== F2.48: verdade temporal e semântica por turno ==");
 
-  // ── [R] CONVERSA REAL reproduzida (evidence herdada de propósito nos turnos curtos) ──
+  // ── [R] CONVERSA REAL reproduzida (sinais atuais guiam a própria LLM) ──
   {
     const db = new FakeCrmDb();
     const c = convWired(db);
@@ -239,20 +238,19 @@ async function main(): Promise<void> {
     const t3 = await c.t("Gostei do Aircross", () => finU([txt("Ótima escolha! Quer ver as fotos dele?")], U("select_vehicle", "Gostei do Aircross", "select")));
     check("[R-T3] seleção canônica persistiu (token da última oferta)", t3.state?.vehicleContext.selected?.key === "rm:aircross" && has(t3.state?.vehicleContext.selected?.label ?? "", "C3 Aircross"), JSON.stringify(t3.state?.vehicleContext.selected));
 
-    // T4 "Sim": o cérebro tenta EVIDENCE HERDADA -> deny UNDERSTANDING_STALE -> corrige no retry.
-    const t4 = await c.t("Sim", (_f, obs) => {
+    // T4 "Sim": a aceitação inequívoca chega tipada no frame; a LLM consulta e envia.
+    const t4 = await c.t("Sim", (f, obs) => {
       const photo = [...obs].reverse().find((o) => o.tool === "vehicle_photos_resolve" && o.ok) as Extract<AgentToolObservation, { tool: "vehicle_photos_resolve"; ok: true }> | undefined;
       if (photo?.data.photoIds.length) {
         return finWithEffects([txt("Perfeito! Aqui estao as fotos do C3 Aircross.")], U("request_photos", "Sim", "send_photos"), [reply, media(photo.data.vehicleKey, photo.data.photoIds)]);
       }
-      return sawStale(obs)
-        ? qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: AIRCROSS.vehicleKey } } }, U("request_photos", "Sim", "send_photos"))
-        : finU([txt("resposta com base no turno errado")], U("select_vehicle", "Gostei do Aircross"));
+      if (f.signals.acceptedPhotoOffer) {
+        return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: AIRCROSS.vehicleKey } } }, U("request_photos", "Sim", "send_photos"));
+      }
+      return finU([txt("Posso ajudar com mais detalhes do C3 Aircross.")], U("other", "Sim"));
     });
-    // Evidence stale is rejected; after the retry the brain understands the
-    // acceptance, receives grounded photo facts and authors the media effect.
     const t4SentPhotos = t4.outbox.some((o) => o.kind === "send_media");
-    check("[R-T4] evidence herdada REJEITADA; 'Sim' aceita a oferta e as fotos do Aircross saem", t4.staleRetried === true && (t4SentPhotos || t4.sentTexts.some((x) => has(x, "Perfeito"))) && t4.sentTexts.some((x) => has(x, "Aircross") || has(x, "Perfeito")), `stale=${t4.staleRetried} media=${t4SentPhotos} texts=${t4.sentTexts.join("|").slice(0, 80)}`);
+    check("[R-T4] 'Sim' aceita a oferta no frame atual e a LLM envia as fotos do Aircross", t4.staleRetried === false && t4SentPhotos && t4.sentTexts.some((x) => has(x, "Aircross") || has(x, "Perfeito")), `stale=${t4.staleRetried} media=${t4SentPhotos} texts=${t4.sentTexts.join("|").slice(0, 80)}`);
     check("[R-T4b] seleção NÃO se perdeu com o 'Sim'", t4.state?.vehicleContext.selected?.key === "rm:aircross", String(t4.state?.vehicleContext.selected?.key));
 
     const t6 = await c.t("Vocês financiam?", () => finU([txt("Sim, financiamos! Você tem um valor para dar de entrada?")], U("financing", "Vocês financiam?")));
@@ -387,14 +385,14 @@ async function main(): Promise<void> {
     const f2 = buildCrmFields(empty2, null, null, "Icom Motors");
     check("[C2-8] hint comercial NÃO entra (placeholder promovível prevalece)", f2.lead_name === undefined, JSON.stringify(f2));
   }
-  // ── [C2-R] decisão stale insistida 3× -> DESCARTADA INTEIRA (nunca renderiza) ──
+  // ── [C2-R] metadado stale é fail-soft; mutação sem proveniência continua descartada ──
   {
     const db = new FakeCrmDb();
     const c = convWired(db);
     await c.t("tem SUV automático?", searchSuv);
     let calls = 0;
-    const tS = await c.t("Sim", () => { calls++; return finU([txt("RESPOSTA STALE QUE NAO PODE SAIR")], U("financing", "tem SUV automático?"), [{ op: "set_slot", slot: "entrada", value: 7777, confidence: 0.9, sourceTurnId: "x" } as never]); });
-    check("[C2-R1] cérebro insistiu (>=3 chamadas) e a resposta stale NUNCA foi enviada", calls >= 3 && !tS.sentTexts.some((x) => has(x, "RESPOSTA STALE")), `calls=${calls} texts=${tS.sentTexts.join("|").slice(0, 80)}`);
+    const tS = await c.t("Sim", () => { calls++; return finU([txt("Claro. Qual desses SUVs você quer ver em fotos?")], U("financing", "tem SUV automático?"), [{ op: "set_slot", slot: "entrada", value: 7777, confidence: 0.9, sourceTurnId: "x" } as never]); });
+    check("[C2-R1] metadado sem proveniência não bloqueia a fala útil nem cria retry", calls === 1 && tS.responseSource === "brain_final" && tS.sentTexts.some((x) => has(x, "SUVs")), `calls=${calls} source=${tS.responseSource} texts=${tS.sentTexts.join("|").slice(0, 80)}`);
     check("[C2-R2] mutação stale NÃO aplicada (entrada intacta)", slotVal(tS.state, "entrada") === undefined, String(slotVal(tS.state, "entrada")));
   }
   // ── [C2-D] pergunta DUPLA de ação -> deny -> reescrita ──
@@ -406,21 +404,12 @@ async function main(): Promise<void> {
     // RD1-2 (Codex #2): alternativa curta e relacionada do MESMO veiculo ("fotos ou condicoes dele?") eh NATURAL e PERMITIDA -> entregue (brain_final).
     check("[C2-D1] alternativa curta relacionada do MESMO veiculo eh ENTREGUE (brain_final, permitida)", tD.sentTexts.length > 0 && (tD.responseSource ?? "").startsWith("brain") && tD.sentTexts.some((x) => /fotos.*ou.*condi/i.test(x)), tD.sentTexts.join("|").slice(0, 100));
   }
-  // ── [C2-H] promessa de consultor SEM efeito -> deny -> reescrita ──
+  // ── [C2-H] a LLM conduz sem depender de veto lexical da engine ──
   {
     const db = new FakeCrmDb();
     const c = convWired(db);
-    // MISSÃO PII (invariantes 9/10): o deny de promessa-sem-efeito passou a guiar TRANSPARÊNCIA honesta
-    // ("transferência NÃO pode ser executada… PROIBIDO condicionar a CPF") — o gatilho do script acompanha
-    // o texto novo (comportamento protegido é o MESMO: deny dispara e a LLM reescreve sem promessa falsa).
-    // ⭐DEGRAU 1 (2026-07-18): o gatilho casava a FRASE exata do deny e quebrava a cada melhoria de redação (já foi
-    // reescrito uma vez pela missão PII, e de novo quando o feedback parou de ensinar "só transfere se o cliente pedir").
-    // Agora casa o CONCEITO — qualquer deny cujo texto fale de transferência/encaminhar/consultor —, então o
-    // comportamento protegido (deny dispara e a LLM reescreve SEM promessa falsa) segue coberto sem acoplar à palavra.
-    const tH = await c.t("quero fechar negócio", (f, obs) => obs.some((o) => o.tool === "response" && !o.ok && /(transfer[êe]nci|encaminhar|consultor)/i.test((o as { error?: { message?: string } }).error?.message ?? ""))
-      ? finU([txt("Perfeito! Vamos avançar: quer agendar uma visita para ver o carro de perto?")], U("other", "quero fechar negócio"))
-      : finU([txt("Perfeito! Vou chamar nosso consultor agora para finalizar com você.")], U("other", "quero fechar negócio")));
-    check("[C2-H1] promessa de consultor sem efeito REJEITADA e reescrita conduzindo", tH.sentTexts.length > 0 && !tH.sentTexts.some((x) => has(x, "consultor")) && tH.sentTexts.some((x) => has(x, "visita")), tH.sentTexts.join("|").slice(0, 100));
+    const tH = await c.t("quero fechar negócio", () => finU([txt("Perfeito! Vamos avançar. Você prefere ver o carro na loja hoje ou amanhã?")], U("other", "quero fechar negócio")));
+    check("[C2-H1] LLM conduz o fechamento em brain_final, sem promessa operacional inventada", tH.responseSource === "brain_final" && tH.sentTexts.length === 1 && tH.sentTexts.some((x) => has(x, "loja")) && !tH.sentTexts.some((x) => has(x, "consultor")), `source=${tH.responseSource} texts=${tH.sentTexts.join("|").slice(0, 100)}`);
   }
   // ── [C2-F] despedida isolada: a LLM fecha; não reabre o funil ──
   {
@@ -462,31 +451,21 @@ async function main(): Promise<void> {
       if (photo?.data.photoIds.length) {
         return finWithEffects([txt("Claro! Aqui estão as fotos do C3 Aircross.")], photoU, [reply, media(photo.data.vehicleKey, photo.data.photoIds)]);
       }
-      if (sawStale(obs)) {
-        return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: AIRCROSS.vehicleKey } } }, photoU);
-      }
-      // Reproduz o incidente: a LLM entendeu request_photos, mas tentou negar
-      // a disponibilidade sem consultar/enviar. O validador deve devolver o
-      // turno à própria LLM, mesmo existindo um objetivo antigo de pagamento.
-      return finU([txt("No momento, não tenho fotos desse veículo.")], photoU);
+      return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: AIRCROSS.vehicleKey } } }, photoU);
     });
-    check("[C2-PH-C1] resposta sem foto é rejeitada e reautorada pela LLM", tP.staleRetried, `source=${tP.responseSource}`);
+    check("[C2-PH-C1] LLM usa o pedido atual diretamente, sem depender de deny/retry", !tP.staleRetried && tP.responseSource === "brain_final", `source=${tP.responseSource}`);
     check("[C2-PH-C2] pedido atual termina em send_media do veículo selecionado", tP.outbox.some((x) => x.kind === "send_media") && tP.responseSource?.startsWith("brain") === true, `source=${tP.responseSource} kinds=${tP.outbox.map((x) => x.kind).join(",")}`);
     check("[C2-PH-C3] objetivo antigo não troca o alvo da mídia", tP.state?.vehicleContext.selected?.key === AIRCROSS.vehicleKey, String(tP.state?.vehicleContext.selected?.key));
   }
-  // ── [C2-SC] a fala da LLM também respeita os slots; CRM seguro não basta ──
+  // ── [C2-SC] fatos de slot chegam à LLM; a engine não precisa reescrever a conversa ──
   {
     const db = new FakeCrmDb();
     const c = convWired(db);
-    const tU = await c.t("certo", (_f, obs) => obs.some((o) => o.tool === "response" && !o.ok && /slot ainda est[aá] DESCONHECIDO/i.test((o as { error?: { message?: string } }).error?.message ?? ""))
-      ? finU([txt("Certo! Como posso te ajudar agora?")], U("smalltalk", "certo"))
-      : finU([txt("Anotei que você não tem carro para troca.")], U("other", "certo")));
-    check("[C2-SC1] LLM não pode afirmar troca desconhecida; reautora sem inventar", tU.responseSource === "brain_retry" && !tU.sentTexts.some((x) => has(x, "não tem carro")), tU.sentTexts.join("|").slice(0, 100));
+    const tU = await c.t("certo", () => finU([txt("Certo! Como posso te ajudar agora?")], U("smalltalk", "certo")));
+    check("[C2-SC1] LLM responde sem inventar troca e a engine entrega em brain_final", tU.responseSource === "brain_final" && !tU.sentTexts.some((x) => has(x, "não tem carro")), tU.sentTexts.join("|").slice(0, 100));
     await c.t("quero financiar", () => finU([txt("Você tem um valor para dar de entrada?")], U("financing", "quero financiar")));
-    const tQ = await c.t("Não", (_f, obs) => obs.some((o) => o.tool === "response" && !o.ok && /SEM entrada/i.test((o as { error?: { message?: string } }).error?.message ?? ""))
-      ? finU([txt("Entendi, seguimos sem entrada. Qual parcela caberia para você?")], U("financing", "Não"))
-      : finU([txt("Anotei o valor de entrada. Tem algum carro para dar de troca?")], U("financing", "Não")));
-    check("[C2-SC2] entrada=0 não pode ser narrada como entrada positiva mesmo antes de pergunta", tQ.responseSource === "brain_retry" && !tQ.sentTexts.some((x) => has(x, "anotei o valor de entrada")), tQ.sentTexts.join("|").slice(0, 100));
+    const tQ = await c.t("Não", () => finU([txt("Entendi, seguimos sem entrada. Qual parcela caberia para você?")], U("financing", "Não")));
+    check("[C2-SC2] entrada=0 chega corretamente à LLM e não depende de retry lexical", tQ.responseSource === "brain_final" && !tQ.sentTexts.some((x) => has(x, "anotei o valor de entrada")) && tQ.sentTexts.some((x) => has(x, "sem entrada")), tQ.sentTexts.join("|").slice(0, 100));
   }
 
   // ── [W] fonte única da pergunta de slot no texto do agente ──

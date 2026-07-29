@@ -11,13 +11,15 @@ import { InMemoryPersistence, FakeClock, FakeIdGen } from "../src/adapters/persi
 import { ScriptedAgentBrain, type BrainResponder } from "../src/adapters/llm/fake-agent-brain.ts";
 import { buildTenantCatalog } from "../src/engine/catalog-utils.ts";
 import { CatalogClaimExtractor } from "../src/engine/turn-context-preparer.ts";
+import { buildFrameSignals } from "../src/engine/turn-frame-builder.ts";
+import { constraintsToStockInput, detectCommercialConstraints, mergeActiveConstraints } from "../src/engine/commercial-constraints.ts";
 import { buildSdrQualificationPolicy } from "../src/engine/sdr-conductor.ts";
 import { redact } from "../src/domain/effect-intent.ts";
 import type { TurnContextPreparer } from "../src/domain/context.ts";
 import type { DecisionLlm } from "../src/domain/llm.ts";
 import type { TenantBusinessInfoSource } from "../src/engine/tenant-business-info.ts";
 import type { AgentBrainStep, AgentBrainDecision, TurnUnderstanding, PrimaryIntent } from "../src/domain/agent-brain.ts";
-import type { ProposedEffectPlan, QueryCall, QueryResult, ResponsePart, ResponseDraft, TurnRelation } from "../src/domain/decision.ts";
+import type { ProposedEffectPlan, QueryCall, QueryResult, ResponsePart, ResponseDraft, TurnInterpretation, TurnRelation } from "../src/domain/decision.ts";
 import type { VehicleFact } from "../src/domain/types.ts";
 
 let ok = 0, fail = 0; const fails: string[] = [];
@@ -71,15 +73,26 @@ const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
-// ⭐AUTORIDADE (audit Codex): turnos-default desta suíte são BUSCAS — a LLM real classifica search_stock. Declara o
-// ATO mas resiste a chamar a tool: o executor determinístico garante a execução (o que a suíte prova).
+// ⭐AUTORIDADE: a fake representa a decisão da LLM e envia filtros lidos no bloco/histórico. A engine apenas
+// impede que excludeKeys esconda veículos nunca apresentados; não inventa o escopo comercial da busca.
 const resist: BrainResponder = (f, observations) => {
   const understanding = {
     ...U("search_stock"), requestedCapabilities: ["stock_search"] as TurnUnderstanding["requestedCapabilities"],
     evidence: [{ capability: "stock_search" as const, quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
   };
   const stock = [...observations].reverse().find((o) => o.tool === "stock_search" && o.ok) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } } | undefined;
-  if (!stock) return { kind: "query", call: { tool: "stock_search", input: {} }, understanding };
+  if (!stock) {
+    const priorLeadContext = f.recentTranscript.filter((t) => t.role === "lead").map((t) => t.text).join("\n");
+    const priorSignals = buildFrameSignals(priorLeadContext, { relation: "ambiguous" } as TurnInterpretation);
+    const currentSignals = buildFrameSignals(f.block, { relation: "ambiguous" } as TurnInterpretation);
+    const prior = detectCommercialConstraints({ block: priorLeadContext, signals: priorSignals, claimExtractor: extractor });
+    const current = detectCommercialConstraints({ block: f.block, signals: currentSignals, claimExtractor: extractor });
+    const input = constraintsToStockInput(mergeActiveConstraints(prior, current));
+    if (f.signals.mentionsMoreOptions && f.conversationContext.lastVisibleOffer) {
+      input.excludeKeys = f.conversationContext.lastVisibleOffer.items.map((item) => item.vehicleKey);
+    }
+    return { kind: "query", call: { tool: "stock_search", input }, understanding };
+  }
   return stock.data.items.length > 0
     ? finU([txt("Encontrei estas opções para você:"), offer(stock.data.items.map((v) => v.vehicleKey)), txt("Qual delas chamou sua atenção?")], "offer_stock", understanding)
     : finU([txt("Não encontrei outras opções com esses critérios agora. Quer ajustar a faixa ou o tipo?")], "empty_more_options", understanding);

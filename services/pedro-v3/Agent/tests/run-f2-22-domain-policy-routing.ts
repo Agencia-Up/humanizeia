@@ -151,16 +151,17 @@ async function main(): Promise<void> {
     const cap = await c.t("aonde fica a loja?", "ambiguous", [q({ tool: "tenant_business_info", input: { topic: "address" } }), a2]);
     check("[A2] institucional NOMEANDO o carro lembrado passa (memória aterra o nome)", cap.committed && !cap.degraded && has(cap.outbox, "Charles Schnneider") && has(cap.outbox, "Onix"), `src=${cap.src} text="${cap.outbox}"`);
   }
-  // B) MISTO: institucional + ATRIBUTO de veículo. "ele é automático" (Onix é Manual) SEM vehicle_details -> BLOQUEADO;
-  //    institucional continua respondido (não vira technical_fallback). Atributo inventado nunca passa por ser institucional.
+  // B) MISTO: institucional + prosa livre sobre veículo. No central_active a engine não interpreta lexicalmente
+  //    a resposta para decidir se a conversa está correta; fatos verificáveis devem usar as partes estruturadas.
+  //    A proteção de vehicle_ref inválido continua coberta pelas suítes de grounding.
   {
     const c = conv(makeBI(ADDR, HOURS), selectedOnix); await c.seed();
     const cap = await c.t("aonde fica a loja e ele é automático?", "asks_vehicle_detail", (_frame, obs) => {
       if (obs.some((o) => !o.ok && o.error.code === "FINAL_AUTHORSHIP_REQUIRED")) return fin([txt(`A loja fica na ${ADDR}.`)]);
       return fin([txt(`A loja fica na ${ADDR}. Ele é automático.`)]);
     });
-    check("[B] atributo inventado (automático) BLOQUEADO mesmo em msg institucional", cap.committed && !has(cap.outbox, "automatic"), `text="${cap.outbox}"`);
-    check("[B] institucional ainda respondido (endereço), sem technical_fallback", has(cap.outbox, "Charles Schnneider") && !cap.degraded, `src=${cap.src}`);
+    check("[B] engine não julga nem reescreve prosa comercial por palavra", cap.committed && has(cap.outbox, "automatic") && cap.src === "brain_final", `src=${cap.src} text="${cap.outbox}"`);
+    check("[B] institucional segue autorado pela LLM, sem retry lexical", has(cap.outbox, "Charles Schnneider") && !cap.degraded && cap.policyFeedback.length === 0, `src=${cap.src} fb=${JSON.stringify(cap.policyFeedback)}`);
   }
   // C) MISTO: institucional + km. Exige vehicle_details do selecionado; responde horário + km REAL.
   {
@@ -168,18 +169,17 @@ async function main(): Promise<void> {
     const cap = await c.t("qual horário e quantos km ele tem?", "asks_vehicle_detail", (_f, obs) => obs.some((o) => o.tool === "vehicle_details" && o.ok) ? fin([txt(`Atendemos das 9h às 19h. O Onix tem`), vref(ONIX, "km"), txt("km rodados.")]) : q({ tool: "vehicle_details", input: { vehicleKey: ONIX.vehicleKey } }));
     check("[C] institucional + km: horário + vehicle_details + km real (132.623)", cap.committed && !cap.degraded && has(cap.outbox, "9h") && cap.exec.includes("vehicle_details") && has(cap.outbox, "132.623"), `exec=${JSON.stringify(cap.exec)} text="${cap.outbox}"`);
   }
-  // D) MISTO: institucional + disponibilidade de veículo NÃO ATERRADO no turno (Renegade, do catálogo mas sem
-  //    stock_search/seleção). Afirmar disponibilidade sem grounding é BLOQUEADO (força stock_search); endereço respondido.
-  //    NOTA: modelo FORA do catálogo (ex.: "Corolla") não é capturado pelo CatalogClaimExtractor — gap GERAL pré-existente,
-  //    não do roteamento por domínio (registrado no handoff). Aqui usamos um modelo do catálogo não-aterrado.
+  // D) MISTO: institucional + disponibilidade em prosa. A engine não força stock_search nem decide a resposta
+  //    comercial por um catálogo lexical; a escolha de consultar estoque pertence à LLM. Efeitos e referências
+  //    estruturadas continuam exigindo prova factual própria.
   {
     const c = conv(makeBI(ADDR, HOURS)); await c.seed();
     const cap = await c.t("onde fica a loja e o Renegade 2019 está disponível?", "ambiguous", (_frame, obs) => {
       if (obs.some((o) => !o.ok && o.error.code === "FINAL_AUTHORSHIP_REQUIRED")) return fin([txt(`A loja fica na ${ADDR}. Ainda preciso consultar a disponibilidade desse veículo.`)]);
       return fin([txt(`A loja fica na ${ADDR}. O Renegade 2019 está disponível sim!`)]);
     });
-    check("[D] disponibilidade de veículo não-aterrado BLOQUEADA mesmo em msg institucional", cap.committed && !has(cap.outbox, "renegade"), `text="${cap.outbox}"`);
-    check("[D] endereço respondido, sem technical_fallback", has(cap.outbox, "Charles Schnneider") && !cap.degraded, `src=${cap.src}`);
+    check("[D] engine não força consulta nem censura disponibilidade em prosa", cap.committed && has(cap.outbox, "renegade") && cap.src === "brain_final", `src=${cap.src} text="${cap.outbox}"`);
+    check("[D] endereço respondido sem retry lexical", has(cap.outbox, "Charles Schnneider") && !cap.degraded && cap.policyFeedback.length === 0, `src=${cap.src} fb=${JSON.stringify(cap.policyFeedback)}`);
   }
   // E) MISTO: institucional + FOTO. Endereço + send_media (foto exige mídia, não promete sem enviar).
   {
@@ -234,15 +234,14 @@ async function main(): Promise<void> {
     const cap = await c.t("beleza", "ambiguous", [fin([txt("Que bom, Douglas! Quer ver mais alguma opção?")])]);
     check("[L] nome conhecido: condução entregue (brain_final), sem reperguntar nome", !/qual.{0,15}(seu\s+)?nome/i.test(cap.outbox) && cap.committed, `text="${cap.outbox}"`);
   }
-  // ── COMPLETUDE DO TURNO (prompt-first): a resposta não pode IGNORAR um pedido explícito ──────────────────────────
-  // M) HORÁRIO pedido, resposta só ENDEREÇO (ignora horário) -> REJEITADA (feedback) e o RETRY responde o horário.
-  //    O 1º final é pré-emptado pela resolução institucional; o 2º só-endereço é NEGADO pela completude; o 3º acerta.
+  // ── AUTORIA DO TURNO: completude conversacional pertence à LLM/prompt do portal ──────────────────────────────────
+  // M) HORÁRIO pedido, resposta só ENDEREÇO: a engine não cria um mini-funil de retry para obrigar determinado tópico.
   {
     const c = conv(makeBI(ADDR, HOURS)); await c.seed();
     let n = 0;
     const cap = await c.t("qual o horário de vocês?", "ambiguous", () => { n++; return n >= 3 ? fin([txt("Atendemos de segunda a sábado, das 9h às 19h!")]) : fin([txt(`Nossa loja fica na ${ADDR}.`)]); });
-    check("[M] horário pedido: resposta só-endereço é REJEITADA e o retry responde o HORÁRIO", cap.committed && !cap.degraded && has(cap.outbox, "9h") && !has(cap.outbox, "Charles"), `src=${cap.src} text="${cap.outbox}"`);
-    check("[M] feedback de completude citou o tópico pedido (horário)", cap.policyFeedback.some((f) => /horario/.test(normalizeText(f))), JSON.stringify(cap.policyFeedback));
+    check("[M] engine preserva a resposta autorada sem impor completude conversacional", cap.committed && !cap.degraded && cap.src === "brain_final" && has(cap.outbox, "Charles") && !has(cap.outbox, "9h"), `src=${cap.src} text="${cap.outbox}"`);
+    check("[M] nenhuma policy interna instrui qual tópico responder", cap.policyFeedback.length === 0, JSON.stringify(cap.policyFeedback));
   }
   // N) HORÁRIO respondido corretamente passa de primeira (guarda não over-fire quando o pedido é atendido).
   {
@@ -251,11 +250,8 @@ async function main(): Promise<void> {
     const cap = await c.t("qual o horário?", "ambiguous", [nFin, nFin, nFin]);
     check("[N] horário respondido -> passa sem deny (completude satisfeita)", cap.committed && !cap.degraded && has(cap.outbox, "9h") && !cap.policyFeedback.some((f) => /horario/.test(normalizeText(f))), `src=${cap.src} fb=${JSON.stringify(cap.policyFeedback)}`);
   }
-  // O) FOTO pedida: a não-resposta é REJEITADA e a LLM usa o feedback factual
-  //    para chamar vehicle_photos_resolve com o Onix SELECIONADO. A engine não
-  //    escolhe nem executa a tool comercial por conta própria.
-  //    A LLM recebe os photoIds aterrados e é quem redige/propoe o send_media no passe final.
-  //    (A ausência honesta LEGÍTIMA — alvo sem fotos — segue honrada; coberto em F2.33 A-7.)
+  // O) FOTO pedida, mas a LLM responde sem tool/efeito: a engine não força vehicle_photos_resolve nem fabrica mídia.
+  //    O caso P, logo abaixo, prova o caminho correto quando a própria LLM escolhe resolver e enviar as fotos.
   {
     const c = conv(makeBI(ADDR, HOURS), selectedOnix); await c.seed();
     const cap = await c.t("me manda foto do Onix", "ambiguous", (_frame, obs) => {
@@ -267,7 +263,8 @@ async function main(): Promise<void> {
       }
       return fin([txt("Beleza! Deixa eu providenciar isso pra você.")]);
     });
-    check("[O] LLM resolve fotos e autora o send_media", cap.committed && cap.hasMedia && cap.src === "brain_retry" && cap.exec.filter((tool) => tool === "vehicle_photos_resolve").length === 1 && cap.policyFeedback.some((f) => /foto/.test(normalizeText(f))), `src=${cap.src} text="${cap.outbox}" media=${cap.hasMedia} exec=${JSON.stringify(cap.exec)} fb=${JSON.stringify(cap.policyFeedback)}`);
+    check("[O] engine não força tool nem efeito de foto", cap.committed && !cap.hasMedia && cap.src === "brain_final" && cap.exec.length === 0, `src=${cap.src} text="${cap.outbox}" media=${cap.hasMedia} exec=${JSON.stringify(cap.exec)}`);
+    check("[O] ausência de tool não cria retry comercial oculto", cap.policyFeedback.length === 0, JSON.stringify(cap.policyFeedback));
   }
   // P) FOTO pura com send_media satisfaz a completude (passa) — não força ausência honesta quando há mídia.
   {

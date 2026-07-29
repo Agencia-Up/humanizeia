@@ -213,6 +213,11 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
         limits: CENTRAL_LIMITS, maxValidationAttempts: Number(process.env.CENTRAL_EVAL_MAX_VALIDATION_ATTEMPTS ?? "3"), brainMaxSteps: Number(process.env.CENTRAL_EVAL_BRAIN_MAX_STEPS ?? "6"), allowedTools: [...CENTRAL_ALLOWED_TOOLS],
         tenantPolicies: assembly.runtimeConfig.tenantPolicies,
         providerCapability: { send_message: "none", send_media: "none" },
+        // Fidelidade com o pilot-active-root: este harness monta uma fonte real
+        // de fotos e a rota de send_media é simulada até o outbox. Sem este
+        // fato, operationalContext.capabilities.sendMedia ficava `null` no
+        // smoke, embora em produção seja `true`, alterando a decisão da LLM.
+        mediaDeliveryAvailable: true,
         singleAuthor: opts.singleAuthor ?? false, llmFirst: opts.llmFirst ?? false,
         // MISSÃO PII: handoff plannable no smoke (fake — efeitos seguem OFF/simulados; NENHUM vendedor real
         // é notificado) + vínculo de lead sintético p/ o gate crmWriteEnabled&&leadId do handoffPlannable.

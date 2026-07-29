@@ -1,6 +1,7 @@
-// pilot-active-root.ts — F2.6F
-// Active pilot composition root for Pedro v3. It is still pilot-scoped and
-// test-first: no global rollout, no fallback by email, no CRM/handoff dispatch.
+// pilot-active-root.ts — composition root do Pedro v3.
+// O nome historico "pilot" permanece por compatibilidade de imports/rotas,
+// mas o rollout de producao e global e isolado por tenant+agent. CRM, handoff,
+// midia e demais efeitos passam pelos dispatchers/gates tipados deste root.
 
 import type { Clock, ConversationRoutingStore, Persistence } from "../domain/ports.ts";
 import type { QueryLoopLimits } from "../domain/context.ts";
@@ -61,9 +62,10 @@ import type {
 import { sanitizeAutomationReason } from "./automation-execution-gate.ts";
 import { resolveConversationWhatsAppInstance } from "../domain/whatsapp-instance-binding.ts";
 
-// R13-D/4: modo do cérebro do piloto. off = handler-first (v3 atual). central_shadow = handler-first responde ao
-// lead E o cérebro central roda ISOLADO p/ comparação (zero escrita canônica, zero dispatch). central_active = o
-// cérebro central conduz o turno canônico e despacha (SÓ Douglas; ativar só após auditoria Codex).
+// R13-D/4: modo do cérebro. central_active é o caminho canônico de produção e
+// usa autoria única/LLM-first. central_shadow mantém o handler legado como
+// canônico e roda o cérebro isolado para comparação. off é rollback explícito
+// para handler-first; não é o padrão nem restringe o v3 a uma conta específica.
 export type PilotBrainMode = "off" | "central_shadow" | "central_active";
 
 export type PilotActiveConfig = {

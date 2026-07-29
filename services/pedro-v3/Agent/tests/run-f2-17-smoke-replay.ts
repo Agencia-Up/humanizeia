@@ -209,7 +209,7 @@ async function main(): Promise<void> {
   // T10: nome + sem troca (fato do lead, determinístico).
   caps.push(await turn("Meu nome é Douglas e não tenho carro para troca", "ambiguous", [fin([txt("Ótimo, Douglas! Anotado que você não tem troca. Qual valor de entrada você pensa?")])]));
   // T11: visita + sábado (fato do lead, sem objetivo pendente).
-  caps.push(await turn("Quero visitar sábado", "ambiguous", [fin([txt("Perfeito, Douglas! Anotei sua visita para sábado. Já vou preparar tudo para o seu atendimento.")])]));
+  caps.push(await turn("Quero visitar sábado", "ambiguous", [fin([txt("Entendi, Douglas: você prefere visitar no sábado. Qual horário seria melhor?")])]));
 
   const c = (n: number): Cap => caps[n - 1];
   // GLOBAIS

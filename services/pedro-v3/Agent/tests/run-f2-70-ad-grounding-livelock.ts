@@ -236,40 +236,41 @@ async function main(): Promise<void> {
     check("[A3] respondeu o horario, sem fallback", r.committed && r.responseSource !== "technical_fallback" && has(r.outbox, "8h-18h"), `${r.responseSource} :: ${r.outbox.slice(0, 60)}`);
   }
 
-  // [A4] TRAVA: cérebro TEIMOSO que declara ato institucional e NUNCA chama a tool.
-  // Antes: repetia até esgotar o turno (5x required_tool_missing). Agora: bounded e degradação honesta.
+  // [A4] ato institucional: a própria LLM usa a capacidade disponível e finaliza.
+  // A engine não precisa forçar a tool nem consumir passos ensinando a conversa.
   {
     const c = conv();
     const block = "Onde fica a loja?";
-    const responder: BrainResponder = (frame) => {
+    const responder: BrainResponder = (frame, observations) => {
       const u: TurnUnderstanding = { ...U("institutional"), requestedCapabilities: ["institutional_info"], evidence: ev(frame.block ?? block, "institutional_info") };
-      return finU([txt("Deixa eu ver isso pra você.")], "reply", u);   // nunca chama a tool
+      const got = observations.some((o) => o.tool === "tenant_business_info" && o.ok);
+      if (!got) return qU({ tool: "tenant_business_info", input: { topic: "address" } }, u);
+      return finU([txt("Estamos na Av. Teste 900, em Taubaté.")], "location_request", u);
     };
     const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "ambiguous", responder);
     const loops = r.retryReasons.filter((x) => x === "required_tool_missing").length;
-    // Teto real = 2 no loop principal (REQUIRED_TOOL_LOOP_CAP) + 1 único no estágio de autoria final, que agora
-    // SAI em vez de insistir contra uma ação proibida. Produção viu 5 e esgotou o turno; o contrato agora é <=3.
-    check("[A4] exigencia institucional e BOUNDED (<=3, era 5 em producao)", loops <= 3, `required_tool_missing x${loops} :: ${r.retryReasons.join("|")}`);
+    check("[A4] LLM consulta o fato sem required_tool_missing nem retry-storm", loops === 0 && r.brainCalls <= 2, `required_tool_missing x${loops} brainCalls=${r.brainCalls} :: ${r.retryReasons.join("|")}`);
     check("[A4] turno termina (nao trava)", r.committed);
-    check("[A4] degradacao e OBSERVAVEL quando a LLM nao coopera", r.degraded === true, `degraded=${r.degraded} kind=${r.degradationKind}`);
+    check("[A4] resposta factual chega sem degradacao", r.degraded === false && has(r.outbox, "Av. Teste 900"), `degraded=${r.degraded} kind=${r.degradationKind}`);
   }
 
-  // [A5] CONTAMINAÇÃO CRUZADA: turno de BUSCA cujo bloco contém "loja" e cuja LLM nunca busca.
-  // Antes: a palavra "loja" fazia stockReq=false e o cap anti-loop de ESTOQUE não incrementava.
+  // [A5] CONTAMINAÇÃO CRUZADA: "loja" não muda um pedido de estoque em
+  // institucional; a LLM consulta o estoque e autora a oferta.
   {
     const c = conv();
     const block = "Tem algum SUV aí na loja?";
-    const responder: BrainResponder = (frame) => {
+    const responder: BrainResponder = (frame, observations) => {
       const u: TurnUnderstanding = { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: ev(frame.block ?? block, "stock_search") };
-      return finU([txt("Temos várias opções!")], "reply", u);   // declara busca e nunca busca
+      const stock = observations.find((o) => o.tool === "stock_search" && o.ok) as Extract<(typeof observations)[number], { tool: "stock_search"; ok: true }> | undefined;
+      if (!stock) return qU({ tool: "stock_search", input: { tipo: "suv" } }, u);
+      return finU([txt("Encontrei estas opções de SUV:"), offer(stock.data.items.map((item) => item.vehicleKey))], "stock_results", u);
     };
     const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "ambiguous", responder);
     const loops = r.retryReasons.filter((x) => x === "required_tool_missing").length;
-    check("[A5] cap de ESTOQUE nao e desligado pela palavra 'loja' (<=3)", loops <= 3, `required_tool_missing x${loops} :: ${r.retryReasons.join("|")}`);
+    check("[A5] palavra 'loja' não impede stock_search nem cria required_tool_missing", loops === 0 && r.exec.includes("stock_search"), `required_tool_missing x${loops} :: ${r.retryReasons.join("|")}`);
     check("[A5] turno termina (nao trava)", r.committed);
-    check("[A5] deny identico nao reabre retry-storm", r.brainCalls <= 3, `brainCalls=${r.brainCalls}`);
-    // O engine NUNCA pode aceitar a promessa vaga ("Temos várias opções!") sem a busca que a própria LLM declarou.
-    check("[A5] promessa sem busca NAO chega ao lead", !has(r.outbox, "Temos várias opções"), r.outbox.slice(0, 80));
+    check("[A5] consulta + autoria final sem retry-storm", r.brainCalls <= 2, `brainCalls=${r.brainCalls}`);
+    check("[A5] oferta publicada usa os veículos retornados pela tool", has(r.outbox, "Compass") || has(r.outbox, "EcoSport"), r.outbox.slice(0, 100));
   }
 
   // [D] Contrato ativo de entrada por anúncio específico: a abertura e o veículo

@@ -274,25 +274,22 @@ async function main(): Promise<void> {
   check("[F2] visita real não cai em fallback", !cfH.terminalSafe && has(String(slotVal(cfH, "diaHorario") ?? ""), "quinta") && has(String(slotVal(cfH, "diaHorario") ?? ""), "13"), `src=${cfH.src} dia=${String(slotVal(cfH, "diaHorario") ?? "")}`);
 
   // ══════════════════════════════════════════════════════════════════════════
-  // CENÁRIO E — BACKSTOP DETERMINÍSTICO do handoff (reproduz o T10 flaky do smoke real): o cérebro emite request_human com
-  // entendimento FRACO (evidence "vendedor" NÃO casa HUMAN_ACT_RX -> untrusted) e, na 1ª tentativa, PEDE O NOME sem propor
-  // handoff (nem promete no texto). Nem requestsHuman nem promisesHumanHandoff disparam — mas a fala LITERAL do lead pede
-  // humano. O engine DEVE negar (feedback+retry) e a LLM RE-AUTORA incluindo o handoff. NUNCA vira coleta de dado.
+  // CENÁRIO E — AUTORIA DO HANDOFF: a LLM reconhece o pedido humano com
+  // evidência do bloco atual e propõe o efeito. A engine valida/materializa,
+  // mas não cria a decisão comercial nem força um retry para ensinar a ação.
   // ══════════════════════════════════════════════════════════════════════════
-  console.log("\n-- Cenário E: backstop determinístico do handoff (understanding fraco) --");
+  console.log("\n-- Cenário E: handoff autorado pela LLM, sem backstop comercial da engine --");
   const ce = conv();
   await ce.t("Boa tarde", () => finU([txt("Boa tarde! Sou o Aloan da Icom. Que tipo de carro você procura?")], "reply", U("smalltalk", [ev(undefined, "boa tarde")])));
   let humanAttempt = 0;
-  const humanFlaky: BrainResponder = () => {
+  const humanReady: BrainResponder = () => {
     humanAttempt += 1;
-    // primaryIntent=request_human mas evidence "vendedor" (sem "quero/preciso/gostaria" na própria evidence) -> UNTRUSTED.
-    const uh: TurnUnderstanding = { primaryIntent: "request_human", requestedCapabilities: ["handoff"], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [ev("handoff", "vendedor")], isTopicChange: false, answeredLeadQuestions: [] };
-    if (humanAttempt === 1) return finU([txt("Claro! Qual é o seu primeiro nome para eu registrar o atendimento?")], "ask_name", uh, [reply]);   // ⛔ pede nome, SEM handoff
-    return finU([txt("Perfeito! Vou te transferir para um consultor agora.")], "handoff", uh, [reply, handoffAct]);                                    // ✅ reescreve com handoff
+    const uh: TurnUnderstanding = { primaryIntent: "request_human", requestedCapabilities: ["handoff"], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [ev("handoff", "quero falar com um vendedor")], isTopicChange: false, answeredLeadQuestions: [] };
+    return finU([txt("Perfeito! Vou te transferir para um consultor agora.")], "handoff", uh, [reply, handoffAct]);
   };
-  const ceH = await ce.t("quero falar com um vendedor", humanFlaky);
-  check("[E1] ⭐backstop forçou o RETRY (cérebro chamado >1x)", humanAttempt >= 2, `attempts=${humanAttempt}`);
-  check("[E2] ⭐final tem handoff + notify_seller (pedido humano NUNCA vira coleta de dado)", ceH.hasHandoff && ceH.hasNotify, `handoff=${ceH.hasHandoff} notify=${ceH.hasNotify}`);
+  const ceH = await ce.t("quero falar com um vendedor", humanReady);
+  check("[E1] LLM decide o handoff em uma tentativa, sem correção comercial da engine", humanAttempt === 1, `attempts=${humanAttempt}`);
+  check("[E2] efeito autorado vira handoff + notify_seller", ceH.hasHandoff && ceH.hasNotify, `handoff=${ceH.hasHandoff} notify=${ceH.hasNotify}`);
   check("[E3] resposta VISÍVEL final NÃO pede o nome (não coleta dado)", !/qual.*(seu|o)\s+(primeiro\s+)?nome|seu nome/.test(norm(ceH.outbox)), ceH.outbox);
   check("[E4] brain + sem tool comercial + não technical_fallback", isBrain(ceH.src) && ceH.stockObs === 0 && ceH.detailObs === 0 && !ceH.terminalSafe, `src=${ceH.src}`);
 

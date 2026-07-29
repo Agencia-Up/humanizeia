@@ -68,6 +68,16 @@ class ComposeSpyLlm implements DecisionLlm { async proposeNextQueryOrFinal(): Pr
 class RelPreparer implements TurnContextPreparer { relation: TurnRelation = "ambiguous"; async prepare(): Promise<{ interpretation: { relation: TurnRelation }; tenantCatalog: typeof catalog; claimExtractor: typeof extractor }> { return { interpretation: { relation: this.relation }, tenantCatalog: catalog, claimExtractor: extractor }; } }
 
 const U = (primaryIntent: PrimaryIntent): TurnUnderstanding => ({ primaryIntent, requestedCapabilities: [], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [], isTopicChange: false, answeredLeadQuestions: [] });
+const tradeU = (quote: string): TurnUnderstanding => ({
+  primaryIntent: "trade_in",
+  requestedCapabilities: [],
+  subject: "none",
+  subjectValue: null,
+  subjectSource: "current_turn",
+  evidence: [{ capability: null, quote }] as never,
+  isTopicChange: false,
+  answeredLeadQuestions: [],
+});
 const txt = (content: string): ResponsePart => ({ type: "text", content });
 const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan;
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
@@ -138,16 +148,15 @@ const tv = (c: Cap): { marca?: string; modelo?: string; ano?: number; km?: numbe
 const NO_DISCOVERY = (out: string): boolean => !has(out, "me conta um pouco mais do que voce procura") && !has(out, "o que voce procura");
 
 // Acolhimento REAL de troca: nomeia o carro DO LEAD + avança UMA pergunta (o que a gpt-4.1-mini autora).
-const ackTradeHilux: BrainResponder = () => finU([txt("Perfeito! Anotei sua Hilux 2020 com 85 mil km para avaliação na troca. Você pretende dar algum valor de entrada?")], "reply", U("trade_in"));
+const ackTradeHilux: BrainResponder = (frame) => finU([txt("Perfeito! Anotei sua Hilux 2020 com 85 mil km para avaliação na troca. Você pretende dar algum valor de entrada?")], "reply", tradeU(frame.block));
 
-// Reproduz a falha real da Suzi: a LLM entende troca, mas tenta consultar os
-// detalhes do veículo selecionado. O engine deve negar a tool e devolver o ato
-// para a própria LLM concluir, sem escrever a resposta comercial por ela.
-const tradeBrainTryingWrongDetail: BrainResponder = (_frame, obs) => {
-  const wasBlocked = obs.some((o) => o.tool === "response" && !o.ok);
-  if (!wasBlocked) return qU({ tool: "vehicle_details", input: { vehicleKey: NIVUS.vehicleKey } }, U("trade_in"));
-  return finU([txt("Anotei sua Honda HR-V EXL 2023/24 com 30 mil quilômetros para avaliação na troca. Você pretende dar algum valor de entrada?")], "reply", U("trade_in"));
-};
+// A LLM reconhece que os dados são do carro do lead e conclui sem consultar o
+// veículo selecionado para compra. A engine não escolhe nem veta a estratégia comercial.
+const tradeBrain: BrainResponder = (frame) => finU(
+  [txt("Anotei sua Honda HR-V EXL 2023/24 com 30 mil quilômetros para avaliação na troca. Você pretende dar algum valor de entrada?")],
+  "reply",
+  tradeU(frame.block),
+);
 
 async function main(): Promise<void> {
   console.log("== F2.42: troca em BLOCO QUEBRADO (incidente hillux) — 0 fallback, 0 busca, briefing completo ==");
@@ -180,7 +189,7 @@ async function main(): Promise<void> {
     const c = conv();
     await c.t("quero um Nivus", searchB({ modelo: "Nivus" }));
     await c.t("quais as condições?", askTrade);
-    const t3 = await c.t("tenho\num renegade\n2019\n86km", () => finU([txt("Anotado! Seu Renegade 2019 fica para avaliação na troca. Prefere simular com ou sem entrada?")], "reply", U("trade_in")));
+    const t3 = await c.t("tenho\num renegade\n2019\n86km", (frame) => finU([txt("Anotado! Seu Renegade 2019 fica para avaliação na troca. Prefere simular com ou sem entrada?")], "reply", tradeU(frame.block)));
     check("[B-1] 0 stock_search + brain_* + sem discovery", t3.stockCalls === 0 && t3.stockObs === 0 && (t3.src === "brain_final" || t3.src === "brain_retry") && NO_DISCOVERY(t3.outbox), `calls=${t3.stockCalls} src=${t3.src} outbox="${t3.outbox}"`);
     check("[B-2] veiculoTroca: modelo Renegade (canônico via taxonomia) + ano 2019 + km 86000", has(String(tv(t3).modelo ?? ""), "renegade") && tv(t3).ano === 2019 && tv(t3).km === 86000, `veiculoTroca=${JSON.stringify(tv(t3))}`);
   }
@@ -209,7 +218,7 @@ async function main(): Promise<void> {
     await c.t("quero um Nivus", searchB({ modelo: "Nivus" }));
     await c.t("gostei do primeiro", selectFirst);
     await c.t("quais as condições?", askTrade);
-    const t4 = await c.t("não tenho", () => finU([txt("Sem problemas! Você pretende dar algum valor de entrada?")], "reply", U("trade_in")));
+    const t4 = await c.t("não tenho", (frame) => finU([txt("Sem problemas! Você pretende dar algum valor de entrada?")], "reply", tradeU(frame.block)));
     check("[E-1] possuiTroca=false + 0 stock_search + brain_* + avança (entrada)", t4.slots?.possuiTroca.value === false && t4.stockCalls === 0 && (t4.src === "brain_final" || t4.src === "brain_retry") && has(t4.outbox, "entrada"), `possui=${JSON.stringify(t4.slots?.possuiTroca.value)} calls=${t4.stockCalls} src=${t4.src}`);
   }
 
@@ -220,7 +229,7 @@ async function main(): Promise<void> {
     await c.t("quero um Nivus", searchB({ modelo: "Nivus" }));
     await c.t("gostei do primeiro", selectFirst);
     await c.t("quais as condições?", askTrade);
-    const t4 = await c.t("tenho um onix 2018 70 mil km", () => finU([txt("Perfeito! Anotei seu Onix 2018 com 70 mil km para avaliação na troca. Você pretende dar algum valor de entrada?")], "reply", U("trade_in")));
+    const t4 = await c.t("tenho um onix 2018 70 mil km", (frame) => finU([txt("Perfeito! Anotei seu Onix 2018 com 70 mil km para avaliação na troca. Você pretende dar algum valor de entrada?")], "reply", tradeU(frame.block)));
     check("[G-1] acolhimento NOMEANDO o Onix do lead PASSA (brain_*, sem fallback)", (t4.src === "brain_final" || t4.src === "brain_retry") && has(t4.outbox, "onix") && NO_DISCOVERY(t4.outbox), `src=${t4.src} outbox="${t4.outbox}"`);
     check("[G-2] veiculoTroca=Onix/2018/70000 + 0 busca + selecionado segue Nivus", has(String(tv(t4).modelo ?? ""), "onix") && tv(t4).ano === 2018 && tv(t4).km === 70000 && t4.stockCalls === 0 && t4.selected === NIVUS.vehicleKey, `veic=${JSON.stringify(tv(t4))} calls=${t4.stockCalls} selected=${t4.selected}`);
   }
@@ -231,7 +240,7 @@ async function main(): Promise<void> {
     const c = conv();
     await c.t("quero um Nivus", searchB({ modelo: "Nivus" }));
     await c.t("gostei do primeiro", selectFirst);
-    const t3 = await c.t("Sim\nTemos\nBom dia\nTenho uma HRV ano 2023/24 e l\nEXL\n30mil kilometros\nPara troca!", tradeBrainTryingWrongDetail);
+    const t3 = await c.t("Sim\nTemos\nBom dia\nTenho uma HRV ano 2023/24 e l\nEXL\n30mil kilometros\nPara troca!", tradeBrain);
     check("[H-1] rajada espontânea e ato de troca: 0 stock_search e 0 vehicle_details executado", t3.stockCalls === 0 && t3.stockObs === 0 && t3.detailObs === 0, `stock=${t3.stockCalls}/${t3.stockObs} detail=${t3.detailObs}`);
     check("[H-2] veiculoTroca preserva HR-V EXL, ano 2023 e 30000 km", has(String(tv(t3).modelo ?? ""), "hr-v") && has(String(tv(t3).modelo ?? ""), "exl") && tv(t3).ano === 2023 && tv(t3).km === 30000, `veiculoTroca=${JSON.stringify(tv(t3))}`);
     check("[H-3] resposta continua autorada pela LLM e não repete pergunta já respondida", (t3.src === "brain_final" || t3.src === "brain_retry") && has(t3.outbox, "hr-v") && !has(t3.outbox, "qual o modelo"), `src=${t3.src} outbox=${JSON.stringify(t3.outbox)}`);

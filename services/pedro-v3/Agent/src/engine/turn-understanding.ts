@@ -321,10 +321,9 @@ export function sensitiveAnswerCompletenessFeedback(
   composedText: string,
 ): string | null {
   if (kinds.length === 0) return null;
+  const leaked = sensitiveReferenceLeakFeedback(composedText);
+  if (leaked) return leaked;
   const text = normalizeText(composedText);
-  if (/\b(?:cpf_valido_ref|data_nascimento_valida_ref)\b|\b[a-f0-9]{32,64}\b/.test(text)) {
-    return "A resposta expos uma referencia interna de dado sensivel. Reescreva sem token/ref e sem repetir o valor.";
-  }
   const acknowledges = /\b(?:receb|anot|registr|confirm)/.test(text);
   if (!acknowledges) {
     const label = kinds.includes("cpf") && kinds.includes("birthDate")
@@ -333,6 +332,22 @@ export function sensitiveAnswerCompletenessFeedback(
     return `O cliente acabou de fornecer ${label}. Reconheca explicitamente que recebeu/registrou o dado, sem repetir o valor nem a referencia interna; depois avance com no maximo UMA pergunta util.`;
   }
   return null;
+}
+
+/**
+ * Machine-verifiable sensitive-data leak. Unlike acknowledgement/completeness
+ * checks, this remains a hard safety boundary in central_active because the
+ * outgoing text exposes an internal reference or secret-shaped token.
+ */
+export function sensitiveReferenceLeakFeedback(composedText: string): string | null {
+  // Do not run this check through normalizeText: that normalizer deliberately
+  // folds punctuation, including the underscores that are part of our internal
+  // reference names. Safety checks must inspect the emitted bytes, not a
+  // conversational representation of them.
+  const text = composedText.normalize("NFKC").toLowerCase();
+  return /\b(?:cpf_valido_ref|data_nascimento_valida_ref)\b|\b[a-f0-9]{32,64}\b/.test(text)
+    ? "A resposta expos uma referencia interna de dado sensivel. Reescreva sem token/ref e sem repetir o valor."
+    : null;
 }
 
 // ── P0 (RESOLUÇÃO ÚNICA de veículo): AUTORIZAÇÃO DETERMINÍSTICA por ORDINAL RESOLVIDO. Complementa authorizesPhotoSend
@@ -636,13 +651,21 @@ export function reconcileUnderstanding(base: TurnUnderstanding | null, next: Tur
   readonly acceptedPhotoOffer?: boolean;
   readonly allowCurrentEvidenceCorrection?: boolean;
 } = {}): TurnUnderstanding {
+  // `subjectValue` only has meaning inside the subject that owns it. Keeping a
+  // value while the subject is `none` (or copying an ordinal/model from a
+  // rejected subject change into the previous subject) creates semantic state
+  // that the LLM never validly selected. Canonicalize that shape here, at the
+  // single merge boundary, without reclassifying the turn.
+  const nextWithCanonicalSubject = next.subject === "none" && next.subjectValue != null
+    ? { ...next, subjectValue: null }
+    : next;
   // `selected_vehicle` is necessarily a conversation reference. Smaller models
   // sometimes label it as `current_turn` because the pronoun ("dele", "desse")
   // is written in the current block. Canonicalizing only this structural label
   // does not choose an intent, target, tool, or response for the brain.
-  const canonicalNext = (next.subject === "selected_vehicle" || next.subject === "offer_reference") && next.subjectSource === "current_turn"
-    ? { ...next, subjectSource: "memory" as const }
-    : next;
+  const canonicalNext = (nextWithCanonicalSubject.subject === "selected_vehicle" || nextWithCanonicalSubject.subject === "offer_reference") && nextWithCanonicalSubject.subjectSource === "current_turn"
+    ? { ...nextWithCanonicalSubject, subjectSource: "memory" as const }
+    : nextWithCanonicalSubject;
   if (!base) return canonicalNext;
   const baseQuotes = new Set((base.evidence ?? []).map((e) => normalizeText(e.quote)));
   const currentEvidence = (canonicalNext.evidence ?? []).filter((e) => quoteInBlock(block, e.quote));
@@ -655,11 +678,15 @@ export function reconcileUnderstanding(base: TurnUnderstanding | null, next: Tur
       && canonicalNext.requestedCapabilities.includes("send_photos")
       && canonicalNext.evidence.some((e) => e.capability === "send_photos" && quoteInBlock(block, e.quote));
     if (repairsAcceptedPhoto) return canonicalNext;
-    // mudança ARBITRÁRIA sem evidência nova -> mantém a base; só preenche subjectValue se faltava.
-    return { ...base, subjectValue: base.subjectValue ?? canonicalNext.subjectValue };
+    // Mudanca arbitraria sem evidencia nova -> mantem a base. Um valor so pode
+    // complementar a base quando pertence ao MESMO subject; um ordinal/modelo
+    // de um subject rejeitado nunca atravessa essa fronteira.
+    const subjectValue = base.subject === canonicalNext.subject
+      ? (base.subjectValue ?? canonicalNext.subjectValue)
+      : base.subjectValue;
+    return { ...base, subjectValue };
   }
-  if (canonicalNext !== next) return canonicalNext;
-  return next;   // refinamento legítimo (subjectValue) ou mudança JUSTIFICADA por evidência nova
+  return canonicalNext;   // refinamento legitimo (subjectValue) ou mudanca JUSTIFICADA por evidencia nova
 }
 
 // ── FALLBACK conservador (só HINT p/ recuperação TEXTUAL — NUNCA autoriza ação; fromBrain=false no validate). "foto"

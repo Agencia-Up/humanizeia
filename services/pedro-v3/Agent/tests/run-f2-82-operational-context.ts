@@ -126,6 +126,8 @@ function operational(input: {
   previous?: { vehicleKey: string; marca?: string | null; modelo?: string | null; ano?: number | null }[];
   previousGrounded?: { vehicleKey: string; marca?: string | null; modelo?: string | null; versao?: string | null; ano?: number | null; referenceable: true }[];
   executionFailures?: string[];
+  activeFilters?: Record<string, unknown>;
+  shownVehicleKeys?: string[];
 }) {
   const fleet = buildGroundedFleet({
     previousGroundedVehicles: input.previousGrounded ?? [],
@@ -142,6 +144,10 @@ function operational(input: {
       facts: input.facts,
       executionFailures: input.executionFailures ?? [],
       groundedVehicleKeys: fleet.map((v) => v.vehicleKey),
+      searchMemory: {
+        activeFilters: input.activeFilters ?? {},
+        shownVehicleKeys: input.shownVehicleKeys ?? [],
+      },
       capabilities: CAPS,
       ad: {
         identity: AD_IDENTITY,
@@ -163,6 +169,18 @@ function main(): void {
     JSON.stringify(before.context.ad));
   check("[1a] ausência de consulta é not_queried, nunca estoque vazio",
     before.context.stock.status === "not_queried" && before.context.stock.resultCount === 0);
+
+  const remembered = operational({
+    facts: [],
+    activeFilters: { marca: "Jeep", modelos: ["Compass"], precoMax: 120_000 },
+    shownVehicleKeys: [AD_KEY, AD_KEY, OTHER_KEY],
+  });
+  check("[1b] search memory is exposed without pretending the current turn queried stock",
+    remembered.context.stock.status === "not_queried"
+    && remembered.context.searchMemory.activeFilters.marca === "Jeep"
+    && remembered.context.searchMemory.activeFilters.modelos?.[0] === "Compass"
+    && remembered.context.searchMemory.shownVehicleKeys.length === 2,
+    JSON.stringify(remembered.context));
 
   const exactFact = search([COMPASS], { marca: "Jeep", modelo: "Compass", anos: [2021] });
   const exactEvaluation = evaluateAdIdentityProof({ adFingerprint: AD_FP, target: AD_TARGET, facts: [exactFact] });

@@ -7,7 +7,7 @@
 //   npx tsx tests/run-f2-27-commercial-correction-conflict.ts
 // ============================================================================
 import { runCentralConversationTurn, type CentralTurnResult } from "../src/engine/central-engine.ts";
-import { mergeActiveConstraints, detectCorrections, detectCommercialConstraints } from "../src/engine/commercial-constraints.ts";
+import { mergeActiveConstraints, detectCorrections, detectCommercialConstraints, constraintsToStockInput } from "../src/engine/commercial-constraints.ts";
 import { extractLeadSlots } from "../src/engine/lead-extraction.ts";
 import { InMemoryPersistence, FakeClock, FakeIdGen } from "../src/adapters/persistence/in-memory-store.ts";
 import { ScriptedAgentBrain, type BrainResponder } from "../src/adapters/llm/fake-agent-brain.ts";
@@ -69,16 +69,26 @@ const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
-// ⭐AUTORIDADE (audit Codex): os turnos desta suíte são CORREÇÕES DE BUSCA ("esquece o sedan, quero Compass") — a LLM
-// real classifica search_stock. O responder declara o ATO (capability+evidence) mas RESISTE a chamar a tool: o executor
-// determinístico garante a execução com o filtro corrigido (o que a suíte prova), agora sob a autoridade da LLM.
+// ⭐AUTORIDADE (audit Codex): os turnos desta suíte são CORREÇÕES DE BUSCA ("esquece o sedan, quero Compass").
+// A memória ativa chega à LLM como fato no operationalContext; a própria LLM combina esse fato com o bloco atual e
+// declara os filtros escolhidos. A engine nunca completa silenciosamente uma stock_search vazia.
 const resist: BrainResponder = (f, observations) => {
   const understanding = {
     ...U("search_stock"), requestedCapabilities: ["stock_search"] as TurnUnderstanding["requestedCapabilities"],
     evidence: [{ capability: "stock_search" as const, quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
   };
   const stock = [...observations].reverse().find((o) => o.tool === "stock_search" && o.ok) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } } | undefined;
-  if (!stock) return { kind: "query", call: { tool: "stock_search", input: {} }, understanding };
+  if (!stock) {
+    const block = f.block ?? "";
+    const remembered = f.operationalContext?.searchMemory.activeFilters ?? {};
+    const current = detectCommercialConstraints({
+      block,
+      signals: buildFrameSignals(block, { relation: "ambiguous" } as TurnInterpretation),
+      claimExtractor: extractor,
+    });
+    const chosen = mergeActiveConstraints(remembered, current, detectCorrections(block));
+    return { kind: "query", call: { tool: "stock_search", input: constraintsToStockInput(chosen) }, understanding };
+  }
   return stock.data.items.length > 0
     ? finU([txt("Encontrei estas opções para você:"), offer(stock.data.items.map((v) => v.vehicleKey)), txt("Qual delas chamou sua atenção?")], "offer_stock", understanding)
     : finU([txt("Não encontrei opções com esses critérios agora. Quer ajustar algum filtro?")], "empty_stock", understanding);

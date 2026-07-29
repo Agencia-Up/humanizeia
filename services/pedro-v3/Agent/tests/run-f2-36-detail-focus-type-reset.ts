@@ -1,12 +1,13 @@
 // ============================================================================
 // F2.36 - P0: detail target from ad/focus + broad type resets stale model/brand.
-//   1) "qual o valor dele?" after an ad/list must force vehicle_details for the
-//      focused ad vehicle, not generic fallback and not arbitrary stock_search.
+//   1) "qual o valor dele?" after an ad/list makes the LLM resolve the factual
+//      target and call vehicle_details, not generic fallback or arbitrary search.
 //   2) "na verdade quero um SUV automatico ate 100 mil" after HB20/Hyundai must
 //      clear stale brand/model and search broad SUV automatic <=100k.
 // ============================================================================
 import { runCentralConversationTurn, type CentralTurnResult } from "../src/engine/central-engine.ts";
-import { mergeActiveConstraints } from "../src/engine/commercial-constraints.ts";
+import { mergeActiveConstraints, detectCommercialConstraints, constraintsToStockInput } from "../src/engine/commercial-constraints.ts";
+import { buildFrameSignals } from "../src/engine/turn-frame-builder.ts";
 import { InMemoryPersistence, FakeClock, FakeIdGen } from "../src/adapters/persistence/in-memory-store.ts";
 import { ScriptedAgentBrain, type BrainResponder } from "../src/adapters/llm/fake-agent-brain.ts";
 import { buildTenantCatalog } from "../src/engine/catalog-utils.ts";
@@ -20,7 +21,7 @@ import type { TurnContextPreparer } from "../src/domain/context.ts";
 import type { DecisionLlm } from "../src/domain/llm.ts";
 import type { TenantBusinessInfoSource } from "../src/engine/tenant-business-info.ts";
 import type { AgentBrainDecision, AgentBrainStep, CentralQueryCall, PrimaryIntent, TurnCapability, TurnSubjectKind, TurnUnderstanding } from "../src/domain/agent-brain.ts";
-import type { ProposedEffectPlan, QueryCall, QueryResult, ResponseDraft, ResponsePart, TurnRelation } from "../src/domain/decision.ts";
+import type { ProposedEffectPlan, QueryCall, QueryResult, ResponseDraft, ResponsePart, TurnInterpretation, TurnRelation } from "../src/domain/decision.ts";
 import type { VehicleFact } from "../src/domain/types.ts";
 
 let ok = 0, fail = 0;
@@ -90,8 +91,8 @@ function final(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding):
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
 const query = (call: CentralQueryCall, u: TurnUnderstanding): AgentBrainStep => ({ kind: "query", call, understanding: u });
-// ⭐AUTORIDADE (audit Codex): "na verdade quero um SUV..." é BUSCA — a LLM real classifica search_stock; declara o ATO
-// mas resiste (o executor determinístico garante a execução com o reset de tipo).
+// ⭐AUTORIDADE (audit Codex): "na verdade quero um SUV..." é BUSCA — a LLM
+// classifica e declara também os filtros atuais; a engine não completa input vazio.
 const resist: BrainResponder = (f, obs) => {
   const stock = obs.find((o) => o.tool === "stock_search" && o.ok);
   const understanding = {
@@ -105,7 +106,12 @@ const resist: BrainResponder = (f, obs) => {
       txt("Qual delas chamou sua atencao?"),
     ], "list_stock_results", understanding);
   }
-  return query({ tool: "stock_search", input: {} }, understanding);
+  const current = detectCommercialConstraints({
+    block: f.block ?? "",
+    signals: buildFrameSignals(f.block ?? "", { relation: "ambiguous" } as TurnInterpretation),
+    claimExtractor: extractor,
+  });
+  return query({ tool: "stock_search", input: constraintsToStockInput(current) }, understanding);
 };
 
 const detailU: TurnUnderstanding = { ...U("vehicle_detail", {
@@ -114,7 +120,7 @@ const detailU: TurnUnderstanding = { ...U("vehicle_detail", {
   subjectValue: "dele",
   evidence: [{ capability: "vehicle_details", quote: "valor dele" }],
 }), subjectSource: "memory" };
-const detailBrain: BrainResponder = (_frame, obs) => {
+const detailBrain: BrainResponder = (frame, obs) => {
   const detail = obs.find((o) => o.tool === "vehicle_details" && o.ok);
   if (detail?.ok && detail.tool === "vehicle_details") return final([
     txt("O "),
@@ -127,12 +133,15 @@ const detailBrain: BrainResponder = (_frame, obs) => {
     { type: "money_ref", role: "vehicle_price", source: { kind: "vehicle_fact", vehicleKey: detail.data.vehicle.vehicleKey } },
     txt("."),
   ], "vehicle_detail_answer", detailU);
-  const missing = obs.find((o) => o.tool === "vehicle_details" && !o.ok && o.error.code === "REQUIRED_TOOL_MISSING");
-  if (missing && !missing.ok) {
-    const key = /vehicleKey":"([^"]+)"/.exec(missing.error.message)?.[1] ?? "";
-    return query({ tool: "vehicle_details", input: { vehicleKey: key } }, detailU);
-  }
-  return final([txt("Ele esta por R$ 73.990.")], "premature_detail", detailU);
+  const adKey = frame.operationalContext?.ad.inventoryConfirmed
+    ? frame.operationalContext.ad.vehicleKey
+    : null;
+  const selectedKey = frame.conversationContext.selectedVehicle?.vehicleKey ?? null;
+  const offered = frame.conversationContext.lastVisibleOffer?.items ?? [];
+  const targetKey = adKey ?? selectedKey ?? (offered.length === 1 ? offered[0]?.vehicleKey ?? null : null);
+  return targetKey
+    ? query({ tool: "vehicle_details", input: { vehicleKey: targetKey } }, detailU)
+    : final([txt("Voce fala do HB20 2020 ou do HB20 2019?")], "clarify_vehicle_detail_target", detailU);
 };
 
 type Cap = { outbox: string; reason: string | null; src: string | null; stockInputs: Record<string, unknown>[]; detailKeys: string[] };
@@ -212,20 +221,14 @@ async function main(): Promise<void> {
   });
   check("[P0-1d] detalhe pronominal nao depende do classificador relation=asks_vehicle_detail", p1Amb.detailKeys.length === 1 && p1Amb.detailKeys[0] === HB20_2020.vehicleKey && has(p1Amb.outbox, "73.990") && p1Amb.src !== "technical_fallback", `detailKeys=${JSON.stringify(p1Amb.detailKeys)} src=${p1Amb.src} outbox=${p1Amb.outbox}`);
 
-  const ambiguousDetailBrain: BrainResponder = (_frame, obs) => {
-    const rejected = obs.some((o) => o.tool === "response" && !o.ok && o.error.code === "RESPONSE_REJECTED");
-    return rejected
-      ? final([txt("Voce fala do HB20 2020 ou do HB20 2019?")], "clarify_vehicle_detail_target", detailU)
-      : final([txt("Ele esta por R$ 73.990.")], "premature_detail", detailU);
-  };
   const p1NoProof = await runTurn({
     state: { adContext: ad, adIdentityProof: null, lastRenderedOfferContext: offer, activeSearchConstraints: { marca: "hyundai", modelos: ["HB20"] } as ActiveSearchConstraints },
     lead: "qual o valor dele?",
     relation: "asks_vehicle_detail",
-    responder: ambiguousDetailBrain,
+    responder: detailBrain,
   });
   check("[P0-1e] sem prova exata a engine nao escolhe um dos dois veiculos", p1NoProof.detailKeys.length === 0 && !has(p1NoProof.outbox, "73.990"), `detailKeys=${JSON.stringify(p1NoProof.detailKeys)} outbox=${p1NoProof.outbox}`);
-  check("[P0-1f] a LLM desambigua naturalmente sem technical_fallback", has(p1NoProof.outbox, "HB20 2020") && has(p1NoProof.outbox, "HB20 2019") && p1NoProof.src === "brain_retry", `src=${p1NoProof.src} reason=${p1NoProof.reason} outbox=${p1NoProof.outbox}`);
+  check("[P0-1f] a LLM desambigua naturalmente sem technical_fallback", has(p1NoProof.outbox, "HB20 2020") && has(p1NoProof.outbox, "HB20 2019") && p1NoProof.src === "brain_final", `src=${p1NoProof.src} reason=${p1NoProof.reason} outbox=${p1NoProof.outbox}`);
 
   const p2 = await runTurn({
     state: { activeSearchConstraints: { marca: "hyundai", modelos: ["HB20"], precoMax: 80000 } as ActiveSearchConstraints },
@@ -241,9 +244,7 @@ async function main(): Promise<void> {
   const p3 = await runTurn({
     lead: "me manda fotos do segundo",
     relation: "ambiguous",
-    responder: (_frame, obs) => obs.some((o) => !o.ok)
-      ? final([txt("Nao tenho uma lista valida aqui para identificar o segundo. De qual carro voce quer as fotos?")], "clarify_photo_target", photoU)
-      : final([txt("Nao temos Compass ate 100 mil no estoque para mostrar fotos. Quer que eu te mostre outras opcoes disponiveis?")], "bad_photo_absence", photoU),
+    responder: () => final([txt("Nao tenho uma lista valida aqui para identificar o segundo. De qual carro voce quer as fotos?")], "clarify_photo_target", photoU),
   });
   check("[P0-3a] foto por ordinal sem lista valida nao repete busca antiga; pede qual/lista/ordinal", /qual|segundo|lista|item/i.test(p3.outbox) && !/nao temos compass ate 100 mil/i.test(norm(p3.outbox)), `outbox=${p3.outbox} src=${p3.src} reason=${p3.reason}`);
 

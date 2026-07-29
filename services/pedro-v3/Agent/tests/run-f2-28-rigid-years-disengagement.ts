@@ -7,7 +7,7 @@
 //   npx tsx tests/run-f2-28-rigid-years-disengagement.ts
 // ============================================================================
 import { runCentralConversationTurn, type CentralTurnResult } from "../src/engine/central-engine.ts";
-import { detectCommercialConstraints, constraintsToStockInput } from "../src/engine/commercial-constraints.ts";
+import { detectCommercialConstraints, constraintsToStockInput, detectCorrections, mergeActiveConstraints } from "../src/engine/commercial-constraints.ts";
 import { detectDisengagement } from "../src/engine/lead-intent.ts";
 import { InMemoryPersistence, FakeClock, FakeIdGen } from "../src/adapters/persistence/in-memory-store.ts";
 import { ScriptedAgentBrain, type BrainResponder } from "../src/adapters/llm/fake-agent-brain.ts";
@@ -74,8 +74,8 @@ const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
-// ⭐AUTORIDADE (audit Codex): os turnos-default desta suíte são BUSCAS (anos rígidos/câmbio/tipo) — a LLM real classifica
-// search_stock. Declara o ATO mas resiste a chamar a tool: o executor determinístico garante a execução. Turnos
+// ⭐AUTORIDADE (audit Codex): os turnos-default desta suíte são BUSCAS (anos rígidos/câmbio/tipo). A memória ativa
+// chega à LLM como fato no operationalContext; a própria LLM escolhe e declara os filtros completos. Turnos
 // NÃO-comerciais (desengajamento) passam responder próprio com U("other").
 const resist: BrainResponder = (f, observations) => {
   const engagement = detectDisengagement(f.block ?? "");
@@ -88,7 +88,17 @@ const resist: BrainResponder = (f, observations) => {
     evidence: [{ capability: "stock_search" as const, quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
   };
   const searches = observations.filter((o) => o.tool === "stock_search" && o.ok) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } }[];
-  if (searches.length === 0) return { kind: "query", call: { tool: "stock_search", input: {} }, understanding };
+  if (searches.length === 0) {
+    const block = f.block ?? "";
+    const remembered = f.operationalContext?.searchMemory.activeFilters ?? {};
+    const current = detectCommercialConstraints({
+      block,
+      signals: buildFrameSignals(block, { relation: "ambiguous" } as TurnInterpretation),
+      claimExtractor: extractor,
+    });
+    const chosen = mergeActiveConstraints(remembered, current, detectCorrections(block));
+    return { kind: "query", call: { tool: "stock_search", input: constraintsToStockInput(chosen) }, understanding };
+  }
   const explicit = detectCommercialConstraints({ block: f.block ?? "", signals: buildFrameSignals(f.block ?? "", { relation: "ambiguous" } as TurnInterpretation), claimExtractor: extractor });
   let items = [...new Map(searches.flatMap((s) => s.data.items).map((v) => [v.vehicleKey, v])).values()];
   if (explicit.anos?.length) items = items.filter((v) => v.ano != null && explicit.anos!.includes(v.ano));

@@ -96,14 +96,13 @@ async function main(): Promise<void> {
   }), extractor, interpretation);
   check("[A8] texto longo do anúncio não converte ano em preço", adConstraints.modelos?.some((model) => /ranger/i.test(model)) === true && adConstraints.precoMax == null, JSON.stringify(adConstraints));
 
-  console.log("\n[B] Engine não inventa transferência a partir de intenção genérica");
+  console.log("\n[B] Engine não inventa transferência");
   const centralSource = readFileSync(new URL("../src/engine/central-engine.ts", import.meta.url), "utf8");
-  const forcedStart = centralSource.indexOf("const forcedHandoffReason");
-  const forcedEnd = centralSource.indexOf("const silentDisengagementHandoff", forcedStart);
-  const forcedBlock = forcedStart >= 0 && forcedEnd > forcedStart ? centralSource.slice(forcedStart, forcedEnd) : "";
-  check("[B1] gatilho forçado existe em um bloco auditável", forcedBlock.length > 0);
-  check("[B2] gatilho forçado usa somente opt-out explícito", /disengaged:\s*detectExplicitOptOut\(leadMessage\)/.test(forcedBlock), forcedBlock);
-  check("[B3] classificação disengagement da LLM não força handoff", !/llmDeclaredDisengagement|primaryIntent\s*===\s*[\"']disengagement/.test(forcedBlock), forcedBlock);
+  check("[B1] fluxo ativo não calcula motivo forçado de handoff", !/const forcedHandoffReason/.test(centralSource));
+  check("[B2] buildHandoffChain recebe somente a decisão da LLM", !/forcedReason:\s*/.test(centralSource));
+  check("[B3] opt-out continua separado da autoria de transferência",
+    /detectExplicitOptOut\(leadMessage\)/.test(centralSource)
+      && /A engine nunca origina uma transferência no fluxo ativo/.test(centralSource));
 
   console.log("\n[C] Fatos da empresa permanecem sob autoridade de fontes reais");
   const prompt = COMPACT_OPERATIONAL_PROMPT.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();

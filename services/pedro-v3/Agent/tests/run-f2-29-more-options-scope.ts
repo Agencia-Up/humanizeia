@@ -7,7 +7,7 @@
 //   npx tsx tests/run-f2-29-more-options-scope.ts
 // ============================================================================
 import { runCentralConversationTurn, enrichStockSearchCall, type CentralTurnResult } from "../src/engine/central-engine.ts";
-import { deriveScopeFromHomogeneousOffer, mentionsMotorcycle, activeConstraintsFromStockInput } from "../src/engine/commercial-constraints.ts";
+import { activeConstraintsFromStockInput, constraintsToStockInput, deriveScopeFromHomogeneousOffer, detectCommercialConstraints, mentionsMotorcycle } from "../src/engine/commercial-constraints.ts";
 import { InMemoryPersistence, FakeClock, FakeIdGen } from "../src/adapters/persistence/in-memory-store.ts";
 import { ScriptedAgentBrain, type BrainResponder } from "../src/adapters/llm/fake-agent-brain.ts";
 import { buildTenantCatalog } from "../src/engine/catalog-utils.ts";
@@ -87,8 +87,8 @@ const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
-// ⭐AUTORIDADE (audit Codex): turnos-default desta suíte são BUSCAS — a LLM real classifica search_stock. Declara o
-// ATO mas resiste a chamar a tool: o executor determinístico garante a execução (o que a suíte prova).
+// ⭐AUTORIDADE: a fake representa a decisão da LLM e envia os filtros que consegue ler no bloco/histórico.
+// A engine pode validar/clampá-los, mas não completa silenciosamente uma chamada vazia no central_active.
 const resist: BrainResponder = (f, observations) => {
   const understanding = {
     ...U("search_stock"), requestedCapabilities: ["stock_search"] as TurnUnderstanding["requestedCapabilities"],
@@ -98,7 +98,15 @@ const resist: BrainResponder = (f, observations) => {
     return finU([txt("Claro. Você quer ver mais opções de qual tipo de carro ou faixa de preço?")], "clarify_more_options_scope", U("other"));
   }
   const stock = [...observations].reverse().find((o) => o.tool === "stock_search" && o.ok) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } } | undefined;
-  if (!stock) return { kind: "query", call: { tool: "stock_search", input: {} }, understanding };
+  if (!stock) {
+    const leadContext = [...f.recentTranscript.filter((t) => t.role === "lead").map((t) => t.text), f.block].join("\n");
+    const signals = buildFrameSignals(leadContext, { relation: "ambiguous" } as TurnInterpretation);
+    const input = constraintsToStockInput(detectCommercialConstraints({ block: leadContext, signals, claimExtractor: extractor }));
+    if (f.signals.mentionsMoreOptions && f.conversationContext.lastVisibleOffer) {
+      input.excludeKeys = f.conversationContext.lastVisibleOffer.items.map((item) => item.vehicleKey);
+    }
+    return { kind: "query", call: { tool: "stock_search", input }, understanding };
+  }
   return stock.data.items.length > 0
     ? finU([txt("Encontrei estas opções para você:"), offer(stock.data.items.map((v) => v.vehicleKey)), txt("Qual delas chamou sua atenção?")], "offer_stock", understanding)
     : finU([txt("Não encontrei outras opções com os mesmos critérios agora. Quer ajustar a faixa ou o tipo?")], "empty_more_options", understanding);

@@ -178,38 +178,30 @@ async function main(): Promise<void> {
     check("[AZUL-3] texto não vazio nomeando o carro", azul.outbox.trim().length > 0 && has(azul.outbox, "onix"), azul.outbox);
   }
 
-  // ── [SPON] consórcio espontâneo (sem alvo) -> a LLM declara financing, tenta tool incompatível -> feedback sem regex ──
+  // ── [SPON] consórcio espontâneo (sem alvo) -> a LLM conduz sem inventar busca ──
   {
     const c = conv();
     let sponAttempt = 0;
-    const sponResponder: BrainResponder = (_f, obs) => {
+    const sponResponder: BrainResponder = () => {
       sponAttempt += 1;
-      const so = obs.find((o) => o.tool === "stock_search") as AgentToolObservation | undefined;
-      // 1ª: entende o ato como financiamento, mas propõe uma tool incompatível;
-      // o bloqueio deve vir do primaryIntent da própria LLM, nunca do regex do engine.
-      if (!so && sponAttempt === 1) return qU({ tool: "stock_search", input: { precoMax: 53000 } }, U("financing", [ev("stock_search", "53 mil")]));
-      return finU([txt("Perfeito, você tem uma carta de consórcio contemplada! Você já escolheu algum carro ou quer que eu te mostre opções?")], "reply", U("financing", [ev(undefined, "carta contemplada")]));
+      return finU([txt("Perfeito, você tem uma carta de consórcio contemplada! Você já escolheu algum carro?")], "reply", U("financing", [ev(undefined, "carta contemplada")]));
     };
     const spon = await c.t("tenho carta contemplada de 53 mil", sponResponder);
-    check("[SPON-1] ⭐stock_search contraditório foi bloqueado pela intenção financing (nenhuma busca executada)", spon.stockObs === 0, `stock=${spon.stockObs}`);
+    check("[SPON-1] LLM não aciona estoque sem pedido de veículo; engine não precisa corrigir", spon.stockObs === 0 && sponAttempt === 1, `stock=${spon.stockObs} attempts=${sponAttempt}`);
     check("[SPON-2] brain reautora conduzindo (não technical_fallback)", isBrain(spon.src), `src=${spon.src}`);
     check("[SPON-3] formaPagamento=consorcio registrado", slotVal(spon, "formaPagamento") === "consorcio", JSON.stringify(slotVal(spon, "formaPagamento")));
   }
 
-  // ── [HUM] pedido humano com understanding FRACO -> tool comercial NÃO roda (backstop R7) ──
+  // ── [HUM] pedido humano -> LLM reconhece e autora handoff sem tool comercial ──
   {
     const c = conv();
     let humAttempt = 0;
-    const humResponder: BrainResponder = (_f, obs) => {
+    const humResponder: BrainResponder = () => {
       humAttempt += 1;
-      const so = obs.find((o) => o.tool === "stock_search") as AgentToolObservation | undefined;
-      // understanding FRACO: evidence "vendedor" (sozinha não casa HUMAN_ACT_RX) -> untrusted; 1ª tenta stock_search.
-      const weak = U("search_stock", [ev("stock_search", "vendedor")]);
-      if (!so && humAttempt === 1) return qU({ tool: "stock_search", input: { tipo: "suv" } }, weak);
       return finU([txt("Claro! Vou te transferir para um consultor agora mesmo.")], "handoff", U("request_human", [ev("handoff", "quero falar com um vendedor")], { requestedCapabilities: ["handoff"] }), [reply, handoffAct]);
     };
     const hum = await c.t("quero falar com um vendedor", humResponder, "direction_change");
-    check("[HUM-1] ⭐tool comercial NÃO executou no pedido humano (backstop R7)", hum.stockObs === 0, `stock=${hum.stockObs}`);
+    check("[HUM-1] LLM propõe o handoff em uma tentativa e não executa tool comercial", hum.stockObs === 0 && humAttempt === 1, `stock=${hum.stockObs} attempts=${humAttempt}`);
     check("[HUM-2] brain autora (não technical_fallback)", isBrain(hum.src), `src=${hum.src}`);
   }
 

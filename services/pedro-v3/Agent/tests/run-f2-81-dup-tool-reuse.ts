@@ -6,9 +6,10 @@
 // inacionável: repetiu 3x, colecionou denies, queimou os passos e o lead recebeu uma deflexão
 // ("Vou confirmar os detalhes desse veículo com o consultor").
 //
-// CONTRATO: repetir a MESMA chamada é idempotente. O engine devolve o RESULTADO já obtido — sucesso OU erro —
-// sem reexecutar o adapter e sem deny. Erro real (NOT_FOUND) é acionável; deny genérico não é. Teto anti-loop
-// preservado: o resultado é reentregue uma vez por tool; na insistência o loop sai para a autoria.
+// CONTRATO: repetir a MESMA chamada é idempotente. O resultado original — sucesso OU erro — permanece uma única
+// vez nas observações; o adapter não é reexecutado e a repetição não cria deny nem outro "fato" artificial. No
+// central_active, a fase de tools termina silenciosamente e devolve a autoria à LLM. vehicle_photos_resolve mantém
+// sua reentrega factual específica porque a mídia precisa chegar à decisão estruturada de send_media.
 //   npx tsx tests/run-f2-81-dup-tool-reuse.ts
 // ============================================================================
 import { runCentralConversationTurn, type CentralTurnResult } from "../src/engine/central-engine.ts";
@@ -116,12 +117,16 @@ async function main(): Promise<void> {
   check("[R2] ⭐o cerebro segue com o RESULTADO real (NOT_FOUND) em maos, e ele aparece UMA vez so",
     lastObs(m).filter((o) => o.tool === "vehicle_details" && !o.ok && (o.ok === false ? has(o.error.code, "NOT_FOUND") : false)).length === 1,
     JSON.stringify(lastObs(m).map((o) => `${o.tool}:${o.ok ? "ok" : (o.ok === false ? o.error.code : "")}`)));
-  // ⭐O CERNE DO INCIDENTE: a mensagem da repetição NÃO pode afirmar um fato que não existe. Ela é derivada do
-  // resultado REAL — aqui, o NOT_FOUND — e diz o que fazer. Nunca "use o fato que a ferramenta retornou".
-  check("[R3] ⭐a mensagem da repeticao NOMEIA a falha real e nao inventa fato",
-    dupDenies(m).length === 1 && has(dupDenies(m)[0], "NOT_FOUND") && !has(dupDenies(m)[0], "use o fato que a ferramenta retornou"),
+  // ⭐O CERNE DO INCIDENTE: a repetição não cria uma segunda autoridade dizendo à LLM o que fazer. O NOT_FOUND
+  // original já está disponível; inventar um DUP_TOOL só acrescentaria uma ordem concorrente e consumiria passos.
+  check("[R3] ⭐repeticao com falha nao cria deny nem inventa fato",
+    dupDenies(m).length === 0,
     JSON.stringify(dupDenies(m)));
-  check("[R3a] e orienta a MUDAR o alvo (repetir igual nao muda nada)", has(dupDenies(m)[0] ?? "", "Repetir igual nao muda nada".replace("nao", "não")) || has(dupDenies(m)[0] ?? "", "alvo/filtro DIFERENTE"), JSON.stringify(dupDenies(m)));
+  check("[R3a] permanece somente a observacao factual original do adapter",
+    lastObs(m).filter((o) => o.tool === "vehicle_details").length === 1
+      && lastObs(m).filter((o) => o.tool === "response" && !o.ok)
+        .every((o) => o.ok === false && o.error.code !== "DUP_TOOL"),
+    JSON.stringify(lastObs(m).map((o) => `${o.tool}:${o.ok ? "ok" : (o.ok === false ? o.error.code : "")}`)));
   check("[R4] o turno CONCLUI pela LLM (nao morre em deflexao/fallback)", m.committed && !m.degraded, `src=${m.src} deg=${m.degraded}`);
 
   // ── 2) REPETICAO DE CHAMADA BEM-SUCEDIDA: devolve o mesmo fato, sem reexecutar, sem deny ──────
@@ -136,8 +141,8 @@ async function main(): Promise<void> {
   // inflaria a contagem de tools (sinal de retry-storm). O contrato é: o fato continua disponível, UMA vez, sem deny.
   check("[R6] ⭐o FATO continua disponivel ao cerebro e aparece UMA vez so (repeticao nao infla a contagem)",
     lastObs(s).filter((o) => o.tool === "vehicle_details" && o.ok).length === 1, JSON.stringify(lastObs(s).map((o) => `${o.tool}:${o.ok}`)));
-  check("[R7] a mensagem da repeticao aponta o resultado que EXISTE (e nao um erro inventado)",
-    dupDenies(s).length === 1 && has(dupDenies(s)[0], "resultado esta nas suas observacoes".replace("esta", "está").replace("observacoes", "observações")),
+  check("[R7] repeticao bem-sucedida nao vira deny concorrente",
+    dupDenies(s).length === 0,
     JSON.stringify(dupDenies(s)));
   check("[R8] turno conclui pela LLM", s.committed && !s.degraded, `src=${s.src}`);
 

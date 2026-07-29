@@ -224,10 +224,10 @@ async function main(): Promise<void> {
   check("[8] retry falha -> fallback técnico honesto, SEM menu comercial", r8.result.status === "committed" && isRecoverySrc(r8.result) && r8NoMenu && r8.outboxText.length > 0 && r8.composeCalls === 0, `src=${srcOf(r8.result)} text="${r8.outboxText}"`);
 
   // [12] pergunta simples sem necessidade NÃO chama tool.
-  const r12 = await runTurn({ state: seedState(ONIX2, { withPhotoMemory: true }), leadText: "bom dia!", relation: "ambiguous", script: [
-    finalDraft([txt("Bom dia! Como posso te ajudar hoje?")]),
+  const r12 = await runTurn({ state: seedState(ONIX2, { withPhotoMemory: true }), leadText: "boa tarde!", relation: "ambiguous", script: [
+    finalDraft([txt("Boa tarde! Como posso te ajudar hoje?")]),
   ] });
-  check("[12] pergunta simples sem necessidade NÃO chama tool", r12.result.status === "committed" && r12.toolCalls.length === 0 && r12.outboxText.includes("Bom dia") && r12.composeCalls === 0, `tools=${r12.toolCalls.length}`);
+  check("[12] pergunta simples sem necessidade NÃO chama tool", r12.result.status === "committed" && r12.toolCalls.length === 0 && r12.outboxText.includes("Boa tarde") && r12.composeCalls === 0, `status=${r12.result.status} src=${srcOf(r12.result)} tools=${r12.toolCalls.length} compose=${r12.composeCalls} retries=${JSON.stringify(r12.result.status === "committed" ? r12.result.retryReasons : [])} feedback=${JSON.stringify(r12.result.status === "committed" ? r12.result.policyFeedback : [])} text=${JSON.stringify(r12.outboxText)}`);
 
   // [12b] Uma resposta textual pura continua sendo autoria da LLM mesmo sem
   // o metadado auxiliar understanding. Sem tool, mídia, handoff ou mutação,

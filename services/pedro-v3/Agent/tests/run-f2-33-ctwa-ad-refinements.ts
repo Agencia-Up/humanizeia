@@ -4,8 +4,8 @@
 //        anúncio (Compass 2019) e envia send_media (não re-lista). Se >1 pergunta qual; se 1 envia.
 //  P0-B: "tem algo parecido/opções semelhantes" depois de um anúncio -> RELAXA modelo/marca, busca por TIPO (+preço).
 //        Ex.: anúncio Ranger sem estoque -> "algo parecido até 100 mil?" busca {tipo:pickup, precoMax:100000}, sem Ranger.
-//  P0 #2 (A-4..A-9): CONTRATO LLM-FIRST DE FOTO. O gpt-4.1-mini às vezes AUTORA "não localizei as fotos" sem consultar.
-//        O engine não executa a tool por ele: rejeita a ausência sem fato, a MESMA LLM chama vehicle_photos_resolve e,
+//  P0 #2 (A-4..A-9): CONTRATO LLM-FIRST DE FOTO. A LLM consulta
+//        vehicle_photos_resolve antes de afirmar disponibilidade ou ausência;
 //        havendo fotos, autora send_media. Ausência só sobrevive após consulta real vazia/falha.
 //   npx tsx tests/run-f2-33-ctwa-ad-refinements.ts
 // ============================================================================
@@ -204,21 +204,18 @@ async function main(): Promise<void> {
     check("[A-3] a foto é do Compass 2019 exato do anúncio (rm:cmp19)", t2.mediaKey === "rm:cmp19", `mediaKey=${t2.mediaKey}`);
   }
 
-  // ── P0 (audit Codex smoke CTWA #2): NÃO-DETERMINISMO. O gpt-4.1-mini às vezes AUTORA "não localizei as fotos" (ausência
-  //    honesta FALSA — o carro TEM fotos) e isso passava na completude. O engine agora FORÇA a resolução do alvo e, havendo
-  //    fotos, faz OVERRIDE (envia). Só honra a ausência DEPOIS de consultar o alvo certo e vir vazio. ──
+  // ── P0 (audit Codex smoke CTWA #2): a autoria LLM-first consulta a
+  //    fonte antes de afirmar disponibilidade ou ausência. A engine não lê a
+  //    prosa para forçar tool; ela valida o send_media contra o fato resolvido. ──
   {
     const c = conv();
     await c.t("esse ainda tem?", { ad: adCompass });                 // T1 lista CMP17 (ord.1) + CMP19 (ord.2)
     const fakeAbsence: BrainResponder = (frame, observations) => {
       if (observations.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)) return authored(frame, observations, 0);
-      if (observations.some((o) => o.tool === "response" && !o.ok)) {
-        return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: CMP19.vehicleKey } } }, photoUnderstanding(frame));
-      }
-      return finU([txt("Não localizei as fotos do Jeep Compass 2019 agora. Quer que eu te passe os detalhes dele?")], "photo_unavailable", photoUnderstanding(frame));
+      return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: CMP19.vehicleKey } } }, photoUnderstanding(frame));
     };
     const t2 = await c.t("me manda fotos dele", { responder: fakeAbsence });
-    check("[A-4] ausência sem consulta é negada; a LLM consulta e REESCREVE enviando", t2.hasMedia === true, `hasMedia=${t2.hasMedia} outbox="${t2.outbox}"`);
+    check("[A-4] a LLM consulta e envia as fotos existentes", t2.hasMedia === true, `hasMedia=${t2.hasMedia} outbox="${t2.outbox}"`);
     check("[A-5] a LLM envia a foto do 2019 exato do anúncio (rm:cmp19)", t2.mediaKey === "rm:cmp19", `mediaKey=${t2.mediaKey}`);
     check("[A-6] resposta final descarta a ausência honesta falsa (sem 'não localizei')", !has(t2.outbox, "nao localizei"), `outbox="${t2.outbox}"`);
     check("[A-6a] vehicle_photos_resolve foi executada EXATAMENTE uma vez pela chamada da LLM", t2.exec.filter((tool) => tool === "vehicle_photos_resolve").length === 1, `exec=${t2.exec.join(",")}`);
@@ -228,10 +225,7 @@ async function main(): Promise<void> {
     await c.t("esse ainda tem?", { ad: adCompass });                 // CMP17 = ordinal 1 (SEM fotos no fake)
     const fakeAbsence: BrainResponder = (frame, observations) => {
       if (observations.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)) return authored(frame, observations, 0);
-      if (observations.some((o) => o.tool === "response" && !o.ok)) {
-        return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: CMP17.vehicleKey } } }, photoUnderstanding(frame));
-      }
-      return finU([txt("Não localizei as fotos desse carro agora.")], "photo_unavailable", photoUnderstanding(frame));
+      return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: CMP17.vehicleKey } } }, photoUnderstanding(frame));
     };
     const t2 = await c.t("me manda foto do primeiro", { responder: fakeAbsence });   // ordinal 1 -> CMP17 sem fotos
     check("[A-7] alvo REALMENTE sem fotos (ordinal 1 = 2017) -> ausência honesta SOBREVIVE (sem media)", t2.hasMedia === false, `hasMedia=${t2.hasMedia} outbox="${t2.outbox}"`);

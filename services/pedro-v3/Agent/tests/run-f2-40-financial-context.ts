@@ -189,7 +189,7 @@ function runPure(): void {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// PARTE 2 — ENGINE E2E: bloqueio de tool comercial + responseSource brain_* (harness estilo F2.39).
+// PARTE 2 — ENGINE E2E: fatos financeiros tipados chegam ao cérebro; a LLM conduz sem tool indevida.
 // ────────────────────────────────────────────────────────────────────────────
 const executed: QueryCall[] = [];
 const runQuery = async (call: QueryCall): Promise<QueryResult> => {
@@ -233,14 +233,16 @@ const listSuv: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
 };
 const selectFirst: BrainResponder = () => finU([txt("Ótima escolha! O Jeep Compass 2017 é uma baita opção. Quer que eu já te passe as condições?")], "reply", selectU);
 const askParcela: BrainResponder = () => finU([txt("Perfeito! Para montar as condições, qual parcela mensal caberia no seu orçamento?")], "reply", U("financing"));
-// Cérebro que, num turno de resposta financeira, TENTA stock_search (o bug); ao ver o bloqueio, CONDUZ sem buscar.
-// ⭐Codex rodada 2 (proveniência temporal): o final de CONDUÇÃO precisa de evidence do BLOCO ATUAL — sem quote,
-// o reconcile mantém a base herdada (searchSuvU) e o deny UNDERSTANDING_STALE descarta a decisão (correto).
+// A compreensão financeira precisa de evidência do BLOCO ATUAL — sem quote, o reconcile mantém a base herdada.
 const finConductU = (quote: string): TurnUnderstanding => ({ primaryIntent: "financing", requestedCapabilities: [], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [{ capability: null, quote }] as never, isTopicChange: false, answeredLeadQuestions: [] });
-const financialTryThenConduct: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
-  const blocked = obs.some((o) => o.tool === "response" && !o.ok);
-  if (!blocked) return qU({ tool: "stock_search", input: { tipo: "suv", precoMax: 1200 } }, searchSuvU);
-  return finU([txt("Show! Com essa parcela dá pra montar um plano bacana pra você. Você tem algum carro pra dar na troca?")], "reply", finConductU(_f.block.slice(0, 30)));
+const financialConduct: BrainResponder = (frame) => {
+  const installment = frame.currentTurnFacts.extracted.find((fact) => fact.slot === "parcelaDesejada" && fact.kind === "value");
+  if (typeof installment?.value !== "number") throw new Error(`parcelaDesejada ausente do frame: ${JSON.stringify(frame.currentTurnFacts)}`);
+  return finU([
+    txt("Anotei a parcela de até "),
+    { type: "money_ref", role: "installment", source: { kind: "slot_value", slotName: "parcelaDesejada" } },
+    txt(". Você tem algum carro para dar na troca?"),
+  ], "financial_value_ack", finConductU(frame.block.slice(0, 40)));
 };
 // Resposta de entrada "tenho não": cérebro conduz sem buscar.
 const entradaConduct: BrainResponder = () => finU([txt("Sem problemas, seguimos com entrada zero. Qual parcela mensal caberia pra você?")], "reply", U("financing"));
@@ -307,13 +309,13 @@ async function selectedCompassThenAsk(askResponder: BrainResponder): Promise<Ret
 }
 
 async function runEngine(): Promise<void> {
-  console.log("== F2.40 PARTE 2 (engine E2E): bloqueio de tool + brain_* ==");
+  console.log("== F2.40 PARTE 2 (engine E2E): contexto financeiro + autoria LLM ==");
 
   // CASO 1 E2E: parcela pendente + "até 1200" -> stock_search=0, parcelaDesejada=1200, faixaPreco não setado, brain_*.
   {
     const c = await selectedCompassThenAsk(askParcela);
-    const t = await c.t("até 1200", financialTryThenConduct);
-    check("[G1] 'até 1200' -> 0 stock_search (engine bloqueia)", t.stockCalls === 0 && t.stockObs === 0, `calls=${t.stockCalls} obs=${t.stockObs}`);
+    const t = await c.t("até 1200", financialConduct);
+    check("[G1] 'até 1200' -> LLM conduz sem stock_search", t.stockCalls === 0 && t.stockObs === 0, `calls=${t.stockCalls} obs=${t.stockObs}`);
     check("[G1b] parcelaDesejada=1200", t.slots?.parcelaDesejada.status === "known" && t.slots?.parcelaDesejada.value === 1200, JSON.stringify(t.slots?.parcelaDesejada));
     check("[G1c] faixaPreco NÃO virou 1200", t.slots?.faixaPreco.status !== "known", JSON.stringify(t.slots?.faixaPreco));
     check("[G1d] responseSource brain_final/brain_retry (a LLM conduz)", t.src === "brain_final" || t.src === "brain_retry", `src=${t.src}`);
@@ -365,20 +367,13 @@ async function runEngine(): Promise<void> {
     check("[G1i] LLM acolhe e avanca sem repetir a pergunta", /^brain_/.test(t.src ?? "") && !has(t.outbox, "qual parcela"), `src=${t.src} outbox=${JSON.stringify(t.outbox)}`);
   }
 
-  // Se o lead informar um valor explicito, o fato novo substitui a ausencia.
-  // Uma resposta que contradiga o slot conhecido e negada e volta para a LLM.
+  // Se o lead informar um valor explícito, o fato novo substitui a ausência e chega tipado ao cérebro.
+  // A engine não interpreta/reprova prosa comercial: a LLM usa money_ref do slot factual já extraído.
   {
     const c = await selectedCompassThenAsk(askParcela);
-    let attempt = 0;
-    const contradictThenCorrect: BrainResponder = (frame) => {
-      attempt += 1;
-      return attempt === 1
-        ? finU([txt("Como voce nao tem uma parcela ideal definida, vou chamar o consultor.")], "wrong_financial_echo", finConductU(frame.block.slice(0, 40)))
-        : finU([txt("Anotei a parcela de ate R$ 2.000. Vou seguir com a qualificacao.")], "financial_value_ack", finConductU(frame.block.slice(0, 40)));
-    };
-    const t = await c.t("ate 2k ta bom", contradictThenCorrect);
+    const t = await c.t("ate 2k ta bom", financialConduct);
     check("[G1j] 'ate 2k' grava parcela=2000", t.slots?.parcelaDesejada.status === "known" && t.slots?.parcelaDesejada.value === 2000, JSON.stringify(t.slots?.parcelaDesejada));
-    check("[G1k] contradicao ao valor conhecido e negada e reautora pela LLM", t.src === "brain_retry" && has(t.outbox, "2.000"), `src=${t.src} outbox=${JSON.stringify(t.outbox)}`);
+    check("[G1k] LLM recebe o fato e reconhece R$ 2.000 sem retry lexical", t.src === "brain_final" && has(t.outbox, "2.000"), `src=${t.src} outbox=${JSON.stringify(t.outbox)}`);
   }
 
   // CASO ENCODING (incidente real): a gpt-4.1-mini emite a resposta com CARACTERES DE CONTROLE embutidos (corrompida) ->
@@ -416,13 +411,9 @@ async function runEngine(): Promise<void> {
     await c.t("gostei do primeiro", selectFirst);
     await c.t("quais as condicoes?", () => finU([txt("Perfeito! Você tem algum valor para dar de entrada?")], "reply", U("financing")));
     const t4 = await c.t("Tenho 8k", () => finU([txt("Ótimo! Qual parcela mensal caberia para você?")], "reply", U("financing")));
-    // No turno da parcela o cérebro TENTA buscar estoque (o bug do print); ao ser bloqueado, conduz o financiamento.
-    const parcelaTryThenConduct: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.tool === "response" && !o.ok)
-      ? finU([txt("Show! Com essa parcela dá pra montar um plano bacana. Posso já simular o financiamento pra você?")], "reply", finConductU(_f.block.slice(0, 30)))
-      : qU({ tool: "stock_search", input: { tipo: "pickup", precoMax: 2100 } }, searchSuvU);
-    const t5 = await c.t("Até 2100 ta bom", parcelaTryThenConduct);
+    const t5 = await c.t("Até 2100 ta bom", financialConduct);
     check("[G-2100-T4] 'Tenho 8k' -> entrada=8000 (0 stock_search)", t4.slots?.entrada.value === 8000 && t4.stockCalls === 0, `entrada=${JSON.stringify(t4.slots?.entrada)} stock=${t4.stockCalls}`);
-    check("[G-2100-a] 'Até 2100 ta bom' -> 0 stock_search (engine bloqueia)", t5.stockCalls === 0 && t5.stockObs === 0, `calls=${t5.stockCalls} obs=${t5.stockObs}`);
+    check("[G-2100-a] 'Até 2100 ta bom' -> LLM conduz sem stock_search", t5.stockCalls === 0 && t5.stockObs === 0, `calls=${t5.stockCalls} obs=${t5.stockObs}`);
     check("[G-2100-b] parcelaDesejada=2100", t5.slots?.parcelaDesejada.status === "known" && t5.slots?.parcelaDesejada.value === 2100, JSON.stringify(t5.slots?.parcelaDesejada));
     check("[G-2100-c] entrada=8000 preservada", t5.slots?.entrada.value === 8000, JSON.stringify(t5.slots?.entrada));
     check("[G-2100-d] faixaPreco NÃO virou 2100", (t5.slots?.faixaPreco.value as { max?: number } | undefined)?.max !== 2100, JSON.stringify(t5.slots?.faixaPreco));

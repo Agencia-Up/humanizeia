@@ -87,7 +87,17 @@ const resistSearch: BrainResponder = (f, observations) => {
     evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
   });
   const stock = [...observations].reverse().find((o) => o.tool === "stock_search" && o.ok) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } } | undefined;
-  if (!stock) return qU({ tool: "stock_search", input: {} }, searchU);
+  if (!stock) {
+    const remembered = (f.operationalContext?.searchMemory.activeFilters ?? {}) as ActiveSearchConstraints;
+    const current = detect(f.block ?? "");
+    const chosen = mergeActiveConstraints(remembered, current);
+    const input = constraintsToStockInput(chosen) as Record<string, unknown>;
+    if (f.signals.mentionsMoreOptions) {
+      const shown = f.operationalContext?.searchMemory.shownVehicleKeys ?? [];
+      if (shown.length > 0) input.excludeKeys = [...shown];
+    }
+    return qU({ tool: "stock_search", input }, searchU);
+  }
   return stock.data.items.length > 0
     ? finU([txt("Encontrei estas opções para você:"), offer(stock.data.items.map((v) => v.vehicleKey)), txt("Qual delas chamou sua atenção?")], [reply], "offer_stock", searchU)
     : finU([txt("Não encontrei novas opções com esses critérios agora. Quer ajustar algum filtro?")], [reply], "empty_stock", searchU);

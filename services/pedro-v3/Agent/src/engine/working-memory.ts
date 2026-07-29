@@ -98,12 +98,12 @@ function validAgentAction(v: unknown): v is AgentActionMemory {
 function validPendingAgentQuestion(v: unknown): v is PendingAgentQuestionMemory {
   if (!v || typeof v !== "object") return false;
   const q = v as Record<string, unknown>;
-  return isNonEmpty(q.slot) && isNonEmpty(q.sinceTurnId);
+  return isSlot(q.slot) && isNonEmpty(q.sinceTurnId);
 }
 function validResolvedSlotAnswer(v: unknown): v is ResolvedSlotAnswerMemory {
   if (!v || typeof v !== "object") return false;
   const a = v as Record<string, unknown>;
-  return isNonEmpty(a.slot) && isNonEmpty(a.turnId);
+  return isSlot(a.slot) && isNonEmpty(a.turnId);
 }
 function validAnswered(v: unknown): v is AnsweredQuestionMemory {
   if (!v || typeof v !== "object") return false;

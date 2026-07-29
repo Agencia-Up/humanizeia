@@ -136,6 +136,19 @@ async function main(): Promise<void> {
     const enriched = enrichStockSearchCall(base, { popular: false, moreOptions: false, previousVehicleKeys: [], constraints: { marca: "volkswagen", precoMax: 50000 } });
     check("[P-enrich-b] valor EXPLÍCITO do cérebro vence (não sobrescreve marca=fiat)", (enriched.input as { marca?: string }).marca === "fiat" && (enriched.input as { precoMax?: number }).precoMax === 30000);
   }
+  {
+    const base: QueryCall = { tool: "stock_search", input: { precoMax: 50000 } };
+    const enriched = enrichStockSearchCall(base, {
+      popular: true,
+      wantsMotorcycle: true,
+      moreOptions: false,
+      previousVehicleKeys: [],
+      constraints: { marca: "volkswagen", precoMax: 50000 },
+      llmOwnsFilters: true,
+    });
+    const input = enriched.input as { marca?: string; precoMax?: number; popular?: boolean; includeMotorcycles?: boolean };
+    check("[P-enrich-c] central_active não injeta filtros omitidos pela LLM", input.marca == null && input.precoMax === 50000 && input.popular == null && input.includeMotorcycles == null);
+  }
 
   // ── PARTE 3 — INTEGRAÇÃO ──
   // INT-1: cérebro busca (omitindo marca) -> enriquecimento adiciona marca=volkswagen+precoMax -> lista Gol, não Palio/Polo.
@@ -144,13 +157,13 @@ async function main(): Promise<void> {
     const searchU = U("search_stock", { caps: ["stock_search"], subject: "vehicle_type", evidence: [{ capability: "stock_search", quote: "volks" }] });
     const responder: BrainResponder = (_f, obs) => {
       const s = obs.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } } | undefined;
-      if (!s) return qU({ tool: "stock_search", input: { precoMax: 50000 } } as CentralQueryCall, searchU);
+      if (!s) return qU({ tool: "stock_search", input: { marca: "volkswagen", precoMax: 50000 } } as CentralQueryCall, searchU);
       return finU([txt("Encontrei estas opções pra você:"), offer(s.data.items.map((v) => v.vehicleKey)), txt("Quer ver as fotos de alguma?")], [reply], "offer", searchU);
     };
     const r = await c.t("Até 50 mil e que seja da volks", responder);
     const stockCall = r.execCalls.find((e) => e.tool === "stock_search")?.input as { marca?: string; precoMax?: number } | undefined;
     check("[I-1a] rodou stock_search", r.exec.includes("stock_search"), `exec=${r.exec.join(",")}`);
-    check("[I-1b] chamada executada tem marca=volkswagen (enriquecida)", stockCall?.marca === "volkswagen", `marca=${stockCall?.marca}`);
+    check("[I-1b] chamada executada preserva marca=volkswagen declarada pela LLM", stockCall?.marca === "volkswagen", `marca=${stockCall?.marca}`);
     check("[I-1c] chamada executada tem precoMax=50000", stockCall?.precoMax === 50000);
     check("[I-1d] resposta lista o Gol (VW ≤50k)", has(r.outbox, "Gol"), `outbox="${r.outbox}"`);
     check("[I-1e] NÃO lista Palio (Fiat) nem Polo (>50k)", !has(r.outbox, "Palio") && !has(r.outbox, "Polo"));
@@ -164,7 +177,7 @@ async function main(): Promise<void> {
     const responder: BrainResponder = (_f, obs) => {
       const stock = obs.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } } | undefined;
       if (stock) return finU([txt("Encontrei estas opções pra você:"), offer(stock.data.items.map((v) => v.vehicleKey)), txt("Qual delas chamou sua atenção?")], [reply], "offer", searchU);
-      return qU({ tool: "stock_search", input: { precoMax: 50000 } } as CentralQueryCall, searchU);
+      return qU({ tool: "stock_search", input: { marca: "volkswagen", precoMax: 50000 } } as CentralQueryCall, searchU);
     };
     const r = await c.t("Até 50 mil e que seja da volks", responder);
     check("[I-2a] detector não executa; LLM corrigida chama stock_search", r.exec.filter((tool) => tool === "stock_search").length === 1, `exec=${r.exec.join(",")} feedback=${JSON.stringify(r.policyFeedback)}`);

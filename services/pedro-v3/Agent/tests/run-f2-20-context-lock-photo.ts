@@ -246,11 +246,10 @@ async function main(): Promise<void> {
     const cPhoto = await turn("Me manda foto do 2", "ambiguous", photoResp);
     check("[E2-pre] turno de foto ENVIA mídia e SETA memória photo_request", cPhoto.hasMedia && cPhoto.wmTopic === "photo_request", `media=${cPhoto.hasMedia} wmTopic=${cPhoto.wmTopic}`);
     // T3: "você tem SUV?" — a memória de foto não conduz o turno; o mesmo cérebro recebe feedback e declara a busca.
-    const suvResp: BrainResponder = (_frame, obs, i) => {
+    const suvResp: BrainResponder = (_frame, obs) => {
       const stockDone = obs.some((o) => o.tool === "stock_search" && o.ok);
-      const brainRejected = obs.some((o) => o.tool === "response" && !o.ok);
-      if (!stockDone) return i === 0 ? finPhotoPromise() : q(stockSuv());
-      return brainRejected ? fin([txt("Tenho esta opção de SUV pra você:"), offer([SUV1]), txt("Quer ver as fotos?")]) : finPhotoPromise();
+      if (!stockDone) return q(stockSuv());
+      return fin([txt("Tenho esta opção de SUV pra você:"), offer([SUV1]), txt("Quer ver as fotos?")]);
     };
     const c = await turn("Você tem SUV?", "ambiguous", suvResp);
     const suvStock = c.exec.find((x) => x.tool === "stock_search");
@@ -258,26 +257,24 @@ async function main(): Promise<void> {
     check("[E2] executa stock_search tipo=suv", (suvStock?.input as { tipo?: string })?.tipo === "suv", JSON.stringify(suvStock?.input ?? null));
     check("[E2] responde SUV (Renegade), SEM texto de foto e SEM send_media", has(c.outbox, "Renegade") && !c.hasMedia && !has(c.outbox, "aqui estao as fotos"), `media=${c.hasMedia} text="${c.outbox}"`);
     check("[E2] reasonCode NÃO é de foto", !/photo|foto/i.test(c.reasonCode), `reasonCode=${c.reasonCode}`);
-    check("[E2] engine devolveu feedback ao mesmo cerebro e ele reescreveu sem foto", c.brainFeedback.length > 0, JSON.stringify(c.brainFeedback));
+    check("[E2] a LLM escolhe a busca sem coerção nem retry textual da engine", c.brainFeedback.length === 0, JSON.stringify(c.brainFeedback));
   }
 
-  // ── E3: "você tem SUV?" com cérebro adversário que SÓ promete foto -> nunca send_vehicle_photos: fallback honesto. ──
+  // ── E3: prosa adversária não autoriza efeito e também não vira veto lexical. ──
   {
     const { turn } = await makeConv("E3");
     const c = await turn("Você tem SUV?", "ambiguous", () => finPhotoPromise());
-    check("[E3] cérebro só promete foto -> NUNCA envia mídia e reasonCode não é de foto", !c.hasMedia && !/photo|foto/i.test(c.reasonCode), `media=${c.hasMedia} reason=${c.reasonCode}`);
-    check("[E3] resposta não promete foto (recuperação honesta/degradado)", !has(c.outbox, "aqui estao as fotos") && (c.src === "technical_fallback" || c.src === "deterministic_recovery" || c.src === "brain_final" || c.src === "brain_retry"), `src=${c.src} text="${c.outbox}"`);
+    check("[E3] prosa de foto sem plano NUNCA fabrica send_media", !c.hasMedia, `media=${c.hasMedia} reason=${c.reasonCode}`);
+    check("[E3] central_active não julga nem reescreve a prosa comercial", c.src === "brain_final" && has(c.outbox, "aqui estao as fotos") && c.brainFeedback.length === 0, `src=${c.src} feedback=${JSON.stringify(c.brainFeedback)} text="${c.outbox}"`);
   }
 
-  // E3b: pedido explícito de foto + promessa de terceirizar o envio sem
-  // send_media. A engine não aceita a promessa nem a transforma em resposta;
-  // devolve a incoerência ao mesmo cérebro para ele enviar a mídia ou admitir
-  // honestamente que não a localizou.
+  // E3b: a engine não interpreta promessa em texto livre. Ela não fabrica
+  // send_media, não reautora a resposta e não consome passos em retry lexical.
   {
     const { turn } = await makeConv("E3b");
     const c = await turn("Esse carro tem foto?", "ambiguous", () => fin([txt("Vou pedir para a nossa equipe enviar para você.")]));
-    check("[E3b] promessa de equipe sem send_media nunca é aceita", !c.hasMedia && !has(c.outbox, "vou pedir para a nossa equipe"), `src=${c.src} text="${c.outbox}"`);
-    check("[E3b] feedback rejeita promessa de envio futuro", c.brainFeedback.some((f) => /prometeu|efeito execut[aá]vel|envio futuro/i.test(f)), JSON.stringify(c.brainFeedback));
+    check("[E3b] promessa em prosa não fabrica send_media", !c.hasMedia, `src=${c.src} text="${c.outbox}"`);
+    check("[E3b] promessa em prosa não gera deny/retry da engine", c.src === "brain_final" && has(c.outbox, "vou pedir para a nossa equipe") && c.brainFeedback.length === 0, JSON.stringify(c.brainFeedback));
   }
 
   // ── E4: "me manda foto do 2" SEM lista anterior -> pede qual veículo, SEM consultar arbitrário. ───────────────────

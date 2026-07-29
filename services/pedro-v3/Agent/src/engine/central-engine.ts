@@ -31,7 +31,7 @@ import type {
 import {
   validateTurnUnderstanding, deriveFallbackUnderstanding, authorizesPhotoSend, isPhotoRecall, isStockSearchTurn, isStoreInfoTurn, isShortAffirmationBlock,
   resolveTurnTarget, reconcileUnderstanding, targetAcceptsKey, denyFingerprint, isPhotoDeclined,
-  toolCapabilityAuthorized, selectAuthorized, authorizesPhotoByResolvedTarget, leadRequestsPhoto, acceptsAgentPhotoOffer, requestsHuman, leadRequestsHumanExplicitly, humanRequestDecisionFeedback, commercialToolAllowedForHumanRequest, sensitiveAnswerCompletenessFeedback,
+  toolCapabilityAuthorized, authorizesPhotoByResolvedTarget, leadRequestsPhoto, acceptsAgentPhotoOffer, requestsHuman, leadRequestsHumanExplicitly, humanRequestDecisionFeedback, commercialToolAllowedForHumanRequest, sensitiveAnswerCompletenessFeedback, sensitiveReferenceLeakFeedback,
   understandingAuthorityFeedback, hasActiveVisitContext, hasActiveCommercialSubject,
   type ValidatedUnderstanding, type TargetResolution, type TargetResolutionSource, type KnownVehicleModel, type TurnValidationContext,
 } from "./turn-understanding.ts";
@@ -53,7 +53,7 @@ import type { InboxRecord, OutboxRecord, ProviderCapability } from "../domain/ef
 import type { Id, JsonValue, VehicleFact, RememberedVehicleIdentity } from "../domain/types.ts";
 import { composeAndVerify, withTimeout } from "./decision-engine.ts";
 import type { QueryRunner, TurnOutput } from "./decision-engine.ts";
-import { PolicyEngine, hasDeny, parseMoneyMentions } from "./policy-engine.ts";
+import { PolicyEngine, hasDeny } from "./policy-engine.ts";
 import { ResponseRenderer } from "./response-renderer.ts";
 import { buildContextualSdrReply } from "./continuity-fallback.ts";
 import type { RenderedResponse, ResponsePart } from "../domain/decision.ts";
@@ -61,7 +61,7 @@ import { finalize, validateEffectPlans } from "./finalizer.ts";
 import { applyDecision } from "./state-reducer.ts";
 import { materializeEffectPlans } from "./effect-materializer.ts";
 import { buildCrmWritePlan } from "./crm-write.ts";
-import { buildHandoffChain, forcedSilentDisengagementReason } from "./handoff-plan.ts";
+import { buildHandoffChain } from "./handoff-plan.ts";
 
 // MISSÃO PII (P0-C): shape do diagnóstico do precheck de handoff — módulo testável handoff-precheck.ts.
 import type { HandoffPrecheckDiag } from "./handoff-precheck.ts";
@@ -102,6 +102,8 @@ import {
 import type { TenantBusinessInfoSource } from "./tenant-business-info.ts";
 import { resolveTenantBusinessInfo, businessInfoToolResultMemory } from "./tenant-business-info.ts";
 import { invalidBrazilGreeting } from "./channel-time.ts";
+import { responseAuthorityProfile, type ResponseAuthorityMode } from "./response-authority.ts";
+import { groundProposedMediaEffects } from "./media-effect-grounding.ts";
 import { applyAcceptedPhotoActionOutcome, reconcileAcceptedPhotoOutcomes } from "./photo-outcome.ts";
 import {
   aggregateLeadMessage,
@@ -183,7 +185,9 @@ export type CentralTurnArgs = {
   readonly singleAuthor?: boolean;
   // LLM-FIRST (missão SDR real): quando true, o engine NÃO gerencia objetivo de funil (nada de
   // reconcileObjectiveWithQuestion) — o funil vira contexto read-only e o CÉREBRO decide a próxima pergunta/condução.
-  // Guardrails (grounding/foto/CPF/erro/≤1 pergunta) continuam. central_active liga isto; legado mantém false.
+  // Permanecem apenas fronteiras objetivas: schema/refs estruturadas, proveniência de chaves, mídia e efeitos
+  // executáveis, allowlist e vazamento de identificador interno. CPF-timing, quantidade de perguntas, estilo e
+  // condução comercial pertencem ao prompt/LLM. central_active liga isto; legado mantém false.
   readonly llmFirst?: boolean;
   // F7-6 (Fase 7) — OPT-IN EXPLÍCITO do ramo LEGADO de autoria comercial determinística (foto/institucional/
   // desengajamento/mais-opções/recuperação/recall). Só vale em replay/offline autorizado (ex.: F2.13). Default false.
@@ -201,8 +205,9 @@ export type ResponseSource = "brain_final" | "brain_retry" | "deterministic_reca
 // technical_fallback é exclusivamente uma falha operacional do provedor, sem condução comercial.
 const DEGRADED_SOURCES: ReadonlySet<ResponseSource> = new Set(["technical_fallback"]);
 function isDegradedSource(src: ResponseSource): boolean { return DEGRADED_SOURCES.has(src); }
-// ⭐RD1-2 (observabilidade): classifica o feedback de um deny HARD em categoria (só p/ auditoria — nunca controla nada).
-// No central_active só sobram denies de FATO/EFEITO/PII/pedido-explícito; o estilo virou advisory. PURO, best-effort.
+// ⭐RD1-2 (observabilidade): classifica feedback de validação em categoria (só p/ auditoria — nunca controla nada).
+// A taxonomia também cobre o replay legado; no central_active só podem rejeitar violações estruturadas/operacionais
+// objetivas (schema, refs/chaves, mídia/efeitos executáveis e identificadores internos). PURO, best-effort.
 export type HardDenyCategory = "grounding" | "tool_safety" | "effect_safety" | "pii" | "explicit_request" | "structural" | "other";
 function classifyDenyCategory(feedback: string): HardDenyCategory {
   const f = feedback.toLowerCase();
@@ -535,8 +540,14 @@ type SingleAuthorResult =
   | { readonly ok: false; readonly feedback: string };
 
 // Sanitiza deny da policy num feedback CURTO e acionável ao MESMO cérebro (sem PII/segredo/URL).
-function sanitizePolicyFeedback(verdicts: readonly { policyId?: string; outcome: string; violations?: readonly string[] }[]): string {
+function sanitizePolicyFeedback(
+  verdicts: readonly { policyId?: string; outcome: string; violations?: readonly string[] }[],
+  authorityMode: ResponseAuthorityMode,
+): string {
   const msg = verdicts.filter((v) => v.outcome === "deny").flatMap((v) => v.violations ?? [v.policyId ?? "regra"]).join("; ").slice(0, 200);
+  if (authorityMode === "central_active") {
+    return `A saida foi rejeitada por uma contradicao estrutural ou factual verificavel (${msg}). Corrija somente essa contradicao usando os fatos estruturados deste turno. O prompt do portal continua sendo a unica autoridade sobre redacao, perguntas, funil e conducao comercial.`;
+  }
   return `Resposta REJEITADA pela validação (${msg}). Corrija: afirme km/cor/câmbio/ano/preço só via vehicle_ref/money_ref do vehicleKey EXATO já consultado por vehicle_details; no máximo UMA pergunta; não repita dado já conhecido. Se o slot que você ia perguntar JÁ é conhecido (o cliente pode ter acabado de responder — veja o funil), ACOLHA o valor conhecido e avance com UMA pergunta sobre o PRÓXIMO passo que ainda falta.`;
 }
 
@@ -558,13 +569,22 @@ export function enrichStockSearchCall(
     readonly popular: boolean;
     readonly moreOptions: boolean;
     readonly previousVehicleKeys: readonly string[];
-    // P0 (LLM-first): constraints comerciais determinísticos do turno. O engine só PREENCHE LACUNAS da chamada — o
-    // valor explícito do cérebro SEMPRE vence (nunca sobrescreve marca/modelo/tipo/preço/câmbio que o cérebro já pôs).
+    // Compatibilidade legado/replay: constraints comerciais do turno podem preencher
+    // lacunas somente quando `llmOwnsFilters` é falso. No central_active a chamada
+    // direta da LLM permanece intacta, exceto por proteções objetivas documentadas
+    // abaixo (como impedir que excludeKeys esconda veículos nunca apresentados).
     readonly constraints?: CommercialConstraints;
     // F2.29: o lead pediu MOTO explicitamente -> libera moto na busca (default do estoque é EXCLUIR moto de lista de carro).
     readonly wantsMotorcycle?: boolean;
     // INC3 (F2.30): clampa o excludeKeys ao APRESENTADO (só central_active/llmFirst; shadow/legado mantém a união antiga).
     readonly enforceShownClamp?: boolean;
+    // Fronteira LLM-first: numa chamada DIRETA do cérebro, os filtros comerciais
+    // executados são exatamente os que ele declarou. A engine ainda pode remover
+    // excludeKeys não apresentados (proteção objetiva contra ocultar estoque), mas
+    // não acrescenta marca/modelo/tipo/ano/preço/câmbio/combustível/popular/moto
+    // vindos de memória, regex ou anúncio. O preenchimento de lacunas permanece
+    // apenas para os caminhos legado/replay que ainda dependem desta compatibilidade.
+    readonly llmOwnsFilters?: boolean;
     // P0-B (audit Codex smoke): turno de SIMILARIDADE ("algo parecido") -> a busca ignora modelo/marca do cérebro e roda
     // só por tipo/preço (constraints já relaxado). Mercado por TIPO, não preso ao modelo do anúncio.
     // FOCO EXATO do anúncio (missão P0): o lead pediu ALTERNATIVA do carro do anúncio ("tem outro Compass?", "outro ano",
@@ -582,7 +602,7 @@ export function enrichStockSearchCall(
     // keys que VIU no resultado da busca — escondendo os 2 Compass nunca exibidos ("não temos outros" falso).
     const shown = new Set(options.previousVehicleKeys.filter((key): key is string => typeof key === "string" && key.length > 0));
     const brainExcludes = brainExcludeInput.filter((k) => shown.has(k));
-    const excludeList = options.moreOptions ? [...shown] : brainExcludes;
+    const excludeList = !options.llmOwnsFilters && options.moreOptions ? [...shown] : brainExcludes;
     excludeKeys = excludeList.length > 0 ? excludeList : undefined;
   } else {
     // Legado/shadow (comportamento antigo): honra o excludeKeys do cérebro e une as keys da última oferta em "mais opções".
@@ -595,7 +615,7 @@ export function enrichStockSearchCall(
   // P0-B (SIMILARIDADE): a busca sai SÓ do escopo relaxado (tipo/preço/câmbio/popular) — IGNORA modelo/marca/anos que o
   // cérebro tenha posto. "Algo parecido" nunca fica preso no modelo do anúncio; busca por TIPO no mercado.
   // Lacunas preenchidas com o constraint do turno (o do cérebro vence; marca canonicalizada volks->volkswagen).
-  const c = options.constraints;
+  const c = options.llmOwnsFilters ? undefined : options.constraints;
   const filled: Partial<QueryCall["input"]> = {};
   if (c) {
     if (call.input.marca == null && c.marca) (filled as { marca?: string }).marca = canonicalBrand(c.marca);
@@ -619,10 +639,10 @@ export function enrichStockSearchCall(
   const mergedInput: QueryCall["input"] = {
     ...restInput,
     ...filled,
-    ...(options.popular || c?.popular ? { popular: true } : {}),
+    ...(!options.llmOwnsFilters && (options.popular || c?.popular) ? { popular: true } : {}),
     ...(excludeKeys ? { excludeKeys } : {}),
     // F2.29: só libera moto se o lead pediu moto OU o cérebro já marcou includeMotorcycles. Senão, DEFAULT exclui.
-    ...(options.wantsMotorcycle || call.input.includeMotorcycles === true ? { includeMotorcycles: true } : {}),
+    ...((!options.llmOwnsFilters && options.wantsMotorcycle) || call.input.includeMotorcycles === true ? { includeMotorcycles: true } : {}),
   };
   // FOCO EXATO do anúncio (missão P0): alternativa pedida + sem ano do lead -> o ANO (do anúncio, seja do cérebro ou do
   // filled) SAI da chamada EXECUTADA. Preserva modelo/marca/excludeKeys. Não depende de retry.
@@ -670,18 +690,23 @@ function authorFromBrainDraft(args: {
   const draft = args.finalDecision.responsePlan.draft;
   // ⭐RD1-2 (2026-07-13, autoria-LLM exclusiva): em central_active (requireBrain/llmFirst) as guardas de ESTILO/QUALIDADE
   // NÃO negam mais o draft no central_active: o prompt do portal conduz a conversa e a LLM recebe fatos tipados antes da geração.
-  // Aqui elas ficam ativas SÓ no legado/replay (!requireBrain), preservando o contrato antigo. As guardas de FATO/EFEITO/PII
-  // (grounding, foto/mídia, transferência/visita, CPF, chave interna, completude de pedido explícito) continuam HARD nos DOIS
-  // caminhos. Zero hard-deny de estilo no central_active; a LLM conduz/escreve seguindo o prompt do portal + os advisories.
-  const applyLegacyStyleGuards = !args.requireBrain;
+  // Aqui elas ficam ativas SÓ no legado/replay (!requireBrain), preservando o contrato antigo. No central_active
+  // ficam HARD apenas contradições verificáveis por estrutura: refs/chaves, efeito executável, alvo de mídia e vazamento
+  // sensível. A engine não reinterpreta a prosa comercial depois da autoria.
+  const authorityMode: ResponseAuthorityMode = args.requireBrain ? "central_active" : "legacy_strict";
+  const authority = responseAuthorityProfile(authorityMode);
+  const applyLegacyStyleGuards = authority.conversationalTextVeto;
   if (!draft || draft.parts.length === 0) {
-    if (args.disengagementOnly) {
+    if (applyLegacyStyleGuards && args.disengagementOnly) {
       return { ok: false, feedback: "DESPEDIDA ISOLADA: seu draft veio ausente ou malformado. Devolva FINAL com draft.parts contendo EXATAMENTE UMA part {\"type\":\"text\",\"content\":\"<despedida curta e cordial>\"}. O content não pode ter pergunta, tool, coleta de nome/troca/entrada/parcela/visita nem promessa de transferência." };
     }
     const structuralHint = args.finalDecision.reasonSummary.startsWith("draft_invalid:")
       ? ` Motivo estrutural detectado na sua saída anterior: ${args.finalDecision.reasonSummary.slice("draft_invalid:".length).trim()}.`
       : "";
-    return { ok: false, feedback: `Devolva 'draft' com parts estruturadas (text/message_break/vehicle_ref/money_ref/vehicle_offer_list). Não escreva km/cor/câmbio/ano/preço em texto livre.${structuralHint}` };
+    const feedback = applyLegacyStyleGuards
+      ? `Devolva 'draft' com parts estruturadas (text/message_break/vehicle_ref/money_ref/vehicle_offer_list). Não escreva km/cor/câmbio/ano/preço em texto livre.${structuralHint}`
+      : `Saída estruturada inválida. Devolva FINAL com 'draft.parts' não vazio usando apenas parts suportadas (text/message_break/vehicle_ref/money_ref/vehicle_offer_list). A redação e a condução continuam sendo suas e devem seguir o prompt do portal.${structuralHint}`;
+    return { ok: false, feedback };
   }
   // A abertura continua sendo autoria da LLM. RD1-2: em central_active a APRESENTAÇÃO é ADVISORY (o prompt do portal +
   // a apresentação pertence ao prompt do portal); o engine não nega mais a omissão. Guarda legada só no replay.
@@ -696,13 +721,9 @@ function authorFromBrainDraft(args: {
   // cérebro insistia em descrever o carro e degradava em technical_fallback.)
   const SELECTION_ATTR_FEEDBACK = "O cliente está SELECIONANDO um carro. Responda em FINAL, sem ferramenta: acolha a escolha pelo nome canônico e faça UMA pergunta curta oferecendo as fotos. NÃO envie fotos ainda e NÃO cite km/cor/câmbio/preço/ano sem vehicle_details.";
   const sendMediaKeys = args.finalDecision.proposedEffects.filter((e) => e.kind === "send_media").map((e) => e.vehicleKey).filter((k): k is string => typeof k === "string" && k !== "");
-  // P0-2 (audit Codex): em llmFirst, send_media exige understanding VÁLIDO DO CÉREBRO. Sem ele -> REQUIRED_TURN_UNDERSTANDING
-  // (retry); o fallback regex NUNCA autoriza mídia na produção.
-  if (args.requireBrain && sendMediaKeys.length > 0 && !(args.photoVU?.fromBrain && args.photoVU.trusted)) {
-    return { ok: false, feedback: "Para ENVIAR foto (send_media) você precisa declarar no MESMO passo um 'understanding' válido com requestedCapabilities incluindo 'send_photos' e uma evidence citando o TRECHO do bloco onde o cliente pediu foto. Sem isso, não envie mídia." };
-  }
-  // T2 (fonte única): a AUTORIDADE de enviar foto é a SEMÂNTICA (authorizesPhotoSend: capability send_photos com
-  // evidência PRÓPRIA que menciona foto, sem negação, não é memória) — nunca regex de frase. Recall nunca envia mídia.
+  // O replay legado preserva a autorização semântica histórica. No
+  // central_active, a proposta explícita da LLM é a autoridade da decisão; a
+  // engine valida somente se o efeito é factual e executável mais abaixo.
   const acceptedPhotoAuthorized = args.photoVU?.fromBrain === true
     && args.photoVU.trusted
     && args.photoVU.understanding.primaryIntent === "request_photos"
@@ -718,73 +739,39 @@ function authorFromBrainDraft(args: {
     || acceptedPhotoAuthorized
     || pendingPhotoTargetAuthorized;
   const photoRecall = isPhotoRecall(args.photoVU);
-  // P0-1 (audit Codex): CONFLITO — subjectValue do understanding não corresponde ao modelo ESCRITO pelo cliente ->
-  // entendimento INVÁLIDO. Nunca envia mídia; pede correção do subject (o claim escrito manda).
-  if (args.target.kind === "conflict" && (sendMediaKeys.length > 0 || photoAuthorized)) {
+  if (applyLegacyStyleGuards && args.target.kind === "conflict" && sendMediaKeys.length > 0) {
     return { ok: false, feedback: "Seu 'understanding.subjectValue' NÃO corresponde ao modelo que o cliente ESCREVEU no bloco. O modelo do texto do cliente é a AUTORIDADE — corrija subject/subjectValue para ele antes de qualquer ação e NÃO envie foto de outro carro." };
   }
-  if (!photoAuthorized && (sendMediaKeys.length > 0 || reasonCodeIsPhotoSend(args.finalDecision.reasonCode))) {
+  if (applyLegacyStyleGuards && !photoAuthorized && sendMediaKeys.length > 0) {
     return { ok: false, feedback: PHOTO_NOT_REQUESTED_FEEDBACK };
   }
-  // P0-1 (audit Codex): a foto autorizada TEM de ser do ALVO do assunto (key ∈ candidateVehicleKeys verificados por
-  // modelo). Foto do carro ERRADO (ex.: pediu Kicks, resolveu Onix) -> REJEITA + feedback; nunca envia o carro errado.
-  // ⭐AD-5 (2026-07-18): o deny AGORA ENTREGA O CONJUNTO ADMISSÍVEL.
-  //
-  // INCIDENTE (18/07 15:51 e 15:53, lead 12 98220-5353 — "Esse 2022 branco você tem foto?"): este deny disparou 4x
-  // IDÊNTICO no mesmo turno, com `resolvedVehicleKey: null` — ou seja, o engine mandava usar "o vehicleKey CORRETO"
-  // sem NUNCA dizer qual era, e sem ele mesmo saber. A LLM não tinha como obedecer: pediu-se uma ação impossível,
-  // o turno queimou as tentativas e o lead recebeu "Tive uma instabilidade". Duas vezes.
-  //
-  // INVARIANTE: todo deny de alvo precisa carregar o que o satisfaz — a chave certa (alvo resolvido), a lista de
-  // candidatos (alvo ambíguo -> a LLM pergunta QUAL) ou a instrução de localizar por stock_search (nada aterrado).
-  // Sem conjunto admissível, um deny é um beco sem saída.
-  // ⭐AUTORIDADE FACTUAL ÚNICA (auditoria Codex, 19/07). Uma chave vinda de uma TOOL BEM-SUCEDIDA DESTE TURNO está
-  // aterrada — ponto. Antes, este guard consultava só `targetAcceptsKey`, que ignora os fatos do turno; quando o alvo
-  // não estava resolvido ele negava dizendo "NENHUM veículo foi aterrado nesta conversa ainda" — uma AFIRMAÇÃO FALSA,
-  // porque a própria vehicle_photos_resolve acabara de aterrar aquele veículo com sucesso no mesmo turno.
-  //
-  // Princípio: um deny precisa de RAZÃO POSITIVA. "Eu não resolvi o alvo" não é evidência de que a chave está errada.
-  // Quando o alvo ESTÁ resolvido, a divergência continua sendo bloqueio real (não enviar foto do carro errado).
-  // ⚠️ ESCOPO ESTREITO, e a F2.23 provou por quê: minha 1ª versão usou `knownVehicleKeys` (TODAS as chaves do turno,
-  // inclusive os N resultados de uma stock_search) e passou a autorizar foto de QUALQUER carro que aparecesse na
-  // busca — 10 regressões. A proteção "não enviar a foto do carro errado" é real e não pode ser afrouxada.
-  //
-  // O relaxamento vale SOMENTE quando: (a) o engine NÃO resolveu o alvo (logo não tem base para afirmar que a chave
-  // está errada) E (b) a chave veio de uma vehicle_photos_resolve BEM-SUCEDIDA deste turno — a LLM resolveu a foto
-  // DAQUELE veículo. Com alvo resolvido, divergência continua sendo bloqueio.
-  const photoResolvedKeys = new Set(
-    args.facts.filter((f): f is Extract<QueryResult, { ok: true; tool: "vehicle_photos_resolve" }> => f.ok && f.tool === "vehicle_photos_resolve")
-      .map((f) => f.data.vehicleKey),
-  );
-  const targetIsResolved = args.target.kind === "resolved";
-  if (photoAuthorized && sendMediaKeys.some((k) => !targetAcceptsKey(args.target, k) && (targetIsResolved || !photoResolvedKeys.has(k)))) {
-    const alvo = args.target.kind !== "conflict" && args.target.subjectModel ? `do ${args.target.subjectModel}` : "do carro que o cliente pediu";
-    const admissiveis = args.target.kind === "resolved"
-      ? [args.target.vehicleKey, ...args.target.candidateVehicleKeys]
-      : (args.target.kind === "ambiguous" ? [...args.target.candidateVehicleKeys] : []);
-    const unicos = [...new Set(admissiveis)].filter(Boolean);
-    const rotulados = unicos
-      .map((k) => { const l = canonicalVehicleLabel(k, args.facts, args.identities, args.ctx.state); return l ? `${k} (${l})` : k; })
-      .join(" | ");
-    const saida = args.target.kind === "resolved"
-      ? `O vehicleKey CORRETO é '${args.target.vehicleKey}'. Chame vehicle_photos_resolve com ELE.`
-      : unicos.length > 1
-        ? `O alvo está AMBÍGUO entre estas opções: ${rotulados}. NÃO escolha por conta própria: pergunte ao cliente QUAL delas ele quer ver, em UMA pergunta curta, e não envie mídia neste turno.`
-        : unicos.length === 1
-          ? `A única chave aterrada deste assunto é '${unicos[0]}'${rotulados !== unicos[0] ? ` (${rotulados})` : ""}. Use ELA.`
-          : `NENHUM veículo foi aterrado nesta conversa ainda, então não existe chave válida para pedir foto. Localize o carro com stock_search (marca/modelo/ano) e só depois use a chave que a busca retornar.`;
-    return { ok: false, feedback: `A foto que você resolveu NÃO é ${alvo}. ${saida} Nunca envie a foto de outro veículo e nunca invente uma chave.` };
+  // Um alvo positivamente resolvido é uma prova objetiva. Nesse único caso a
+  // engine bloqueia uma proposta para chave divergente. Ausência, conflito ou
+  // ambiguidade de metadado não provam que a tool escolhida pela LLM está
+  // errada; a própria resolução factual da mídia será a autoridade.
+  if (applyLegacyStyleGuards && args.target.kind === "resolved" && sendMediaKeys.some((key) => !targetAcceptsKey(args.target, key))) {
+    const label = canonicalVehicleLabel(args.target.vehicleKey, args.facts, args.identities, args.ctx.state);
+    return {
+      ok: false,
+      feedback: `O efeito send_media aponta para outro veículo. A chave factual do alvo resolvido é '${args.target.vehicleKey}'${label ? ` (${label})` : ""}. Resolva e envie somente a mídia dessa chave.`,
+    };
   }
-  const photoSafeEffects = photoAuthorized ? args.finalDecision.proposedEffects : args.finalDecision.proposedEffects.filter((e) => e.kind !== "send_media");
-  // O pedido humano explícito do bloco atual é a autoridade do motivo da
-  // transferência. Alguns modelos propõem corretamente o efeito, mas o rotulam
-  // como `qualified_handoff`; isso não pode transformar um pedido de atendente
-  // em coleta obrigatória de nome. O engine não cria o efeito nem escreve a
-  // resposta: apenas canonicaliza a semântica do efeito que a LLM propôs.
-  const brainEffects = args.humanRequested === true
-    ? photoSafeEffects.map((effect) => effect.kind === "handoff" ? { ...effect, reason: "explicit_human_request" } : effect)
-    : photoSafeEffects;
+  const groundedMedia = groundProposedMediaEffects(args.finalDecision.proposedEffects, args.facts);
+  if (!groundedMedia.ok) return { ok: false, feedback: groundedMedia.feedback };
+  const photoSafeEffects = groundedMedia.effects;
+  // A LLM é a autoridade do ato e do motivo de transferência. A engine não
+  // reclassifica `qualified_handoff` para `explicit_human_request` por regex ou
+  // por uma segunda interpretação do bloco; ela somente valida abaixo se o
+  // efeito proposto pode ser executado neste turno.
+  const brainEffects = photoSafeEffects;
   const proposedEffects = ensureSendMessage(brainEffects);
+  const proposedHandoff = proposedEffects.some((effect) => effect.kind === "handoff" || effect.kind === "notify_seller");
+  if (authority.executableEffectVeto && proposedHandoff && args.handoffPlannable !== true) {
+    return {
+      ok: false,
+      feedback: "O efeito de transferência proposto não está executável neste turno. Reemita o FINAL sem esse efeito e responda conforme o prompt do portal; não afirme que a transferência aconteceu.",
+    };
+  }
   const proposedQualifiedHandoff = proposedEffects.some((effect) => effect.kind === "handoff" && effect.reason === "qualified_handoff");
   // No readiness callback means central_active has deliberately delegated the
   // commercial qualification decision to the portal prompt/LLM. In that mode
@@ -793,22 +780,17 @@ function authorFromBrainDraft(args: {
   // factual safety gate for the old objective machinery.
   const qualifiedHandoffReady = args.qualifiedHandoffReadyFor == null
     || args.qualifiedHandoffReadyFor(args.proposedPrimaryIntent ?? null) === true;
-  if (args.requireBrain && proposedQualifiedHandoff && args.humanRequested !== true && !qualifiedHandoffReady) {
+  if (args.requireBrain && authority.commercialPolicyVeto && proposedQualifiedHandoff && args.humanRequested !== true && !qualifiedHandoffReady) {
     return {
       ok: false,
       feedback: "Você propôs uma transferência qualificada, mas a qualificação configurada no portal ainda não está completa. Não transfira por apenas reconhecer interesse ou troca: continue você atendendo o ato atual e faça a próxima pergunta natural do atendimento. Só use reason=qualified_handoff quando os dados exigidos pelo funil já estiverem conhecidos.",
     };
   }
-  // P0-2 (audit Codex): filtra select_vehicle_focus proposto pela LLM SEM capability select + evidência (descarta; o foco
-  // não muda). Ordinal determinístico válido (target=turn_ordinal do mesmo key) AINDA seleciona. Só em llmFirst (requireBrain).
+  // A LLM também é autora das mutações de foco. A validação factual acontece
+  // uma única vez em canonicalizeSelectMutations, que elimina chaves
+  // inexistentes sem exigir uma segunda classificação semântica do mesmo ato.
   const rawStateMutations = args.finalDecision.stateMutations ?? [];
-  const stateMutations = args.requireBrain
-    ? rawStateMutations.filter((m) => {
-        if (m.op !== "select_vehicle_focus") return true;
-        const ordinalOk = args.target.kind === "resolved" && args.target.source === "turn_ordinal" && args.target.vehicleKey === m.vehicle.key;
-        return ordinalOk || selectAuthorized(args.photoVU);
-      })
-    : rawStateMutations;
+  const stateMutations = rawStateMutations;
   const proposal: ProposedDecision = {
     proposedAction: deriveProposedAction(proposedEffects),
     facts: [...stateMutations],
@@ -841,18 +823,19 @@ function authorFromBrainDraft(args: {
   // listar, citar ou escolher um veículo naquele mesmo texto. As guardas de
   // grounding abaixo continuam rejeitando qualquer atributo/valor inventado.
   // Assim, a engine valida o que foi afirmado sem prescrever a condução.
-  // B3 (audit): postQuery é AUTORIDADE. Se negar (ex.: oferta acima do teto, veículo fora dos fatos), o draft ORIGINAL
-  // NÃO pode ser enviado — feedback ao MESMO cérebro; nenhum efeito comercial original sobrevive (o retry re-autora).
-  const post = PolicyEngine.postQuery(proposal, realFacts, args.ctx);
-  if (hasDeny(post)) return { ok: false, feedback: sanitizePolicyFeedback(post) };
+  // postQuery valida a decisão conforme a fronteira explícita. No central_active
+  // só contradições estruturais (por exemplo, uma chave fora dos fatos) podem
+  // negar; preferências comerciais como teto de preço pertencem ao portal/LLM.
+  const post = PolicyEngine.postQuery(proposal, realFacts, args.ctx, authorityMode);
+  if (hasDeny(post)) return { ok: false, feedback: sanitizePolicyFeedback(post, authorityMode) };
   const decision0 = finalize(args.turnId, proposal, post, realFacts);
   // Render: identidade só NOMEIA (marca/modelo/ano); km/cor/câmbio/preço só do fato REAL do MESMO vehicleKey.
   let composed: RenderedResponse;
   try {
     composed = { draft, text: ResponseRenderer.render(draft, renderFacts, args.ctx.state, args.identities) };
   } catch (err) {
-    if (args.selectionTurn) return { ok: false, feedback: SELECTION_ATTR_FEEDBACK };
-    return { ok: false, feedback: `Uma parte cita um FATO ausente/não consultado (${String((err as Error)?.message ?? err).slice(0, 140)}). Chame vehicle_details do vehicleKey ANTES de afirmar km/cor/câmbio/preço, ou diga em text que vai confirmar.` };
+    if (applyLegacyStyleGuards && args.selectionTurn) return { ok: false, feedback: SELECTION_ATTR_FEEDBACK };
+    return { ok: false, feedback: `Uma parte estruturada cita um FATO ausente/não consultado (${String((err as Error)?.message ?? err).slice(0, 140)}). Chame vehicle_details do vehicleKey antes de usar essa referência estruturada, ou remova a afirmação até obter o fato.` };
   }
   // Bytes de controle são ruído de transporte, não uma decisão conversacional.
   // Limpe-os antes das validações para que uma resposta factual válida não
@@ -862,35 +845,7 @@ function authorFromBrainDraft(args: {
   if (!composed.text.trim()) {
     return { ok: false, feedback: "A resposta ficou sem conteúdo publicável após a normalização técnica. Reemita uma resposta textual válida." };
   }
-  // Grounding de alvo, nao conducao: uma pergunta pronominal de detalhe pode
-  // apontar para mais de um veiculo lembrado ("qual o valor dele?" depois de
-  // duas ofertas). Nesse estado a engine nao escolhe uma chave pelo lead. A
-  // LLM continua livre para formular a desambiguacao, mas nao pode publicar um
-  // atributo de UMA opcao como se o alvo ja estivesse resolvido.
-  //
-  // Identidade (marca/modelo) e uma lista estruturada continuam permitidas para
-  // a propria LLM nomear as alternativas. Preco, atributo e midia exigem alvo
-  // exato. Isto fecha a brecha em que precos da memoria eram verdadeiros, mas
-  // eram atribuidos ao pronome errado.
-  const unresolvedDetailTarget = args.requireBrain
-    && args.proposedPrimaryIntent === "vehicle_detail"
-    && ATTR_QUESTION_RX.test(normalizeText(args.leadMessage))
-    && args.target.kind !== "resolved";
-  if (unresolvedDetailTarget) {
-    const structuredAttribute = draft.parts.some((part) =>
-      part.type === "money_ref"
-      || (part.type === "vehicle_ref" && part.field !== "marca" && part.field !== "modelo"));
-    const freeMoney = parseMoneyMentions(composed.text).some((mention) => mention.value > 0);
-    const vehicleEffect = proposedEffects.some((effect) => effect.kind === "send_media");
-    if (structuredAttribute || freeMoney || vehicleEffect) {
-      const candidateCount = args.target.kind === "ambiguous" ? args.target.candidateVehicleKeys.length : 0;
-      return {
-        ok: false,
-        feedback: `O pedido de detalhe ainda nao tem um veiculo exato resolvido${candidateCount > 0 ? ` (${candidateCount} candidatos aterrados)` : ""}. Nao escolha uma opcao pelo cliente e nao publique preco, atributo ou midia neste passo. Use as identidades/opcoes estruturadas disponiveis para desambiguar; a formulacao da pergunta continua sendo sua e deve seguir o prompt do portal.`,
-      };
-    }
-  }
-  if (args.requireBrain) {
+  if (applyLegacyStyleGuards) {
     const greetingFeedback = invalidBrazilGreeting(composed.text, args.ctx.now);
     if (greetingFeedback) return { ok: false, feedback: greetingFeedback };
   }
@@ -899,7 +854,7 @@ function authorFromBrainDraft(args: {
   // LLM a reenviar a lista inteira quando nenhuma busca nova ocorreu. O engine
   // apenas reconhece as identidades jÃ¡ visÃ­veis e devolve feedback; nÃ£o escreve
   // a resposta nem escolhe o prÃ³ximo assunto.
-  if (args.requireBrain && rememberedOfferItems.length >= 2) {
+  if (applyLegacyStyleGuards && rememberedOfferItems.length >= 2) {
     const renderedComparable = normalizeText(composed.text);
     const rememberedLabels = [...new Set(rememberedOfferItems
       .map((vehicle) => normalizeText([vehicle.marca, vehicle.modelo].filter(Boolean).join(" ")))
@@ -911,7 +866,7 @@ function authorFromBrainDraft(args: {
   // LLM-first: memória pode aterrar QUAL veículo recebeu fotos, mas nunca escreve a resposta pelo cérebro.
   // Se a LLM ignorar o label lembrado, o engine devolve o fato e ela reautora. O override textual
   // deterministic_recall fica restrito ao caminho legado.
-  if (args.photoRecallLabel
+  if (applyLegacyStyleGuards && args.photoRecallLabel
       && isPhotoMemoryQuestionBlock(args.leadMessage)
       && !proposedEffects.some((effect) => effect.kind === "send_media")
       && !mentionsLabel(composed.text, args.photoRecallLabel)) {
@@ -927,7 +882,7 @@ function authorFromBrainDraft(args: {
   }
   // T2: mesmo sem send_media/reasonCode, o TEXTO não pode PROMETER foto num turno que não autoriza foto (e não é recall,
   // que legitimamente NOMEIA a foto lembrada). Guarda de OUTPUT (não classifica o turno) — a autoridade é photoAuthorized.
-  if (!photoAuthorized && !photoRecall && textPromisesPhoto(composed.text)) {
+  if (applyLegacyStyleGuards && !photoAuthorized && !photoRecall && textPromisesPhoto(composed.text)) {
     return { ok: false, feedback: PHOTO_NOT_REQUESTED_FEEDBACK };
   }
   // PII/UX safety: identidade não pode virar barreira de entrada para um ato
@@ -947,7 +902,7 @@ function authorFromBrainDraft(args: {
   // memória aceita é contexto e não deve transformar uma foto/seleção atual
   // em um bloqueio herdado de busca.
   const continuityIntent = args.proposedPrimaryIntent ?? null;
-  const institutionalQuestionDisplacedCurrentAct = args.requireBrain
+  const institutionalQuestionDisplacedCurrentAct = applyLegacyStyleGuards
     && typeof continuityIntent === "string"
     && new Set(["financing", "trade_in"]).has(continuityIntent)
     && isServiceOrInstitutionalQuestion(composed.text)
@@ -955,14 +910,20 @@ function authorFromBrainDraft(args: {
   if (institutionalQuestionDisplacedCurrentAct) {
     return { ok: false, feedback: `Sua resposta retomou uma pergunta institucional antiga enquanto o ato atual declarado foi '${continuityIntent}'. Responda primeiro ao bloco atual e preserve a continuidade factual; nao copie a pergunta pendente da memoria nem escolha outro assunto para a proxima pergunta.` };
   }
-  const sensitiveFeedback = sensitiveAnswerCompletenessFeedback(args.sensitiveAnswerKinds ?? [], composed.text);
+  const sensitiveFeedback = authority.sensitiveLeakVeto
+    ? (args.requireBrain
+      ? sensitiveReferenceLeakFeedback(composed.text)
+      : sensitiveAnswerCompletenessFeedback(args.sensitiveAnswerKinds ?? [], composed.text))
+    : null;
   if (sensitiveFeedback) return { ok: false, feedback: sensitiveFeedback };
-  const humanFeedback = humanRequestDecisionFeedback({
-    requested: args.humanRequested === true,
-    handoffPlannable: args.handoffPlannable === true,
-    proposedEffectKinds: proposedEffects.map((effect) => effect.kind),
-    composedText: composed.text,
-  });
+  const humanFeedback = applyLegacyStyleGuards
+    ? humanRequestDecisionFeedback({
+      requested: args.humanRequested === true,
+      handoffPlannable: args.handoffPlannable === true,
+      proposedEffectKinds: proposedEffects.map((effect) => effect.kind),
+      composedText: composed.text,
+    })
+    : null;
   if (humanFeedback) return { ok: false, feedback: humanFeedback };
   // A LLM-declared disengagement is an operationally relevant decision. The
   // engine does not infer it from a phrase; it only requires the LLM to carry
@@ -988,7 +949,7 @@ function authorFromBrainDraft(args: {
   // (handoff/notify_seller inexistentes nesta fase) é mentira operacional — mesmo padrão do textPromisesPhoto.
   // A LLM reescreve conduzindo ELA MESMA. Quando a Fase 3 materializar o handoff, a promessa passa a exigir o
   // EFEITO correspondente no plano (o predicado já checa proposedEffects).
-  if (args.requireBrain && promisesHumanHandoff(composed.text)) {
+  if (applyLegacyStyleGuards && promisesHumanHandoff(composed.text)) {
     const handoffProposed = proposedEffects.some((e) => e.kind === "handoff" || e.kind === "notify_seller");
     // HF-1: promessa de consultor SÓ passa com o plano EXECUTÁVEL no MESMO turno = effect handoff proposto
     // E transferência plannable (flag+vendedor+vínculo+portal). Qualquer outra combinação = deny + reescrita
@@ -1009,23 +970,23 @@ function authorFromBrainDraft(args: {
       return { ok: false, feedback: "A transferência NÃO pode ser executada neste momento (indisponibilidade real do sistema — o motivo técnico fica registrado). Reescreva com TRANSPARÊNCIA: reconheça o pedido do cliente, diga com honestidade que não consegue transferir AGORA e ofereça uma alternativa (continuar ajudando por aqui / registrar o pedido para a equipe retornar). PROIBIDO: condicionar a transferência a CPF ou qualquer outro dado, fingir que a transferência está em andamento, ou ignorar o pedido voltando ao funil de qualificação." };
     }
   }
-  // ⭐P0-B (missão P0, rodada 2 do Codex): NÃO EXISTE agendamento executável no Pedro v3 — nem tool, nem efeito, nem
-  // callback. Logo, afirmar que a visita está "agendada"/"marcada"/"confirmada" é SEMPRE uma afirmação FALSA, e
-  // NENHUM efeito a torna verdadeira: `schedule_visit` não é emitível pelo cérebro (schema strict = send_message|
-  // send_media|handoff) e `handoff` prova apenas que um consultor vai ASSUMIR — não que um horário foi reservado.
-  // Por isso a guarda nega SEMPRE que o texto afirma agendamento, independentemente dos efeitos propostos.
-  // A saída admissível é sempre EXECUTÁVEL pelo próprio autor: reescrever com ACOLHIMENTO FACTUAL do que o lead disse.
-  // ⚠️O feedback NÃO pode sugerir promessa de retorno ("vou confirmar", "te retorno", "te aviso"): não há mecanismo
-  // que a sustente — seria recriar, dentro da própria correção, o defeito de promessa-sem-mecanismo (P2).
-  if (args.requireBrain && promisesVisitScheduled(composed.text)) {
-    return { ok: false, feedback: "Voce afirmou que a visita esta AGENDADA/MARCADA/CONFIRMADA. Isso e FALSO: nao existe agendamento executavel neste sistema, e nenhum efeito deste turno reserva horario — nem a transferencia. Reescreva SEM afirmar agendamento: ACOLHA de forma factual o que o cliente disse e siga com UMA pergunta objetiva (por exemplo, reconhecer a preferencia de dia e perguntar qual horario seria melhor). NAO prometa retorno futuro ('vou confirmar', 'te retorno', 'te aviso', 'vou verificar com a equipe') — nao ha mecanismo que garanta isso. Se encaminhar para um consultor for o proximo passo e a transferencia estiver disponivel, voce pode dizer que vai ENCAMINHAR o cliente para um consultor confirmar o horario (nunca que a visita ja esta agendada) e incluir o efeito handoff neste mesmo turno." };
+  // Compatibilidade legada: o replay ainda classifica alegações textuais de
+  // agendamento. No `central_active`, porém, esta leitura lexical NÃO pode
+  // rejeitar a autoria. O limite operacional verdadeiro chega antes da geração
+  // em `operationalContext.capabilities.appointmentBooking=false`; interpretar
+  // a prosa depois da LLM exigiria exceções linguísticas e recriaria os mesmos
+  // falsos bloqueios já removidos das promessas e alegações de combustível.
+  // Um agendamento só poderá voltar a ser validado no ativo quando existir um
+  // efeito estruturado e executável correspondente — nunca por regex de texto.
+  if (authority.lexicalGroundingVeto && promisesVisitScheduled(composed.text)) {
+    return { ok: false, feedback: "Voce afirmou que a visita esta AGENDADA/MARCADA/CONFIRMADA, mas este turno nao possui capacidade nem efeito que reserve horario; nem uma transferencia comprova agendamento. Reescreva sem afirmar reserva: ACOLHA somente o dia/horario informado como preferencia. Se houver um efeito handoff executavel no plano, voce pode comunicar o encaminhamento, mas nao a confirmacao da visita." };
   }
   // ⭐RD1-2 (Codex #2): a guarda de "pergunta dupla de ação" foi REMOVIDA do central_active — ela banía até a alternativa
   // curta e relacionada do MESMO veículo ("quer as fotos ou prefere ver as condições dele?"), que é natural. O advisory
   // no central_active, o prompt do portal e a LLM decidem quantas perguntas e qual é o próximo passo.
   // P0-2 (audit): a resposta ao lead NUNCA pode conter LITERALMENTE uma vehicleKey conhecida (chave/código interno).
-  const slotClaimFeedback = factualSlotClaimFeedback(composed.text, args.ctx.state);
-  if (args.requireBrain && slotClaimFeedback) return { ok: false, feedback: slotClaimFeedback };
+  const slotClaimFeedback = applyLegacyStyleGuards ? factualSlotClaimFeedback(composed.text, args.ctx.state) : null;
+  if (slotClaimFeedback) return { ok: false, feedback: slotClaimFeedback };
   for (const k of knownVehicleKeys(realFacts, args.identities, args.ctx.state)) {
     if (composed.text.includes(k)) return { ok: false, feedback: `Você escreveu a chave interna do veículo ("${k}") na resposta. Use o NOME do carro (marca modelo ano), NUNCA a chave/código interno.` };
   }
@@ -1033,10 +994,10 @@ function authorFromBrainDraft(args: {
   // Validate against the same structured facts used by the renderer. The last
   // rendered offer is accepted conversation data, not free-form memory. Rules
   // requiring a query in the current turn still use realFacts above.
-  // ⭐RD1-2: em central_active (requireBrain) as POL de ESTILO (telefone/uma-pergunta/reask de slot) NÃO negam — viraram
-  // advisory. As POL de FATO/PII (grounding, POL-CPF-TIMING) seguem HARD; o grounding é sempre avaliado (sem retorno-cedo de estilo).
-  const gv = PolicyEngine.validateResponse(composed, renderFacts, decision0, args.ctx, args.requireBrain === true);
-  if (hasDeny(gv)) return { ok: false, feedback: args.selectionTurn ? SELECTION_ATTR_FEEDBACK : sanitizePolicyFeedback(gv) };
+  // ⭐RD1-2: em central_active as POL lexicais/comerciais (telefone, perguntas, reask, CPF-timing e leitura de
+  // afirmações em prosa) NÃO negam. Só referências estruturadas e limites operacionais objetivos permanecem hard.
+  const gv = PolicyEngine.validateResponse(composed, renderFacts, decision0, args.ctx, authorityMode);
+  if (hasDeny(gv)) return { ok: false, feedback: args.selectionTurn ? SELECTION_ATTR_FEEDBACK : sanitizePolicyFeedback(gv, authorityMode) };
   // RD1-2: o "gancho SDR" após institucional pertence ao prompt do portal; guarda legada só no replay.
   if (applyLegacyStyleGuards && isServiceOrInstitutionalQuestion(args.leadMessage)
       && hasCommercialConversationContext(args.ctx.state)
@@ -1048,8 +1009,8 @@ function authorFromBrainDraft(args: {
       && !proposedEffects.some((e) => e.kind === "send_media")) {
     return { ok: false, feedback: "Responda a duvida do cliente e conduza como SDR com UMA pergunta curta ligada ao contexto atual (fotos, detalhes, condicoes, visita ou proximo passo do carro em conversa). Nao pare seco depois da resposta." };
   }
-  // RD1-2: a forma da DESPEDIDA pertence ao prompt do portal e à LLM;
-  // guarda legada só no replay. A promessa de transferência numa despedida continua barrada pela guarda HARD de handoff acima.
+  // RD1-2: a forma da DESPEDIDA e qualquer menção textual de transferência pertencem ao prompt do portal e à LLM;
+  // esta guarda lexical existe somente no replay legado. No ativo, apenas o efeito handoff estruturado é validado.
   if (applyLegacyStyleGuards && args.disengagementOnly && (hasQuestion(composed.text) || promisesHumanHandoff(composed.text)
       || asksLeadName(composed.text) || asksLeadSurname(composed.text))) {
     if (process.env.PEDRO_V3_DENY_DEBUG) console.error(`[DENY_DEBUG_DISENGAGEMENT_TEXT] ${composed.text.slice(0, 500)}`);
@@ -1135,7 +1096,7 @@ function authorFromBrainDraft(args: {
   // Missão P0 INC1/A: em turno COMERCIAL/BUSCA (ou retomada "cadê?"), PROIBIDO prometer buscar ("vou buscar/procurar/
   // verificar/já busco") sem ter chamado stock_search NESTE turno. Prometeu e não buscou -> deny + feedback (chama a tool
   // AGORA, nunca "busco depois"). Guarda de OUTPUT (o texto ao lead), como textPromisesPhoto.
-  if (args.searchExpectedThisTurn
+  if (applyLegacyStyleGuards && args.searchExpectedThisTurn
       && !args.facts.some((f) => f.ok && f.tool === "stock_search")
       && !proposedEffects.some((e) => e.kind === "send_media")
       && textPromisesSearch(composed.text)) {
@@ -1146,6 +1107,7 @@ function authorFromBrainDraft(args: {
   // P0 (RESOLUÇÃO ÚNICA): foto pedida = semântica do cérebro OU ordinal resolvido + pedido explícito ("foto do segundo").
   // Sem isto, quando o cérebro rotula "foto do segundo" só como seleção, ele podia ignorar a foto e passar batido.
   const incomplete = turnCompletenessFeedback({
+    authorityMode,
     leadMessage: args.leadMessage,
     composed,
     institutionalObs: args.institutionalObs ?? new Map(),
@@ -1156,7 +1118,9 @@ function authorFromBrainDraft(args: {
     // não possui essa autoridade semântica e preserva o contrato anterior.
     pendingObjective: args.ctx.state.currentObjective?.status === "pending"
       && !(args.requireBrain && photoAuthorized),
-    photoRequested: photoAuthorized || authorizesPhotoByResolvedTarget(args.target, args.leadMessage, args.ctx.state, args.photoVU) || leadRequestsPhoto(args.leadMessage),
+    photoRequested: args.requireBrain
+      ? photoAuthorized
+      : photoAuthorized || authorizesPhotoByResolvedTarget(args.target, args.leadMessage, args.ctx.state, args.photoVU) || leadRequestsPhoto(args.leadMessage),
     photoTargetResolved: args.target.kind === "resolved",
     photoLookupStatus: photoLookupStatus(args.facts, args.target),
   });
@@ -1176,56 +1140,22 @@ function authorFromBrainDraft(args: {
   return { ok: true, decision: decision0, composed, proposedEffects };
 }
 
-// A resposta textual pura não precisa carregar metadados de execução para ser
-// enviada: ela não chama tool, não muda estado e não produz efeito comercial.
-// O texto continua vindo integralmente da LLM e passa pelos validadores de
-// grounding/PII/efeitos abaixo. Understanding continua obrigatório para toda
-// ação que possa alterar estado, executar ferramenta ou produzir mídia/handoff.
-function isPassiveLlmFinal(step: AgentBrainStep): boolean {
-  if (step.kind !== "final") return false;
-  const draft = step.decision.responsePlan.draft;
-  if (draft == null || draft.parts.length === 0) return false;
-  // Parts factuais continuam sujeitos aos validadores de grounding/render e
-  // nunca autorizam uma tool por si sÃ³. O que nÃ£o pode passar sem understanding
-  // sÃ£o effects, mutaÃ§Ãµes ou mÃ­dia/handoff; exigir metadado para uma lista ou
-  // referÃªncia jÃ¡ aterrada recriava o fallback quando a LLM acertava o texto.
-  if (draft.parts.some((part) => !["text", "message_break", "vehicle_ref", "money_ref", "vehicle_offer_list"].includes(part.type))) return false;
-  if ((step.decision.proposedEffects ?? []).some((effect) => effect.kind !== "send_message")) return false;
-  if ((step.decision.stateMutations ?? []).length > 0) return false;
-  if ((step.decision.memoryMutations ?? []).length > 0) return false;
-  if ((step.decision.knowledgeGaps ?? []).length > 0) return false;
-  return true;
+// `understanding` é metadado semântico auxiliar, não uma segunda autorização
+// da resposta. Se o metadado do MESMO final não for confiável, preservamos o
+// texto e os efeitos (que possuem validadores factuais próprios), mas descartamos
+// mutações de memória/estado e lacunas derivadas dele. Assim um rótulo ruim não
+// derruba a conversa nem contamina o turno seguinte.
+function withoutUntrustedSemanticPayload(decision: AgentBrainDecision): AgentBrainDecision {
+  if (decision.memoryMutations.length === 0
+      && (decision.stateMutations?.length ?? 0) === 0
+      && (decision.knowledgeGaps?.length ?? 0) === 0) return decision;
+  return {
+    ...decision,
+    memoryMutations: [],
+    stateMutations: [],
+    knowledgeGaps: [],
+  };
 }
-
-// Um final textual pode sobreviver ao descarte de understanding auxiliar, mas
-// nao pode usar esse descarte para inventar uma SELECAO ordinal. Esta e uma
-// validacao de proveniencia do alvo, nao uma decisao de conversa: o parser
-// unico diferencia "segunda" (dia) de "segundo carro" (item da lista).
-//
-// Exemplo que motivou a invariante: o bloco pediu visita "pra segunda", uma
-// understanding rejeitada declarou capability=select e o texto respondeu
-// sobre "o segundo carro". Sem esta checagem, o fail-soft publicava uma
-// referencia que o lead nunca fez. Respostas neutras/clarificadoras continuam
-// passando, mesmo que o metadado auxiliar de selecao esteja defeituoso.
-function passiveFinalIntroducesRejectedOrdinalSelection(step: AgentBrainStep, leadMessage: string): boolean {
-  if (step.kind !== "final" || step.understanding == null) return false;
-  const understanding = step.understanding;
-  const declaresSelection = understanding.primaryIntent === "select_vehicle"
-    || understanding.requestedCapabilities.includes("select")
-    || understanding.subject === "ordinal_from_last_offer";
-  if (!declaresSelection) return false;
-
-  const responseText = step.decision.responsePlan.draft?.parts
-    .filter((part): part is Extract<ResponsePart, { type: "text" }> => part.type === "text")
-    .map((part) => part.content)
-    .join("\n") ?? "";
-  const responseOrdinal = parseOrdinal(responseText)?.value ?? null;
-  if (responseOrdinal == null) return false;
-  const leadOrdinal = parseOrdinal(leadMessage)?.value ?? null;
-  return leadOrdinal !== responseOrdinal;
-}
-
-const REJECTED_ORDINAL_SELECTION_FEEDBACK = "CONFLITO DE AUTORIDADE: a resposta introduziu uma selecao ordinal que o cliente nao fez neste bloco. Nao escolha primeiro/segundo/terceiro item por conta propria; responda ao pedido atual ou apresente a lista aterrada sem selecionar por ele.";
 
 // B2 (audit): para pergunta de ATRIBUTO do veículo SELECIONADO, o turno EXIGE um vehicle_details BEM-SUCEDIDO do MESMO
 // vehicleKey antes do final. Sem esse fato -> mensagem que força a consulta (o cérebro devolve query). Detalhe de OUTRO
@@ -1276,14 +1206,7 @@ export function clearStalePhotoIntent(wm: WorkingMemoryV1, currentTurnIntent: Cu
 
 // ── P0-B (audit): num turno que NÃO pede foto, a resposta não pode PROMETER foto (texto), ter reasonCode de foto,
 //    nem send_media. Guarda determinística no author + fallback. ─────────────────────────────────────────────────
-// Fix 1 (diag conv2): reasonCode por ALLOW/DENY EXATO — bloqueia SÓ códigos que significam ENVIO/promessa ATIVA de foto.
-// NUNCA bloqueia códigos de RECUSA/negação/continuidade ("respect_photo_decline_and_offer_next_step" etc.) que contêm a
-// substring "photo" mas NÃO enviam nada (era a causa do technical_fallback do T10).
-const PHOTO_SEND_REASON_CODES = new Set(["send_photos", "send_vehicle_photos", "photo_send", "vehicle_photo_send", "send_media_photo"]);
-function reasonCodeIsPhotoSend(code: string | null | undefined): boolean {
-  return typeof code === "string" && PHOTO_SEND_REASON_CODES.has(code.trim().toLowerCase());
-}
-// Fix 2 (diag conv2): SÓ ENVIO ATIVO/promessa assertiva de foto — NUNCA uma OFERTA interrogativa ("quer que eu te envie
+// SÓ ENVIO ATIVO/promessa assertiva de foto — NUNCA uma OFERTA interrogativa ("quer que eu te envie
 // as fotos?", "posso te mandar fotos?", "prefere fotos ou condições?"). Verbos no INDICATIVO (vou/estou/enviei/mandei) +
 // "aqui estão"/"segue" = envio ativo; o subjuntivo "envie" (após "quer que eu te...") NÃO entra -> oferta passa.
 const PHOTO_ACTIVE_SEND_RX = /\baqui\s+est[aã]o?\s+as\s+fotos\b|\bseguem?\s+(?:as\s+)?fotos\b|\b(?:vou|irei|vamos)\s+(?:te\s+|lhe\s+)?(?:enviar|mandar)\s+(?:as\s+)?fotos\b|\bestou\s+(?:te\s+|lhe\s+)?(?:enviando|mandando)\s+(?:as\s+)?fotos\b|\b(?:te\s+|lhe\s+)?(?:enviei|mandei)\s+(?:as\s+)?fotos\b|\benviando\s+as\s+fotos\b|\bmandando\s+as\s+fotos\b|\bfotos\s+do\s+carro\s+que\s+voce\s+pediu\b/;
@@ -1339,6 +1262,7 @@ function photoLookupStatus(facts: readonly QueryResult[], target: TargetResoluti
 const PHOTO_EXTERNAL_PROMISE_RX = /\b(?:vou|irei|vamos)\b[^.?!]{0,100}\b(?:pedir|solicitar|confirmar|verificar)\b[^.?!]{0,100}\b(?:equipe|consultor|vendedor|time)\b[^.?!]{0,80}\b(?:enviar|mandar)\b|\b(?:equipe|consultor|vendedor|time)\b[^.?!]{0,70}\b(?:vai|ira)\b[^.?!]{0,40}\b(?:enviar|mandar)\b/;
 const PHOTO_ORDINAL_CLARIFY_RX = /\b(?:qual|quais|numero|n[uú]mero|op[cç][aã]o|item|lista|primeir|segund|terceir|quart|quint)\b/;
 function turnCompletenessFeedback(args: {
+  readonly authorityMode: ResponseAuthorityMode;
   readonly leadMessage: string;
   readonly composed: RenderedResponse;
   readonly institutionalObs: ReadonlyMap<BusinessInfoTopic, AgentToolObservation>;
@@ -1348,11 +1272,18 @@ function turnCompletenessFeedback(args: {
   readonly photoTargetResolved: boolean;
   readonly photoLookupStatus: PhotoLookupStatus;
 }): string | null {
+  const authority = responseAuthorityProfile(args.authorityMode);
+  // No fluxo ativo, completude conversacional e escolha de tool pertencem à
+  // LLM. Estrutura, referências e efeitos factuais já foram validados antes;
+  // portanto não existe uma segunda autorização baseada em texto/intenção.
+  if (!authority.conversationalTextVeto) return null;
   const normResp = normalizeText(args.composed.text);
   // Institucional: cada tópico PEDIDO tem que aparecer na resposta (valor ou ausência honesta), senão foi ignorado.
-  for (const topic of institutionalTopicsRequested(args.leadMessage)) {
-    if (respondsInstitutionalTopic(normResp, topic, args.institutionalObs.get(topic))) continue;
-    return `O cliente pediu ${INST_TOPIC_LABEL[topic]} NESTE turno e a sua resposta não trouxe isso (respondeu outro assunto no lugar). Responda ${INST_TOPIC_LABEL[topic]} usando o dado do seu prompt/tenant_business_info — ou, se realmente não houver, diga honestamente que não tem essa informação. Se ele pediu MAIS de uma coisa no mesmo turno (ex.: horário E foto), responda TODAS, não só uma.`;
+  if (authority.conversationalTextVeto) {
+    for (const topic of institutionalTopicsRequested(args.leadMessage)) {
+      if (respondsInstitutionalTopic(normResp, topic, args.institutionalObs.get(topic))) continue;
+      return `O cliente pediu ${INST_TOPIC_LABEL[topic]} NESTE turno e a sua resposta não trouxe isso (respondeu outro assunto no lugar). Responda ${INST_TOPIC_LABEL[topic]} usando o dado do seu prompt/tenant_business_info — ou, se realmente não houver, diga honestamente que não tem essa informação. Se ele pediu MAIS de uma coisa no mesmo turno (ex.: horário E foto), responda TODAS, não só uma.`;
+    }
   }
   // Foto: a LLM escolhe a tool e autora a resposta. A engine somente valida
   // fatos e efeitos: sem consulta não há base para afirmar ausência; havendo
@@ -1362,11 +1293,12 @@ function turnCompletenessFeedback(args: {
   // pode ter legitimamente redirecionado o turno — não reexigir a foto que a policy acabou de barrar.
   const sentMedia = args.proposedEffects.some((e) => e.kind === "send_media");
   if (!args.pendingObjective && args.photoRequested && !sentMedia) {
-    if (!args.photoTargetResolved && PHOTO_ORDINAL_CLARIFY_RX.test(normResp)) return null;
-    if (PHOTO_EXTERNAL_PROMISE_RX.test(normResp)) {
+    if (authority.conversationalTextVeto && PHOTO_EXTERNAL_PROMISE_RX.test(normResp)) {
       return "O cliente pediu FOTO neste turno, mas a resposta prometeu que uma equipe/consultor enviaria depois. Essa promessa não é um efeito executável: chame vehicle_photos_resolve para o carro certo e, se houver fotos, inclua send_media com os photoIds no mesmo turno. NÃO prometa envio futuro.";
     }
     if (!args.photoTargetResolved) {
+      if (!authority.conversationalTextVeto) return null;
+      if (PHOTO_ORDINAL_CLARIFY_RX.test(normResp)) return null;
       return "O cliente pediu FOTO, mas o veículo ainda não está resolvido de forma inequívoca. Pergunte qual carro ele quer ver; não escolha uma opção por conta própria e não afirme que as fotos estão indisponíveis.";
     }
     if (args.photoLookupStatus === "not_queried") {
@@ -1379,7 +1311,8 @@ function turnCompletenessFeedback(args: {
     // texto e pode explicar a indisponibilidade sem a engine redigir por ela.
     return null;
   }
-  if (!args.pendingObjective
+  if (authority.conversationalTextVeto
+      && !args.pendingObjective
       && args.photoRequested
       && parseOrdinal(args.leadMessage) != null
       && !args.proposedEffects.some((e) => e.kind === "send_media")
@@ -1503,7 +1436,7 @@ export function promisesHumanHandoff(text: string): boolean {
   }
   return false;
 }
-const VISIT_SCHEDULED_PROMISE_RX = /\b(?:vou|irei)\s+agendar\s+(?:a\s+|sua\s+)?visita\b|\b(?:agendei|marquei)\s+(?:a\s+|sua\s+)?visita\b|\bagendo\s+(?:a\s+|sua\s+)?visita\b|\b(?:visita|horario)\b.{0,20}\b(?:esta|ficou|foi)\s+agendad[oa]\b|\bvisita\s+(?:ja\s+)?(?:agendad[oa]|marcad[oa])\b|\b(?:agendad[oa]|marcad[oa])\s+(?:para|na|no)\b|\b(?:anotei|registrei|reservei|confirmei)\s+(?:a\s+|sua\s+)?visita\b|\bvisita\s+anotad[oa]\b/;
+const VISIT_SCHEDULED_PROMISE_RX = /\b(?:vou|irei)\s+agendar\s+(?:a\s+|sua\s+)?visita\b|\b(?:agendei|marquei)\s+(?:a\s+|sua\s+)?visita\b|\bagendo\s+(?:a\s+|sua\s+)?visita\b|\b(?:visita|horario)\b.{0,20}\b(?:esta|ficou|foi)\s+(?:agendad[oa]|marcad[oa]|confirmad[oa])\b|\bvisita\s+(?:ja\s+)?(?:agendad[oa]|marcad[oa]|confirmad[oa])\b|\b(?:anotei|registrei|reservei|confirmei)\s+(?:a\s+|sua\s+)?visita\b|\bvisita\s+anotad[oa]\b/;
 // ⭐P0-B: a alternativa SOLTA `(esta|ficou) anotad[oa]` foi REMOVIDA. Ela capturava o ACOLHIMENTO de uma preferência de
 // dia/horário ("amanhã de manhã está anotado"), que por contrato NÃO exige efeito nenhum — o resultado era um deny sem
 // saída num turno legítimo. O detector agora mira só a AFIRMAÇÃO de visita confirmada/agendada (inclusive "visita
@@ -2091,6 +2024,10 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           facts,
           executionFailures,
           groundedVehicleKeys: fleet.map((v) => v.vehicleKey),
+          searchMemory: {
+            activeFilters: contextState.activeSearchConstraints ?? {},
+            shownVehicleKeys,
+          },
           capabilities: {
             sendMessage: true,
             // ⚠️`ProviderCapability` (idempotent|queryable|none) descreve RECONCILIAÇÃO, não disponibilidade — em
@@ -2138,11 +2075,9 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       let brainRetries = 0;
       let finalAuthorshipAttempts = 0;
       const policyFeedbackLog: string[] = [];
-      // Understanding e metadado auxiliar da autoria, nao a propria resposta.
-      // Em um final estritamente passivo, metadado invalido e descartado sem
-      // virar deny: ele nao autoriza tool, efeito, mutacao ou estado. O texto
-      // ainda atravessa grounding, PII e validacao de efeitos normalmente.
-      // Query, midia, handoff, knowledge gap e mutacoes seguem fail-closed.
+      // Understanding é metadado auxiliar da autoria, não a própria resposta.
+      // Metadado inválido é descartado sem virar deny; fatos, referências e
+      // efeitos continuam passando por seus validadores objetivos.
       let understandingMetadataDropped = 0;
       const understandingMetadataDropIssues: string[] = [];
       const noteUnderstandingMetadataDrop = (stage: "proposal" | "final_authorship", validation: ValidatedUnderstanding): void => {
@@ -2170,17 +2105,11 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         }
         return s;
       };
-      // ── FONTE ÚNICA (audit Codex): SÓ o understanding DO CÉREBRO (fromBrain, evidência⊂bloco) autoriza ação comercial
-      //    (send_media/tool/foco). A 1ª compreensão válida TRAVA o assunto (reconcileUnderstanding). O fallback é HINT
-      //    conservador só p/ recuperação TEXTUAL — nunca autoriza. `knownModels` verifica o modelo do alvo (P0-1).
+      // O understanding confiável alimenta memória e telemetria. Ele não é
+      // pré-condição duplicada para uma tool ou efeito escolhido pela LLM:
+      // essas operações têm autoridade e validação factuais próprias.
       const fallbackUnderstanding = deriveFallbackUnderstanding(leadMessage, baseSignals, prepared.claimExtractor);
       let lockedU: TurnUnderstanding | null = null;                 // base TRAVADA do turno (do cérebro)
-      // Rótulo semântico DESCRITIVO aceito somente junto de um final passivo
-      // efetivamente publicado. Ele nunca entra em `lockedU`: portanto não
-      // autoriza tool/effect/mutação, não altera memória e não dirige guards.
-      // Serve para não apagar a leitura conversacional da LLM (ex.: trade_in)
-      // quando ela omite evidence em uma resposta que apenas envia texto.
-      let acceptedPassiveUnderstanding: TurnUnderstanding | null = null;
       let provenanceRetries = 0;                                    // ⭐SEM inv.1: retries de evidence fora do bloco atual
       let provenanceExhausted = false;                              // ⭐Codex P0: decisão stale descartada integralmente
       let evidenceNormalized = false;                               // ⭐Codex rodada 2: citação mecânica em resposta curta sem ação
@@ -2211,38 +2140,6 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const acceptedBrainPrimaryIntent = (): TurnUnderstanding["primaryIntent"] | null => {
         const validated = brainVU();
         return validated?.trusted === true ? validated.understanding.primaryIntent : null;
-      };
-      const passiveSemanticLabel = (step: AgentBrainStep): TurnUnderstanding | null => {
-        if (!isPassiveLlmFinal(step) || step.understanding == null) return null;
-        const raw = step.understanding;
-        // O rótulo descreve o FINAL aceito, nunca a base operacional reconciliada.
-        // Uma tentativa de tool rejeitada pode ter deixado um `lockedU` sem
-        // autoridade; reutilizá-lo aqui apagaria justamente a correção semântica
-        // que a LLM fez ao redigir a resposta final.
-        const rawValidation = validateTurnUnderstanding(raw, leadMessage, true, turnValidationContext);
-        if (rawValidation.trusted) return null;
-        // Aceita exclusivamente o primaryIntent como descrição. Qualquer
-        // metadado que pudesse carregar autoridade, alvo, escopo ou fato torna
-        // o conjunto inteiro inelegível e ele continua sendo descartado.
-        if ((rawValidation.semanticIssues?.length ?? 0) > 0) return null;
-        if ((raw.evidence?.length ?? 0) > 0) return null;
-        if ((raw.requestedCapabilities?.length ?? 0) > 0) return null;
-        if ((raw.monetaryMentions?.length ?? 0) > 0) return null;
-        if (raw.policyDecision != null) return null;
-        if (raw.subject !== "none" || raw.subjectValue != null) return null;
-        if (raw.isTopicChange || (raw.answeredLeadQuestions?.length ?? 0) > 0) return null;
-        return {
-          primaryIntent: rawValidation.understanding.primaryIntent,
-          requestedCapabilities: [],
-          subject: "none",
-          subjectValue: null,
-          subjectSource: "none",
-          evidence: [],
-          monetaryMentions: [],
-          isTopicChange: false,
-          answeredLeadQuestions: [],
-          policyDecision: null,
-        };
       };
       const authoritativeVU = (): ValidatedUnderstanding => brainVU() ?? validateTurnUnderstanding(fallbackUnderstanding, leadMessage, false, turnValidationContext);
       // ATO CONVERSACIONAL e NECESSIDADE FACTUAL são eixos independentes. A LLM pode selecionar um veículo, negociar,
@@ -2293,7 +2190,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         : commercialConstraintsForTurn();
       const effectiveSearchScopeThisTurn = (): CommercialConstraints => { const base = searchScopeThisTurn(); return sufficientForStockSearch(base) ? base : (moreOptionsDerivedScope ?? base); };
       // Observabilidade (contrato Codex #7): input PROPOSTO pela LLM vs EXECUTADO — prova que o engine não reinjetou filtro antigo.
-      const stockProposedVsExecuted: Array<{ readonly proposed: unknown; readonly executed: unknown; readonly topicChange: boolean; readonly source: "brain_loop" | "det_completion" }> = [];
+      const stockProposedVsExecuted: Array<{ readonly proposed: unknown; readonly executed: unknown; readonly topicChange: boolean; readonly source: "brain_loop" }> = [];
       // ⭐AD-1: quem exige tenant_business_info é o ATO institucional declarado pela LLM (com evidência do bloco atual),
       // não o regex mentionsStore. No legado (!llmFirst) o sinal léxico continua valendo — nada muda lá.
       //
@@ -2397,7 +2294,6 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const seenDenyFingerprints = new Set<string>();               // deny repetido -> recupera já (não gasta tentativas)
       let repeatedDeny = false;
       const seenToolSigs = new Set<string>();
-      const COMMERCIAL_TOOLS = new Set(["stock_search", "vehicle_details", "vehicle_photos_resolve"]);
       const systemDetailKeys = new Set<string>();                   // P0-2: keys cujo vehicle_details o ENGINE exigiu (grounding)
       // audit institucional: cache/observação TERMINAL por tópico. resolveInstitutional executa NO MÁXIMO 1x por
       // tópico (nunca repete a mesma chamada); NOT_CONFIGURED é terminal (ausência definitiva); READ_SOURCE_FAILURE
@@ -2438,9 +2334,9 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const stockSearchCache = new Map<string, QueryResult>();
       const stockFingerprintsExecuted: string[] = [];
       let duplicateStockCallsBlocked = 0;
-      // Missão P0 (audit Codex smoke): CAP anti-loop de stock_search repetido pelo cérebro (o "cadê? 7x"). Cada repetição
-      // SEMÂNTICA vira feedback de controle (tool:"response", NÃO conta como busca no relatório) mandando finalizar; após
-      // poucas repetições o loop sai e a recuperação determinística responde. Persiste ENTRE iterações (por isso fora do for).
+      // Missão P0 (audit Codex smoke): CAP legado anti-loop de stock_search repetido. No central_active, a repetição
+      // idempotente encerra a fase de tools imediatamente, sem deny e sem nova observação; a mesma LLM recebe a autoria
+      // final com o resultado original ainda disponível. O contador abaixo existe apenas para replay legado.
       let dupStockLoopCount = 0;
       const DUP_STOCK_LOOP_CAP = 3;
       // ⭐AD-1: trava ÚNICA do requiredToolBeforeFinal, válida para TODAS as pernas (estoque, mais-opções, institucional).
@@ -2457,10 +2353,6 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       // A resolução de fotos também é idempotente por (tool,args). Depois de uma consulta real, a LLM recebe o fato e deve
       // finalizar. Repetições viram feedback de resposta e têm teto, evitando gastar os 6 passos e cair em recovery.
       let dupPhotoLoopCount = 0;
-      // Fase 1 (LLM-first): retries EXTRAS (bounded) para os feedbacks acionáveis de LISTAGEM/MONEY — a LLM insiste em listar/
-      // conduzir sem cair no recovery, mas com teto (não gasta todos os passos num cérebro travado). Persiste entre iterações.
-      let listMoneyRetries = 0;
-      const LIST_MONEY_RETRY_CAP = 4;
       // ⭐F7-1 (Codex): dedup de EXECUÇÃO por tool+input p/ TODAS as tools, POR TURNO — o invariante "a mesma tool+input
       // nunca executa 2x no turno" fica garantido no chokepoint de EXECUÇÃO (não só na checagem de proposta). A 2ª chamada
       // idêntica devolve o FATO já obtido, sem tocar o adapter. stock_search mantém o fingerprint SEMÂNTICO (relaxamento);
@@ -2492,7 +2384,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       };
       for (; brainSteps < brainMaxSteps; brainSteps++) {
         let step;
-        let passiveLabelForStep: TurnUnderstanding | null = null;
+        let stepUnderstandingTrusted = false;
         try {
           step = noteBrainStep(await withTimeout(brain.proposeNextStep(frameNow(), observations), limits.proposeTimeoutMs ?? 30_000, "propose: agent brain step exceeded timeout"));
         } catch (err) {
@@ -2502,71 +2394,23 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           providerFallbackReason = providerFallbackReason ?? `brain propose timeout/transport: ${String((err as Error)?.message ?? err).slice(0, 80)}`;
           break;
         }
-        // Em central_active, `understanding` é obrigatório para qualquer ação
-        // operacional. Uma resposta textual pura, porém, não tem capability,
-        // tool, mídia, handoff ou mutação para autorizar. Nesse caso a LLM já
-        // entregou a autoria comercial e o engine só precisa validar/renderizar
-        // o texto; exigir metadado auxiliar aqui transformava respostas simples
-        // (por exemplo, endereço presente no prompt do portal) em technical_fallback.
-        const passiveFinalWithoutUnderstanding = llmFirst && isPassiveLlmFinal(step) && step.understanding == null;
-        if (llmFirst && !step.understanding && !passiveFinalWithoutUnderstanding) {
-          const feedback = "Seu passo não trouxe understanding. Reemita a decisão com understanding completo, evidence literal do bloco atual e, se precisar de fatos, a tool correspondente. Não invente disponibilidade nem continue um objetivo antigo sem declarar o ato atual.";
-          policyFeedbackLog.push(feedback);
-          if (authorityRetries < AUTHORITY_RETRY_CAP && brainSteps + 1 < brainMaxSteps) {
-            authorityRetries += 1;
-            observations.push({ tool: "response", ok: false, error: { code: "UNDERSTANDING_REQUIRED", message: feedback } });
-            continue;
-          }
-          provenanceExhausted = true;
-          break;
-        }
-        // Fonte única: captura+TRAVA o entendimento do turno (a 1ª compreensão válida é a base; refinamento só adiciona fato).
+        // `understanding` descreve o ato, mas não é uma segunda autorização da
+        // resposta/tool escolhida pela mesma LLM. Quando válido, alimenta
+        // memória e telemetria; quando inválido, é descartado sem consumir um
+        // retry. Tool, draft e efeitos seguem para seus validadores objetivos.
         if (step.understanding) {
           const previousTrustedUnderstanding = trustedLockedUnderstanding();
-          // Somente uma understanding JA CONFIAVEL pode travar a semantica do
-          // turno. Metadado operacional rejeitado (por exemplo, uma tentativa
-          // de stock_search sem autoridade) nao pode contaminar a correcao que
-          // a propria LLM emite depois no final passivo.
           const candidate = reconcileUnderstanding(previousTrustedUnderstanding, step.understanding, leadMessage, {
             acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState),
             allowCurrentEvidenceCorrection: observations.some((observation) => observation.tool === "response" && !observation.ok),
           });
           const candidateValidation = validateTurnUnderstanding(candidate, leadMessage, true, turnValidationContext);
-          const authorityFeedback = understandingAuthorityFeedback(candidateValidation);
-          const rejectedOrdinalSelection = llmFirst
-            && isPassiveLlmFinal(step)
-            && passiveFinalIntroducesRejectedOrdinalSelection(step, leadMessage);
-          // A intenção declarada descreve a conversa; ela não autoriza a tool.
-          // Se a LLM omitir capability/evidence, a execução continua bloqueada
-          // no gate da query, mas uma resposta textual honesta (por exemplo,
-          // pedir esclarecimento) não deve virar retry/fallback por metadado
-          // duplicado. Só conflitos reais de evidência permanecem bloqueantes.
-          const understandingFeedback = rejectedOrdinalSelection
-            ? REJECTED_ORDINAL_SELECTION_FEEDBACK
-            : authorityFeedback;
-          const passiveMetadataMayBeDropped = llmFirst
-            && isPassiveLlmFinal(step)
-            && !candidateValidation.trusted
-            && !rejectedOrdinalSelection;
-          if (passiveMetadataMayBeDropped) {
-            // Fail-soft contextual: preserva apenas uma understanding anterior ja
-            // validada (por exemplo, a que autorizou uma stock_search). O
-            // candidato invalido deste final nao chega a decisao operacional.
-            passiveLabelForStep = passiveSemanticLabel(step);
-            if (passiveLabelForStep == null) noteUnderstandingMetadataDrop("proposal", candidateValidation);
+          if (llmFirst && !candidateValidation.trusted) {
+            noteUnderstandingMetadataDrop("proposal", candidateValidation);
             lockedU = previousTrustedUnderstanding;
-          } else if (llmFirst && understandingFeedback) {
-            policyFeedbackLog.push(understandingFeedback);
-            if (authorityRetries < AUTHORITY_RETRY_CAP && brainSteps + 1 < brainMaxSteps) {
-              authorityRetries += 1;
-              observations.push({ tool: "response", ok: false, error: { code: "UNDERSTANDING_CONFLICT", message: understandingFeedback } });
-              continue;
-            }
-            lockedU = null;
-            provenanceExhausted = true;
-            break;
           } else {
             lockedU = candidate;
+            stepUnderstandingTrusted = candidateValidation.trusted;
           }
         }
         if (step.kind === "final") {
@@ -2581,49 +2425,9 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
               if (brainSteps + 1 < brainMaxSteps) continue; else break;
             }
           }
-          // ⭐SEM (invariante 1 — incidente real "Sim"/"Não"/"Douglas" com evidence da MENSAGEM ANTERIOR): o
-          // understanding do turno PRECISA pertencer ao bloco ATUAL. Evidence herdada/inválida -> feedback
-          // ESPECÍFICO ao MESMO cérebro (com o bloco atual e a última pergunta do agente) + retry bounded.
-          // Esgotado -> o understanding inválido é DESCARTADO (o fallback derivado do próprio bloco vira o
-          // hint conservador; nunca autoriza ação). Entendimento de outro turno NUNCA dirige resposta/tool/
-          // mutação. Turno TRIVIAL sem evidence nenhuma (smalltalk sem capability/mutação) segue o fluxo antigo —
-          // trusted=false já não autoriza nada; o retry só dispara quando há evidence HERDADA ou tentativa de
-          // dirigir fato. Validação de proveniência temporal — o cérebro decide o que o bloco significa.
-          const staleEvidence = (lockedU?.evidence ?? []).length > 0;   // citou algo e NADA é do bloco = herdada
-          const drivesFactual = (step.decision?.stateMutations ?? []).some((m) => m.op === "set_slot")
-            || (lockedU?.requestedCapabilities?.length ?? 0) > 0;
-          // ⭐Codex rodada 2 (variância do modelo real): em RESPOSTA CURTA ("Sim"/"Não"/"Douglas"/"Até 1200")
-          // SEM pedido de ação (zero capabilities) e SEM mutação de slot, a evidência é MECÂNICA por definição —
-          // o próprio bloco. NORMALIZA a citação (determinístico, observável) em vez de gastar retries: o cérebro
-          // continua 100% dono do SIGNIFICADO; o engine só corrige a citação óbvia. Turnos com AÇÃO declarada
-          // (busca/foto/seleção) seguem exigindo evidence própria (o retry prescritivo abaixo).
-          if (llmFirst && lockedU != null && !brainVU()!.trusted
-              && leadMessage.trim().length <= 30
-              && (lockedU.requestedCapabilities?.length ?? 0) === 0
-              && !(step.decision?.stateMutations ?? []).some((m) => m.op === "set_slot")) {
-            lockedU = { ...lockedU, evidence: [{ capability: null, quote: leadMessage.trim().slice(0, 60) }] } as unknown as TurnUnderstanding;
-            evidenceNormalized = true;
-          }
-          if (llmFirst && lockedU != null && !brainVU()!.trusted && (staleEvidence || drivesFactual)) {
-            if (provenanceRetries < PROVENANCE_RETRY_CAP && brainSteps + 1 < brainMaxSteps) {
-              provenanceRetries += 1;
-              const staleQuote = (lockedU.evidence ?? [])[0]?.quote?.slice(0, 80) ?? "";
-              const lastQ = lastAgentQuestionText(contextState).slice(0, 160);
-              // ⭐Codex rodada 2: feedback PRESCRITIVO — o modelo copia o JSON literal do quote esperado (o
-              // SIGNIFICADO do bloco continua 100% com ele). Sem o exemplo, o gpt-4.1-mini às vezes re-emitia a
-              // mesma evidence herdada nos 2 retries e o turno degradava.
-              const quoteJson = leadMessage.slice(0, 60).replace(/"/g, "'");
-              observations.push({ tool: "response", ok: false, error: { code: "UNDERSTANDING_STALE", message:
-                `PROVENIÊNCIA INVÁLIDA: sua understanding.evidence${staleQuote ? ` ("${staleQuote}")` : ""} NÃO está no bloco ATUAL do cliente — NÃO a repita. Bloco ATUAL: "${leadMessage.slice(0, 200)}". Sua última pergunta foi: "${lastQ}". RE-EMITA a decisão com a evidence copiada do bloco atual — use exatamente: "evidence":[{"capability":null,"quote":"${quoteJson}"}] — e responda ao que ESSE bloco significa como resposta à sua última pergunta (ex.: "Não" após pergunta de entrada = sem entrada; um nome = o nome dele).` } });
-              continue;
-            }
-            // ⭐Codex P0 (rodada 2): proveniência ESGOTADA -> a DECISÃO INTEIRA deste step (texto/efeitos/mutações
-            // autorados com entendimento de OUTRO turno) é DESCARTADA — nunca renderiza nem envia. Sai do loop sem
-            // final; o caminho degradado observável assume (recovery honesto), nunca a resposta stale.
-            lockedU = null;
-            provenanceExhausted = true;
-            break;
-          }
+          // Metadado semântico rejeitado já foi excluído acima. Não há uma
+          // segunda rodada lexical de proveniência: ela só repetia a análise da
+          // própria LLM e transformava uma resposta válida em retry/fallback.
           // O detector do bloco atual não executa tool nem decide a resposta. Ele
           // apenas denuncia uma contradição estreita: há um pedido atual de estoque
           // com filtro suficiente, mas a LLM encerrou como "other". A própria LLM
@@ -2639,13 +2443,18 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           // ⭐Missão P0 (exige-e-proíbe, varredura): a perna CONTEXTUAL (anúncio/similaridade/retomada) também respeita o
           // ato conversacional declarado pela LLM (contestação/financiamento/troca/smalltalk) — senão o missingTool EXIGE
           // stock_search que o gate de INTENT CONTRADITÓRIO NEGA (loop). Mesmo helper do hardening F2.41.
-          const missingTool = requiredToolBeforeFinal(
+          // central_active does not convert semantic metadata into a mandatory
+          // query. The LLM receives verified operational context and owns the
+          // decision to read; structured claims/effects without facts still
+          // fail at the renderer/materializer boundary. Legacy replay keeps the
+          // old precondition for compatibility.
+          const missingTool = llmFirst ? null : requiredToolBeforeFinal(
             frame,
             observations,
             // A ferramenta comercial só é exigida quando a própria LLM
             // declarou o ato atual como busca de estoque. Extratores do turno
             // continuam sendo fatos/enriquecimento, nunca autoridade paralela.
-            llmFirst && brainNeedsStockFact(),
+            brainNeedsStockFact(),
             moreOptionsNeedsScope,
             frame.signals.mentionsMoreOptions === true && brainNeedsStockFact(),
             brainStoreInfoAct(),
@@ -2678,7 +2487,14 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             const llmChoseVehicleDetail = llmFirst
               ? lockedU?.primaryIntent === "vehicle_detail" && brainVU()?.trusted === true
               : !tradeInAnswerTurn && !financialAnswerTurn;
-            const needDetail = llmChoseVehicleDetail ? requireVehicleDetailBeforeFinal(frame, observations, detailTarget) : null;
+            // O central_active não cria uma segunda autoridade lexical depois
+            // que a LLM já classificou o turno. Uma referência estruturada sem
+            // fato será rejeitada pelo renderer/grounding logo abaixo; texto
+            // natural não pode forçar vehicle_details por regex. O requisito
+            // antecipado permanece apenas no replay legado.
+            const needDetail = !llmFirst && llmChoseVehicleDetail
+              ? requireVehicleDetailBeforeFinal(frame, observations, detailTarget)
+              : null;
             // P0-2 (exceção sistêmica TIPADA): necessidade de grounding do engine AUTORIZA vehicle_details do key selecionado
             // (separada da intenção da LLM). Registra o key p/ o gate de tool liberar a consulta de aterramento.
             if (needDetail) { const detailKey = detailTarget.kind === "resolved" ? detailTarget.vehicleKey : frame.workingMemory.selectedVehicle?.vehicleKey; if (detailKey) systemDetailKeys.add(detailKey); }
@@ -2688,96 +2504,41 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
             // ⭐AUTORIDADE: a expectativa de busca soma a SEMÂNTICA da própria LLM (declarou capability de busca) ao contexto
             // (anúncio/similaridade/retomada) — prometer "vou buscar" sem executar continua proibido nesses casos.
-          const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: authoringContext(), proposedPrimaryIntent: acceptedBrainPrimaryIntent(), turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: llmFirst && brainNeedsStockFact(), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, qualifiedHandoffReadyFor, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
+          const acceptedStepDecision = llmFirst && !stepUnderstandingTrusted
+            ? withoutUntrustedSemanticPayload(step.decision)
+            : step.decision;
+          const authored = authorFromBrainDraft({ finalDecision: acceptedStepDecision, leadMessage, facts, identities, ctx: authoringContext(), proposedPrimaryIntent: acceptedBrainPrimaryIntent(), turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: llmFirst && brainNeedsStockFact(), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, qualifiedHandoffReadyFor, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
             if (authored.ok) {
-              finalDecision = step.decision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
-              // Uma understanding operacional confiável sempre vence. O rótulo
-              // passivo só descreve a resposta quando nenhuma autoridade de
-              // execução foi aceita neste turno.
-              acceptedPassiveUnderstanding = trustedLockedUnderstanding() == null ? passiveLabelForStep : null;
+              finalDecision = acceptedStepDecision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
               break;
             }
             brainRetries += 1;
             if (process.env.PEDRO_V3_DENY_DEBUG) console.error(`[DENY_DEBUG] ${authored.feedback}`);
-            // ⭐Fase 1 (LLM-first, regra P0 do dono): deny num turno de CONDUÇÃO comercial vira FEEDBACK ACIONÁVEL para a LLM
-            //   REDIGIR (nunca o engine escrever). Dois casos + "keepRetrying" (isento do break de deny-repetido: o certo é a
-            //   LLM insistir até acertar, dentro de brainMaxSteps — evita cair em recovery_offer/technical_fallback):
-            //   (1) LISTAGEM (comercial/retomada COM itens): entrega as vehicleKeys EXATAS + formato de 3 partes -> a LLM devolve
-            //       a vehicle_offer_list (o sistema formata preço/km). (2) MONEY em condução (pagamento/troca): o carro de troca
-            //       NÃO tem vehicleKey, então money_ref não conserta -> orienta a NÃO afirmar valores e PERGUNTAR/oferecer.
-      const conductTurn = llmFirst && (lockedU?.primaryIntent === "financing" || lockedU?.primaryIntent === "trade_in" || sensitiveAnswerTurn);
-            const visitGuidanceTurn = llmFirst && (lockedU?.primaryIntent === "visit" || visitAnswerTurn);
-            // ⭐MISSÃO FINAL: o backstop determinístico (fala LITERAL do lead pedindo humano) também mantém o retry NO ATO de
-            //   atendimento humano — evita que um deny do handoff caia em descoberta quando o entendimento veio fraco.
-            const humanGuidanceTurn = llmFirst && (requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage));
-            let effFeedback = authored.feedback;
-            let keepRetrying = false;
-            // ⭐AUTORIDADE: CONTESTAÇÃO (conversation_repair declarado pela LLM) — a resposta certa é TEXTO simples
-            // (reconhecer/corrigir/conduzir); vehicle_offer_list exige fato DO TURNO e aqui não há busca — orienta a LLM.
-            const repairTurn = llmFirst && lockedU?.primaryIntent === "conversation_repair";
-            if (sensitiveAnswerTurn) {
-              effFeedback = `ATO ATUAL = sensitive_data. O cliente acabou de fornecer um dado sensivel validado e armazenado por referencia NESTE bloco. Motivo da rejeicao anterior: ${authored.feedback} Reemita understanding com primaryIntent="sensitive_data", zero capabilities e evidence copiada do bloco atual. Confirme o recebimento SEM repetir valor/token/ref; depois conduza com no maximo UMA pergunta util. Nao use tool comercial, nao volte a perguntar o mesmo dado e nao herde visit/financing da memoria como ato atual.`;
-              keepRetrying = true;
-            } else if (humanGuidanceTurn || visitGuidanceTurn) {
-              // Estes atos nao possuem recovery comercial correto: uma falha
-              // de forma deve voltar para a mesma LLM, nao encerrar cedo pelo
-              // fingerprint e cair em "o que voce procura?". O feedback da
-              // validacao continua sendo a autoridade; apenas garantimos as
-              // tentativas bounded ja existentes.
-              effFeedback = `Mantenha o ATO ATUAL (${lockedU?.primaryIntent ?? "abertura"}) e corrija somente a violacao: ${authored.feedback} Nao volte para descoberta de outro assunto, nao use tool comercial e responda com no maximo UMA pergunta.`;
-              keepRetrying = true;
-            } else if (llmFirst && (lockedU?.primaryIntent === "vehicle_detail" || isVehicleDetailTurn) && /DUP_TOOL|REQUIRED_TOOL_MISSING.*vehicle_details/i.test(authored.feedback)) {
-              // A ferramenta já trouxe o fato disponível. Repetir a consulta
-              // não cria opcionais/banco/couro que a fonte não possui e o
-              // recovery antigo acabava falando pelo agente. A LLM recebe a
-              // instrução semântica para responder a lacuna com honestidade.
-              effFeedback = `ATO ATUAL = vehicle_detail. Você JÁ tem os detalhes disponíveis deste carro nas observações. NÃO chame vehicle_details de novo e NÃO abra stock_search. Responda diretamente ao que o cliente perguntou: use apenas os atributos que vieram no fato; se o item específico (opcionais, banco, acessório) não veio, diga com transparência que ele não está confirmado no estoque agora e ofereça UMA ação natural (por exemplo, verificar com a equipe ou enviar fotos). Motivo exato: ${authored.feedback}`;
-              keepRetrying = true;
-            } else if (repairTurn) {
-              effFeedback = `Mantenha o ato que voce declarou (conversation_repair) e corrija somente a violacao: ${authored.feedback} Use os fatos atuais e o prompt do portal para decidir como reconhecer a correcao e conduzir a conversa. Nao use tool sem necessidade e use no maximo UMA pergunta.`;
-              keepRetrying = true;
-            } else if (conductTurn) {
-              // CONDUÇÃO (pagamento / avaliação de troca): o ÚNICO desfecho válido é ACOLHER + conduzir com UMA pergunta de
-              // avanço. QUALQUER deny aqui (valor em texto livre, atributo de carro sem aterrar, ou volta à descoberta) recebe
-              // o mesmo feedback de validação e retry bounded — a LLM redige,
-              // o engine só valida e devolve a falha (LLM-first).
-              // quando o deny NÃO é exatamente monetário, antes caía direto no break->recovery_ask_need (technical_fallback).
-              // ⭐Audit Codex (F2.43 T9/T10): o valor que o CLIENTE informou é ECOÁVEL (aterrado por proveniência) —
-              // o feedback NUNCA manda "remover todo valor"; só valores NOVOS/calculados (saldo, total, taxa,
-              // simulação) ficam proibidos sem fato real. E quando o deny é de FORMATO (draft ausente/money_ref
-              // malformado — rejeição integral do decode), a orientação CONVERGE: UMA parte text simples com o valor
-              // do LEAD escrito no texto — NUNCA re-empurra a LLM para o money_ref que ela acabou de errar (era o
-              // loop do T9: money_ref malformado -> deny genérico -> money_ref malformado de novo -> fallback).
-              // The engine does not choose a missing funnel slot. The LLM
-              // receives the validation failure and decides the next natural
-              // move from the portal prompt and current facts.
-              effFeedback = `Mantenha o ato que voce declarou (${lockedU?.primaryIntent ?? "ato atual"}) e corrija somente a violacao: ${authored.feedback} Use os fatos atuais e o prompt do portal para decidir a resposta e o proximo passo; nao invente dados, nao reabra outro assunto e use no maximo UMA pergunta.`;
-              keepRetrying = true;
-            } else if (llmFirst && acceptedSelectionTurn()) {
-              // ⭐Missão P0 (varredura exige-e-proíbe, smoke T4): deny em turno de SELEÇÃO ("gostei do segundo") também é
-              // ACIONÁVEL (o feedback SELECTION_ATTR_FEEDBACK já diz exatamente o que remover) — sem keepRetrying, a LLM
-              // que insiste no atributo cai no fingerprint de deny repetido -> technical_fallback num turno trivial de
-              // acolhimento. Mesma mecânica bounded dos demais (a LLM redige; o engine nunca escreve).
-              keepRetrying = true;
-            }
+            // A engine descreve somente a contradicao objetiva encontrada. Ela
+            // nao reclassifica o ato, nao escolhe pergunta, nao prescreve funil
+            // e nao ensina uma estrategia comercial paralela ao prompt do portal.
+            const effFeedback = llmFirst
+              ? `Violacao objetiva da saida estruturada/factual: ${authored.feedback} Corrija somente essa violacao usando os fatos e o operationalContext deste turno. O prompt do portal continua sendo a unica autoridade sobre redacao, perguntas, funil e conducao comercial.`
+              : authored.feedback;
             policyFeedbackLog.push(effFeedback);
-            // T5: fingerprint de deny REPETIDO -> não gasta as tentativas idênticas; sai p/ RECUPERAÇÃO. EXCEÇÃO BOUNDED
-            // (keepRetrying): os feedbacks acionáveis de LISTAGEM/MONEY ganham LIST_MONEY_RETRY_CAP tentativas extras (a LLM
-            // insiste em listar/conduzir), mas com teto — depois disso conta como deny repetido (não trava o loop inteiro).
-            const fp = denyFingerprint(effFeedback);
+            // Um mesmo erro objetivo ganha uma correcao; repetir exatamente o
+            // mesmo erro encerra o loop e segue para a autoria final neutra.
+            // O fingerprint usa o erro original, sem prefixos constantes.
+            const fp = denyFingerprint(authored.feedback);
             if (seenDenyFingerprints.has(fp)) { repeatedDeny = true; break; }
             seenDenyFingerprints.add(fp);
-            if (keepRetrying && ++listMoneyRetries > LIST_MONEY_RETRY_CAP) { repeatedDeny = true; break; }
             if (brainSteps + 1 < brainMaxSteps) {
-              const currentTurnAnchor = `REVISAO DO MESMO TURNO: o bloco novo do lead e exatamente "${leadMessage.slice(0, 280)}". A ultima fala do agente foi "${(frame.conversationContext.lastAgentMessage ?? "").slice(0, 280)}". A ultima pergunta, se houver, foi "${(frame.currentTurnFacts.expectedAnswer.lastAgentQuestion ?? lastAgentQuestionText(contextState)).slice(0, 220)}". Preserve o ato que voce entendeu neste bloco; esta mensagem e feedback de validacao, nao uma nova ordem comercial.`;
+              const currentTurnAnchor = `REVISAO DO MESMO TURNO: o bloco atual do lead e "${leadMessage.slice(0, 280)}". Esta mensagem e feedback de validacao tecnica, nao uma nova ordem comercial.`;
               const retryFeedback = `${currentTurnAnchor}\n${effFeedback}`;
               observations.push({ tool: "response", ok: false, error: { code: "RESPONSE_REJECTED", message: retryFeedback } });
               continue;
             }
             break;
           }
-          finalDecision = step.decision;
+          finalDecision = llmFirst && !stepUnderstandingTrusted
+            ? withoutUntrustedSemanticPayload(step.decision)
+            : step.decision;
           break;
         }
 
@@ -2795,76 +2556,24 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         //   humanRequested da autoria (2854) e cadeia de handoff (3232). Fecha a assimetria: quando o cérebro classifica
         //   FRACO um pedido humano LITERAL ("quero falar com um vendedor"), a tool comercial não roda naquele turno.
         //   Continua feedback+retry (o engine não redige a transferência).
-        if (!commercialToolAllowedForHumanRequest(brainVU(), call.tool)
-            || (llmFirst && leadRequestsHumanExplicitly(leadMessage) && COMMERCIAL_TOOLS.has(call.tool))) {
+        if (!llmFirst && !commercialToolAllowedForHumanRequest(brainVU(), call.tool)) {
           observations.push({ tool: "response", ok: false, error: {
             code: "FORBIDDEN",
             message: "O cliente pediu atendimento humano neste bloco. Nao use ferramenta comercial nem continue o funil; finalize reconhecendo o pedido e proponha handoff quando o precheck permitir.",
           } });
           continue;
         }
-        if (sensitiveAnswerTurn && (call.tool === "stock_search" || call.tool === "vehicle_details" || call.tool === "vehicle_photos_resolve")) {
+        if (!llmFirst && sensitiveAnswerTurn && (call.tool === "stock_search" || call.tool === "vehicle_details" || call.tool === "vehicle_photos_resolve")) {
           observations.push({ tool: "response", ok: false, error: {
             code: "FORBIDDEN",
             message: "O cliente acabou de responder com CPF ou data de nascimento validada. Nao use ferramenta comercial; confirme o recebimento sem repetir o valor/ref e conduza a conversa.",
           } });
           continue;
         }
-        // AUTORIZAÇÃO TIPADA POR TOOL — cada tool comercial exige a capability PRÓPRIA + evidência
-        // própria do CÉREBRO (stock_search->stock_search; vehicle_details->vehicle_details; vehicle_photos_resolve->
-        // send_photos). primaryIntent descreve o ato conversacional e NÃO veta uma necessidade factual válida.
-        // Exceção SISTÊMICA: vehicle_details do key que o engine exigiu p/ grounding (systemDetailKeys).
-        // Sem autorização -> rejeita (REQUIRED_TURN_UNDERSTANDING) e o cérebro re-emite. (tenant_business_info isento.)
-        const sysDetailOk = call.tool === "vehicle_details" && systemDetailKeys.has(((call.input as { vehicleKey?: string }).vehicleKey) ?? "");
-        // Declarar a capability send_photos nao basta para consultar fotos: o
-        // bloco atual precisa realmente pedir/aceitar fotos ou responder qual
-        // alvo da pergunta pendente. Isto impede prefetch proativo na abertura
-        // sem tirar da LLM a liberdade de OFERECER fotos em texto.
-        const photoQuerySemanticallyAuthorized = call.tool !== "vehicle_photos_resolve"
-          || currentPhotoActAuthorized(resolveTargetWithAd());
-        const toolActAuthorized = call.tool === "vehicle_photos_resolve"
-          ? (toolCapabilityAuthorized(brainVU(), call.tool) || brainAuthorizesResolvedPhotoAct(resolveTargetWithAd()))
-          : toolCapabilityAuthorized(brainVU(), call.tool);
-        if (singleAuthor && llmFirst && COMMERCIAL_TOOLS.has(call.tool) && !sysDetailOk
-            && (!toolActAuthorized || !photoQuerySemanticallyAuthorized)) {
-          const capNeeded = call.tool === "vehicle_photos_resolve" ? "send_photos" : call.tool;
-          const capMsg = call.tool === "vehicle_photos_resolve" && !photoQuerySemanticallyAuthorized
-            ? "O cliente nao pediu nem aceitou fotos neste bloco. Voce pode OFERECER fotos na resposta, mas nao consulte vehicle_photos_resolve agora. Use essa tool somente quando o pedido/aceite de foto pertencer ao bloco atual ou quando ele responder qual carro quer ver."
-            : `Para usar '${call.tool}' inclua NO MESMO passo um 'understanding' com requestedCapabilities contendo '${capNeeded}' e uma evidence (capability '${capNeeded}') citando o TRECHO LITERAL do bloco atual que justifica isso.`;
-          // T5 (audit Codex smoke): stock_search SEM understanding válido (ex.: "cadê?" não tem substantivo comercial p/ a
-          // evidence) NÃO é execução — empurra como tool:"response" (não infla a contagem de stock_search do smoke) + cap
-          // anti-loop. A busca de retomada/comercial roda DETERMINÍSTICA na autoria (não depende de o cérebro autorar evidence).
-          if (call.tool === "stock_search") {
-            duplicateStockCallsBlocked += 1;
-            observations.push({ tool: "response", ok: false, error: { code: "REQUIRED_TURN_UNDERSTANDING", message: capMsg } });
-            if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break;
-            continue;
-          }
-          // T7 (LLM-first, audit Codex): numa SELEÇÃO ("gostei do segundo") o cérebro às vezes tenta vehicle_details sem
-          // understanding válido (e sem a vehicleKey). A rejeição NÃO é execução (tool:"response") + cap. FEEDBACK ESPECÍFICO:
-          // o engine entrega o FATO (o label aterrado do carro escolhido) e orienta — a LLM REDIGE o acolhimento (o engine NÃO
-          // escreve a resposta). Seleção não precisa de vehicle_details.
-          if (call.tool === "vehicle_details") {
-            const selectionLabel = acceptedSelectionLabel();
-            const detailMsg = (acceptedSelectionTurn() && selectionLabel)
-              ? `O cliente SELECIONOU o ${selectionLabel} (item da última lista). Responda AGORA em FINAL, sem ferramenta: acolha a escolha e faça UMA pergunta oferecendo as fotos. NÃO envie as fotos neste turno.`
-              : capMsg;
-            observations.push({ tool: "response", ok: false, error: { code: "REQUIRED_TURN_UNDERSTANDING", message: detailMsg } });
-            if (++dupDetailLoopCount >= DUP_STOCK_LOOP_CAP) break;
-            continue;
-          }
-          if (call.tool === "vehicle_photos_resolve") {
-            const selectionLabel = acceptedSelectionLabel();
-            const photoMsg = acceptedSelectionTurn() && selectionLabel
-              ? `O cliente apenas SELECIONOU o ${selectionLabel}; ele ainda NÃO pediu fotos. Responda em FINAL, sem ferramenta: acolha a escolha e faça UMA pergunta oferecendo as fotos. A tool só pode ser usada no próximo turno se ele aceitar/pedir.`
-              : capMsg;
-            observations.push({ tool: "response", ok: false, error: { code: "REQUIRED_TURN_UNDERSTANDING", message: photoMsg } });
-            if (++dupPhotoLoopCount >= 2) break;
-            continue;
-          }
-          observations.push({ tool: call.tool, ok: false, error: { code: "REQUIRED_TURN_UNDERSTANDING", message: capMsg } });
-          continue;
-        }
+        // A direct QueryCall is a read chosen by the LLM, not a visible effect.
+        // Do not demand a duplicate capability/evidence authorization here.
+        // The hard boundaries below remain objective: key provenance, photo
+        // target, allowlist, input/schema validation and factual query policy.
         // ── ⭐AD-2 (2026-07-18): PROVENIÊNCIA DA vehicleKey. A lacuna central do incidente do anúncio. ──────────────
         //
         // INCIDENTE (18/07 15:38, lead 12 98819-0301, anúncio "Ford EcoSport SE 1.5 2020" com confiança 1.0): o
@@ -2906,25 +2615,6 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         // Proíbe loop idêntico: mesma tool + mesmos args -> devolve o fato já obtido (nunca reexecuta).
         // The brain owns the tool decision, but a photo query cannot contradict the
         // uniquely grounded subject of this turn. Reject before touching the adapter
-        // so a wrong photo fact never contaminates the observations used on retry.
-        // The engine does not rewrite or execute a corrected call: it returns the
-        // grounded key and the same brain must decide again.
-        if (llmFirst && call.tool === "vehicle_photos_resolve") {
-          const input = call.input as { vehicleRef?: { key?: unknown }; vehicleKey?: unknown };
-          const requestedKey = typeof input.vehicleRef?.key === "string"
-            ? input.vehicleRef.key
-            : (typeof input.vehicleKey === "string" ? input.vehicleKey : null);
-          const groundedTarget = resolveTargetWithAd();
-          if (groundedTarget.kind === "resolved" && requestedKey !== groundedTarget.vehicleKey) {
-            const targetLabel = acceptedSelectionLabel();
-            observations.push({ tool: "response", ok: false, error: {
-              code: "PHOTO_TARGET_MISMATCH",
-              message: `A chamada de fotos contradiz o alvo aterrado deste turno. O vehicleKey correto e '${groundedTarget.vehicleKey}'${targetLabel ? ` (${targetLabel})` : ""}. Nao execute nem mencione o outro veiculo. Decida novamente: chame vehicle_photos_resolve com esse vehicleKey e, depois do resultado, responda ao cliente com as fotos.`,
-            } });
-            if (++dupPhotoLoopCount >= DUP_STOCK_LOOP_CAP) break;
-            continue;
-          }
-        }
         const sig = toolCallSignature(call);
         if (seenToolSigs.has(sig)) {
           // ⭐F2.81 (missão P0, prioridade 4): REUSO ESTRITO DO RESULTADO JÁ EXECUTADO — uma regra só, para TODAS as
@@ -2940,6 +2630,15 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           // autoria final (nunca queima o orçamento de passos).
           const cachedResult = resultBySig.get(sig)
             ?? (call.tool === "vehicle_photos_resolve" ? facts.find((f) => f.ok && f.tool === "vehicle_photos_resolve") : undefined);
+          if (llmFirst) {
+            duplicateToolCallsBlocked += 1;
+            if (call.tool === "stock_search") duplicateStockCallsBlocked += 1;
+            if (cachedResult) duplicateToolCallsServedFromCache += 1;
+            // O fato (ou erro real) da primeira execucao ja esta nas
+            // observacoes acumuladas. Nao reexecute, nao reinsira o fato e nao
+            // transforme idempotencia em um deny conversacional.
+            break;
+          }
           const dupCap = (): boolean => {
             if (call.tool === "stock_search") { duplicateStockCallsBlocked += 1; return ++dupStockLoopCount >= 2; }
             if (call.tool === "vehicle_details") return ++dupDetailLoopCount >= 2;
@@ -2974,7 +2673,6 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           // feedback é honesto — não afirma que existe um fato — e diz o que fazer: mudar o alvo/input ou concluir.
           observations.push({ tool: "response", ok: false, error: { code: "DUP_TOOL", message: `Você repetiu exatamente a mesma chamada de '${call.tool}' e a anterior NÃO produziu resultado neste turno. Repetir igual não vai mudar nada: ou chame com um alvo/filtro DIFERENTE, ou conclua o turno com o que você já tem, com honestidade sobre o que não conseguiu confirmar.` } });
           if (dupCap()) break;
-          if (llmFirst) break;
           continue;
         }
         seenToolSigs.add(sig);
@@ -3005,6 +2703,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           constraints: searchScopeThisTurn(),   // ⭐F2.75: escopo DO TURNO (troca de direção não herda anúncio); só preenche lacunas
           wantsMotorcycle,                       // F2.29: só libera moto se o lead pediu moto explicitamente
           enforceShownClamp: llmFirst,           // INC3: clampa só no central_active; shadow/legado mantém a união antiga
+          llmOwnsFilters: llmFirst,               // chamada direta: memória/regex/anúncio nunca acrescentam filtros omitidos pela LLM
         });
         if (call.tool === "stock_search") stockProposedVsExecuted.push({ proposed: call.input, executed: execCall.input, topicChange: topicChangeThisTurn(), source: "brain_loop" });
         // Missão P0 (audit Codex smoke): DEDUP SEMÂNTICO NO LOOP. Se ESTA busca (filtro ENRIQUECIDO) já foi executada neste
@@ -3020,6 +2719,11 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           const cachedStock = stockSearchCache.get(stockSearchFingerprint(execCall.input as Record<string, unknown>));
           duplicateStockCallsBlocked += 1;
           if (cachedStock) { duplicateToolCallsServedFromCache += 1; resultBySig.set(sig, cachedStock); }
+          if (llmFirst) {
+            // A primeira observacao continua disponivel. A repeticao semantica
+            // encerra a fase de tools sem gerar uma nova rejeicao para a LLM.
+            break;
+          }
           observations.push({ tool: "response", ok: false, error: { code: "DUP_STOCK_SEARCH", message: cachedStock && !cachedStock.ok
             ? `Esta busca já foi executada neste turno e FALHOU (${cachedStock.error.code}: ${cachedStock.error.message}). Repetir o mesmo filtro não muda nada: mude o filtro ou responda com honestidade que não conseguiu consultar o estoque agora.`
             : "Você JÁ buscou esse estoque neste turno e o resultado está nas suas observações. Finalize AGORA respondendo ao cliente com esse resultado — NÃO chame stock_search de novo." } });
@@ -3085,11 +2789,6 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         // `authorFromBrainDraft` valida o contrato factual: a própria LLM chama
         // vehicle_photos_resolve e, havendo fotos, propõe send_media. O caminho
         // determinístico de replay permanece isolado no bloco !llmFirst abaixo.
-        // Fix C (audit CTWA smoke): pedido de foto + conjunto CANDIDATO do anúncio (>1, ex.: 2 Onix 2025) + alvo NÃO resolvido
-        // -> descarta a autoria (que re-lista o estoque todo ou escolhe errado) para o executor PERGUNTAR qual dos candidatos.
-        if (llmFirst && adCandidateKeys.length > 1 && leadRequestsPhoto(leadMessage) && resolveTargetWithAd().kind !== "resolved") {
-          authoredComposed = null; authoredDecision = null; authoredProposedEffects = null; finalDecision = null;
-        }
         // Resolução factual única por ordinal: a engine consulta photoIds do item exato uma
         // única vez. Ela não escreve "aqui estão" nem escolhe o próximo passo; a autoria final
         // pertence à LLM, alimentada pelo mesmo resolveTarget usado por seleção e memória.
@@ -3109,35 +2808,6 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
               recordQueryExecution(photoRes, Math.max(0, Date.parse(clock.now()) - started), authority);
             } catch { /* best-effort: a falha vira observação factual para a autoria final da LLM */ }
           }
-          // ── P0 (F2.26 + ⭐AUTORIDADE): busca comercial determinística SÓ com AUTORIZAÇÃO real — a LLM declarou busca
-          //    (isStockSearchTurn) mas não executou, fluxo de CONTEXTO (anúncio/similaridade/retomada), ou "mais opções"
-          //    (ato explícito do lead). O detector de constraint NÃO dispara mais isto: era o robô que re-listava estoque
-          //    numa CONTESTAÇÃO ("Corolla não é um sedan?") só porque a frase citava modelo/tipo. ──
-          // F2.29: usa o escopo EFETIVO (comercial se suficiente; senão o derivado da oferta homogênea). "mais opções" só
-          // busca COM escopo — sem escopo recuperável cai no executor de pergunta (abaixo), nunca lista genérico.
-          const effScopeThisTurn = effectiveSearchScopeThisTurn();   // ⭐F2.75: escopo gateado por isTopicChange (mesma autoridade do loop)
-          if (llmFirst && brainNeedsStockFact() && sufficientForStockSearch(effScopeThisTurn) && !facts.some((f) => f.ok && f.tool === "stock_search")) {
-            try {
-              const searchCall = enrichStockSearchCall({ tool: "stock_search", input: constraintsToStockInput(effScopeThisTurn) }, {
-                popular: frame.signals.mentionsPopular === true || effScopeThisTurn.popular === true,
-                moreOptions: frame.signals.mentionsMoreOptions,
-                previousVehicleKeys: shownVehicleKeys,  // INC3: conjunto CUMULATIVO apresentado (clampa o excludeKeys)
-                constraints: effScopeThisTurn,
-                wantsMotorcycle,                       // F2.29: só libera moto se o lead pediu moto explicitamente
-                enforceShownClamp: llmFirst,           // INC3: clampa só no central_active
-              });
-              stockProposedVsExecuted.push({ proposed: constraintsToStockInput(effScopeThisTurn), executed: searchCall.input, topicChange: topicChangeThisTurn(), source: "det_completion" });
-              const authority: ToolExecutionAuthority = {
-                principal: "llm", source: "llm_intent_completion", primaryIntent: lockedU?.primaryIntent ?? null,
-                capability: "stock_search", currentTurnEvidence: brainVU()?.trusted === true, callSite: "search_fact_completion",
-              };
-              assertToolExecutionAuthority("stock_search", authority);
-              const startedS = Date.parse(clock.now());
-              const searchRes = await withTimeout(runQueryDedup(searchCall), limits.queryTimeoutMs ?? 20_000, "query: stock_search (commercial) exceeded timeout");
-              facts.push(searchRes); observations.push(toAgentObservation(searchRes)); toolResultMems.push(toToolResultMemory(searchRes, turnId));
-              recordQueryExecution(searchRes, Math.max(0, Date.parse(clock.now()) - startedS), authority);
-            } catch { observations.push({ tool: "stock_search", ok: false, error: { code: "UPSTREAM", message: "tool indisponivel" } }); }
-          }
         }
         // No central_active, uma busca vazia volta como fato para a mesma LLM.
         // Somente ela pode decidir se amplia faixa, relaxa filtros ou pergunta ao
@@ -3149,18 +2819,12 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         if (llmFirst && (!authoredComposed || !authoredDecision || !authoredProposedEffects)) {
           const finalContext = [
             "AUTORIA FINAL OBRIGATORIA: somente voce escreve a resposta visivel ao cliente.",
-            "Nao chame nenhuma nova tool nesta passagem; use os fatos e resultados que ja estao nas observacoes.",
-            "Responda ao bloco ATUAL e preserve a mudanca de assunto mais recente. Memoria antiga e pergunta pendente sao apenas contexto.",
-            (contextState.lastRenderedOfferContext?.items.length ?? 0) > 0
-              ? "Ja existe uma lista visivel. Nao a repita: explique como o criterio atual afeta as opcoes enviadas ou mostre somente itens realmente novos."
-              : "Se houver itens de estoque, escolha a forma pelo ato atual: vehicle_offer_list somente quando o lead pediu alternativas; vehicle_ref/money_ref de uma mesma key quando ha um veiculo em foco. Se a busca estiver vazia ou falhou, seja honesto e conduza naturalmente sem inventar disponibilidade.",
-            "Se houver fotos resolvidas e o cliente as pediu, proponha send_media do alvo aterrado. Se o alvo for ambiguo, pergunte qual sem escolher por conta propria.",
-            "Para fatos institucionais, use apenas a observacao correspondente. Para despedida, identificacao, selecao, pagamento, troca, visita ou pedido humano, acolha o ato atual e avance sem reabrir descoberta.",
-            persisted0.lastPhotoAction?.label && isPhotoMemoryQuestionBlock(leadMessage)
-              ? `Memoria factual de fotos: o veiculo foi ${persisted0.lastPhotoAction.label}; nomeie-o sem reenviar midia.`
-              : "",
-            "Use no maximo UMA pergunta curta. Devolva kind=final com draft estruturado e understanding do bloco atual.",
-          ].filter(Boolean).join(" ");
+            "As tools desta passagem ja foram encerradas; nao proponha nova consulta neste passo.",
+            "Use somente as observacoes e o operationalContext verificados neste turno.",
+            "Nao invente fatos, referencias, chaves internas nem efeitos sem suporte estrutural.",
+            "O prompt do portal continua sendo a unica autoridade sobre redacao, perguntas, funil e conducao comercial.",
+            "Devolva kind=final com draft.parts estruturado e, se propuser efeito, use somente recursos aterrados.",
+          ].join(" ");
           observations.push({ tool: "response", ok: false, error: { code: "FINAL_AUTHORSHIP_REQUIRED", message: finalContext } });
 
           const FINAL_AUTHORSHIP_RETRY_CAP = 2;
@@ -3168,7 +2832,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             finalAuthorshipAttempts += 1;
             brainSteps += 1;
             let finalStep;
-            let finalPassiveLabelForStep: TurnUnderstanding | null = null;
+            let finalStepUnderstandingTrusted = false;
             try {
               finalStep = noteBrainStep(await withTimeout(brain.proposeNextStep(frameNow(), observations), limits.proposeTimeoutMs ?? 30_000, "propose: final LLM authorship exceeded timeout"));
             } catch (err) {
@@ -3178,52 +2842,17 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             }
             if (finalStep.understanding) {
               const previousTrustedUnderstanding = trustedLockedUnderstanding();
-              // A passagem final segue a mesma fonte de autoridade do loop
-              // principal: uma base rejeitada nunca participa da reconciliacao.
-              let candidate = reconcileUnderstanding(previousTrustedUnderstanding, finalStep.understanding, leadMessage, {
+              const candidate = reconcileUnderstanding(previousTrustedUnderstanding, finalStep.understanding, leadMessage, {
                 acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState),
                 allowCurrentEvidenceCorrection: observations.some((observation) => observation.tool === "response" && !observation.ok),
               });
-              let validation = validateTurnUnderstanding(candidate, leadMessage, true, turnValidationContext);
-              const rejectedOrdinalSelection = llmFirst
-                && isPassiveLlmFinal(finalStep)
-                && passiveFinalIntroducesRejectedOrdinalSelection(finalStep, leadMessage);
-              const passiveMetadataMayBeDropped = llmFirst
-                && isPassiveLlmFinal(finalStep)
-                && !validation.trusted
-                && !rejectedOrdinalSelection;
-              if (passiveMetadataMayBeDropped) {
-                // Nao "conserta" evidence stale para transformar um intent auxiliar
-                // em verdade. Descarta o metadado e deixa o texto seguir para os
-                // validadores factuais, sem apagar uma understanding previa confiavel.
-                finalPassiveLabelForStep = passiveSemanticLabel(finalStep);
-                if (finalPassiveLabelForStep == null) noteUnderstandingMetadataDrop("final_authorship", validation);
+              const validation = validateTurnUnderstanding(candidate, leadMessage, true, turnValidationContext);
+              if (llmFirst && !validation.trusted) {
+                noteUnderstandingMetadataDrop("final_authorship", validation);
                 lockedU = previousTrustedUnderstanding;
               } else {
-                // A short, non-action continuation (e.g. "cadê?" after a visible offer) may
-                // carry only the current block as evidence. Normalize that provenance in the
-                // final stage as we do in the proposal stage; this does not authorize a tool,
-                // effect, slot mutation, or commercial intent.
-                if (llmFirst && !validation.trusted
-                    && leadMessage.trim().length <= 30
-                    && (candidate.requestedCapabilities?.length ?? 0) === 0
-                    && !(finalStep.kind === "final" ? (finalStep.decision.stateMutations ?? []) : []).some((mutation) => mutation.op === "set_slot")) {
-                  candidate = { ...candidate, evidence: [{ capability: null, quote: leadMessage.trim().slice(0, 60) }] } as unknown as TurnUnderstanding;
-                  validation = validateTurnUnderstanding(candidate, leadMessage, true, turnValidationContext);
-                }
-                const authorityFeedback = rejectedOrdinalSelection
-                  ? REJECTED_ORDINAL_SELECTION_FEEDBACK
-                  : understandingAuthorityFeedback(validation);
-                const staleFinalUnderstanding = !validation.trusted
-                  && ((candidate.evidence?.length ?? 0) > 0 || (candidate.requestedCapabilities?.length ?? 0) > 0);
-                if (authorityFeedback || staleFinalUnderstanding) {
-                  const feedback = authorityFeedback ?? "A understanding desta resposta final nao pertence ao bloco atual. Reemita evidence copiada do bloco atual e mantenha o ato atual.";
-                  if (process.env.PEDRO_V3_DENY_DEBUG) console.error(`[FINAL_UNDERSTANDING_DEBUG] ${feedback}`);
-                  policyFeedbackLog.push(feedback);
-                  observations.push({ tool: "response", ok: false, error: { code: "FINAL_UNDERSTANDING_REJECTED", message: feedback } });
-                  continue;
-                }
                 lockedU = candidate;
+                finalStepUnderstandingTrusted = validation.trusted;
               }
             }
             if (finalStep.kind !== "final") {
@@ -3234,10 +2863,10 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // declarou um ato que exige fatos atuais, a mesma LLM precisa
             // chamar a tool; a passagem de autoria sem novas tools nao pode
             // transformar uma promessa sem consulta em resposta aceita.
-            const finalMissingTool = requiredToolBeforeFinal(
+            const finalMissingTool = llmFirst ? null : requiredToolBeforeFinal(
               frame,
               observations,
-              llmFirst && brainNeedsStockFact(),
+              brainNeedsStockFact(),
               moreOptionsNeedsScope,
               frame.signals.mentionsMoreOptions === true && brainNeedsStockFact(),
               brainStoreInfoAct(),
@@ -3252,13 +2881,15 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
               // "Tive uma instabilidade".
               break;
             }
-            const authored = authorFromBrainDraft({ finalDecision: finalStep.decision, leadMessage, facts, identities, ctx: authoringContext(), proposedPrimaryIntent: acceptedBrainPrimaryIntent(), turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: false, noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, qualifiedHandoffReadyFor, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
+            const acceptedFinalDecision = llmFirst && !finalStepUnderstandingTrusted
+              ? withoutUntrustedSemanticPayload(finalStep.decision)
+              : finalStep.decision;
+            const authored = authorFromBrainDraft({ finalDecision: acceptedFinalDecision, leadMessage, facts, identities, ctx: authoringContext(), proposedPrimaryIntent: acceptedBrainPrimaryIntent(), turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: false, noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, qualifiedHandoffReadyFor, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
             if (authored.ok) {
-              finalDecision = finalStep.decision;
+              finalDecision = acceptedFinalDecision;
               authoredDecision = authored.decision;
               authoredComposed = authored.composed;
               authoredProposedEffects = authored.proposedEffects;
-              acceptedPassiveUnderstanding = trustedLockedUnderstanding() == null ? finalPassiveLabelForStep : null;
               responseSource = "brain_retry";
               break;
             }
@@ -3342,8 +2973,8 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             }
           }
         }
-        // O central_active valida a quantidade de perguntas durante a autoria. Nao edita
-        // silenciosamente o texto da LLM depois da decisao. O trim permanece apenas no legado (replay autorizado).
+        // O central_active não julga nem edita a quantidade de perguntas depois da
+        // autoria. O trim permanece exclusivamente no legado (replay autorizado).
         if (legacyReplayEnabled) {
           const trimmedText = trimToOneQuestion(composed.text);
           if (trimmedText !== composed.text) composed = { ...composed, text: trimmedText };
@@ -3666,27 +3297,11 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       //    plannable (flag+vendedor+CRM vinculado+crm_write do turno), reconstruímos a cadeia executável:
       //    reply (delivered-gate) -> crm_write -> handoff (saga) -> notify_seller. briefing/etiquetas = fatos. ──
       const wmPhoto = reduced.next.workingMemory?.lastPhotoAction ?? null;
-      // Somente opt-out explícito pode originar o handoff operacional silencioso.
-      // Despedidas e agradecimentos continuam sob autoria da LLM; uma classificação
-      // semântica genérica nunca autoriza a engine a transferir por conta própria.
-      // Pedido explícito de humano mantém sua precedência e seu motivo próprio.
-      const explicitHumanRequest = requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage);
-      const forcedHandoffReason = llmFirst
-        ? forcedSilentDisengagementReason({
-          // Encaminhamento silencioso e uma acao operacional irreversivel: so
-          // desinteresse EXPLICITO a dispara. "Obrigado", "vou pensar" e,
-          // principalmente, um "nao" que responde a uma pergunta anterior nao
-          // podem encerrar a conversa por inferencia. Esses casos continuam
-          // pertencendo a LLM e ao ciclo normal de follow-up.
-          // Silent operational handoff is limited to the dedicated explicit
-          // opt-out contract. A generic engagement detector must not close or
-          // transfer a conversation merely because it sounds negative.
-          disengaged: detectExplicitOptOut(leadMessage),
-          explicitHumanRequest,
-          stage: contextState.stage,
-        })
-        : null;
-      const silentDisengagementHandoff = forcedHandoffReason === "silent_disengagement_handoff";
+      // A engine nunca origina uma transferência no fluxo ativo. Opt-out é
+      // persistido como fato de compliance e pode suspender a cadência, mas não
+      // é convertido silenciosamente em handoff. A cadeia abaixo apenas
+      // materializa um efeito que a própria LLM propôs.
+      const silentDisengagementHandoff = false;
       const currentBlockNormalized = normalizeText(leadMessage);
       const knowledgeGaps = (finalDecision?.knowledgeGaps ?? [])
         .filter((gap) => {
@@ -3712,14 +3327,13 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         // CRM pode ja estar sincronizado: ausencia de delta neste turno nao bloqueia
         // um pedido explicito de humano. Se houver crmPlan, ele entra como dependencia.
         plannable: handoffPlannable && crmLeadId != null,
-        forcedReason: forcedHandoffReason ?? undefined,
       });
       if (handoffChain.planned && reduced.next.followupSuspendedAt == null) reduced.next.followupSuspendedAt = cutoff;
       // Uma despedida aceita pela semântica da LLM encerra a cadência deste
       // ciclo mesmo antes de o funil chegar a handoff/closed. Não inferimos por
       // frase e não alteramos a autoria: apenas persistimos a decisão semântica
       // já validada. Uma nova fala posterior do lead reativa o ciclo.
-      const acceptedIntentForFollowup = acceptedPassiveUnderstanding?.primaryIntent ?? acceptedBrainPrimaryIntent();
+      const acceptedIntentForFollowup = acceptedBrainPrimaryIntent();
       if (acceptedIntentForFollowup === "disengagement" && reduced.next.followupSuspendedAt == null) {
         reduced.next.followupSuspendedAt = cutoff;
       }
@@ -3748,18 +3362,14 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         topic, status: (obs.ok ? "ok" : (obs.error.code === "NOT_CONFIGURED" ? "not_configured" : "failure")) as "ok" | "not_configured" | "failure",
       }));
       const finalVU = authoritativeVU();   // T6: semântica autoritativa do turno (do cérebro OU fallback validado)
-      // The persisted semantic contract belongs to the validated LLM output.
-      // Slot/fact extractors may enrich state, but cannot rewrite its intent.
-      // O label passivo preserva apenas o primaryIntent descritivo da resposta
-      // publicada. Toda autoridade operacional continua exclusivamente em
-      // `lockedU` validada; por isso ele não participa dos reducers acima.
-      const authoritativeUnderstanding: TurnUnderstanding = acceptedPassiveUnderstanding ?? finalVU.understanding;
-      const understandingFromBrain = lockedU != null || acceptedPassiveUnderstanding != null;
-      const understandingAuthority = acceptedPassiveUnderstanding != null
-        ? "passive_label"
-        : finalVU.fromBrain
-          ? (finalVU.trusted ? "trusted" : "brain_untrusted")
-          : "fallback";
+      // Apenas understanding validada da LLM ganha autoridade persistente.
+      // Quando o metadado foi descartado, a telemetria usa o fallback descritivo
+      // sem atribuir a ele poder sobre efeitos, memória ou follow-up.
+      const authoritativeUnderstanding: TurnUnderstanding = finalVU.understanding;
+      const understandingFromBrain = lockedU != null;
+      const understandingAuthority = finalVU.fromBrain
+        ? (finalVU.trusted ? "trusted" : "brain_untrusted")
+        : "fallback";
       // T6: se houve send_media e o executor não registrou a fonte do alvo (foto AUTORADA pelo cérebro), registra aqui.
       if (targetResolutionSource == null && proposedEffects.some((e) => e.kind === "send_media")) {
         const tr = resolveTargetWithAd(); targetResolutionSource = tr.kind === "resolved" ? tr.source : (tr.kind === "ambiguous" ? "ambiguous" : "none");
@@ -3794,7 +3404,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           currentTurnOverridesMemory: null,
           // T6: semântica do turno (fonte única) + resolução de alvo.
           primaryIntent: authoritativeUnderstanding.primaryIntent, subject: authoritativeUnderstanding.subject,
-          subjectSource: authoritativeUnderstanding.subjectSource, understandingTrusted: acceptedPassiveUnderstanding == null && finalVU.trusted,
+          subjectSource: authoritativeUnderstanding.subjectSource, understandingTrusted: finalVU.trusted,
           understandingFromBrain, understandingAuthority,
           evidence: authoritativeUnderstanding.evidence.slice(0, 4).map((e) => ({ capability: e.capability ?? null, quote: e.quote.slice(0, 48) })),
           previousSelectedVehicleKey: contextState.vehicleContext.selected?.key ?? null,
