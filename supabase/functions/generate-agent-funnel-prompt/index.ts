@@ -27,6 +27,7 @@ import {
 import {
   buildFunnelPromptEditorRequest,
   buildTenantSdrSystemPrompt,
+  enforceCanonicalV3Sections,
   sanitizeTenantFunnelPromptConfig,
   validateAiGeneratedFunnelPrompt,
 } from '../../../src/lib/pedroFunnelPrompt.ts';
@@ -90,6 +91,8 @@ async function improvePromptWithAi(
               'Seu trabalho é organizar a intenção comercial do cliente em instruções claras para uma LLM conduzir uma conversa humana.',
               'O prompt do portal governa personalidade, funil, perguntas, qualificação, desqualificação e estilo.',
               'O contrato v3 governa apenas formato, segurança, evidência, grounding e efeitos operacionais.',
+              'As seções fixas de precedência, primeiro contato, capacidades operacionais e regra final devem permanecer idênticas ao contrato canônico; o servidor também as recompõe após sua edição.',
+              'Não resuma nem contradiga as cadeias canônicas de anúncio, stock_search, vehicle_details, vehicle_photos_resolve, referências aterradas, send_media e handoff.',
                'Preserve fatos e regras do cliente. Enriqueça apenas com boas práticas gerais de SDR e nunca invente fatos do negócio.',
                'Não preserve nem crie despedidas que julguem negativamente a capacidade, a prontidão ou o momento de compra do lead; reescreva-as como encerramento cordial, neutro e com porta aberta.',
                'Falta de produto numa consulta, silêncio e demora não desqualificam a pessoa. Uma busca vazia descreve somente o recorte consultado; inatividade pertence à cadência automatizada.',
@@ -129,11 +132,12 @@ async function improvePromptWithAi(
       return fallback('A IA retornou JSON inválido; usamos o prompt v3 canônico.');
     }
 
-    const validation = validateAiGeneratedFunnelPrompt(generated, canonicalPrompt, config);
+    const protectedPrompt = enforceCanonicalV3Sections(generated, canonicalPrompt);
+    const validation = validateAiGeneratedFunnelPrompt(protectedPrompt, canonicalPrompt, config);
     if (!validation.valid) {
       return fallback(`A IA não passou na validação do contrato v3: ${validation.reasons.slice(0, 3).join('; ')}`);
     }
-    return { prompt: generated.trim(), mode: 'ai' };
+    return { prompt: protectedPrompt, mode: 'ai' };
   } catch (error) {
     return fallback(`Falha controlada na IA de geração: ${error instanceof Error ? error.message : 'erro desconhecido'}`);
   }

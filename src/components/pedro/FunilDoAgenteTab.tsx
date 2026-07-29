@@ -119,7 +119,7 @@ function seedConfigFromAgent(agent: any): FunnelConfig {
     },
     bloco3_abordagem: {
       objective: 'Criar conexão e identificar o cliente',
-      presentation: name && company ? `Oi! Sou o ${name}, da ${company} 😊` : '',
+      presentation: name && company ? `[PERIODO]! Sou ${name}, da ${company} 😊` : '',
       first_question: '',
       avoid: [],
     },
@@ -871,7 +871,7 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
               label="O que NÃO fazer nesta etapa"
               items={cfg.bloco3_abordagem.avoid}
               onChange={(avoid) => setCfg({ ...cfg, bloco3_abordagem: { ...cfg.bloco3_abordagem, avoid } })}
-              placeholder="Ex: Não falar preço"
+              placeholder="Ex: Não repetir uma pergunta já respondida"
             />
           </AccordionContent>
         </AccordionItem>
@@ -925,8 +925,7 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
           </AccordionTrigger>
           <AccordionContent className="space-y-3 pt-2">
             <p className="text-[11px] text-muted-foreground">
-              Defina ramos: cada ramo tem um <span className="text-blue-400">gatilho</span> (resposta do cliente)
-              e perguntas específicas que vêm depois.
+              Defina possibilidades de condução: a IA interpreta o sentido do contexto e usa apenas as orientações úteis. Não são etapas obrigatórias.
             </p>
             {cfg.bloco5_ramificacoes.branches.map((br, i) => (
               <Card key={i} className="border-border/40 bg-background/50">
@@ -939,7 +938,7 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
                         next[i] = { ...next[i], trigger: e.target.value };
                         setCfg({ ...cfg, bloco5_ramificacoes: { branches: next } });
                       }}
-                      placeholder="Gatilho (ex: Financiamento)"
+                      placeholder="Contexto (ex: Cliente quer financiar)"
                       className="text-xs h-8 font-medium"
                     />
                     <Button
@@ -955,7 +954,7 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
                     </Button>
                   </div>
                   <div className="space-y-2">
-                    <Label className="text-xs text-muted-foreground">Perguntas neste ramo</Label>
+                    <Label className="text-xs text-muted-foreground">Orientações adaptativas deste contexto</Label>
                     <div className="space-y-1.5">
                       {(br.questions.length > 0 ? br.questions : ['']).map((question, qIndex) => (
                         <div key={qIndex} className="flex items-center gap-2">
@@ -968,7 +967,7 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
                               next[i] = { ...next[i], questions };
                               setCfg({ ...cfg, bloco5_ramificacoes: { branches: next } });
                             }}
-                            placeholder="Ex: Coletar CPF, data de nascimento, parcela ideal e valor de entrada"
+                            placeholder="Ex: Entender entrada e faixa de parcela, sem repetir dados já informados"
                             className="text-xs h-8"
                           />
                           {br.questions.length > 1 && (
@@ -1068,7 +1067,7 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
           </AccordionTrigger>
           <AccordionContent className="space-y-3 pt-2">
             <ArrayEditor
-              label="Dados obrigatórios para transferir"
+              label="Dados úteis para o briefing (não bloqueiam pedido de humano)"
               items={cfg.bloco7_transferencia.required_data}
               onChange={(required_data) => setCfg({ ...cfg, bloco7_transferencia: { ...cfg.bloco7_transferencia, required_data } })}
               placeholder="Ex: Nome completo"

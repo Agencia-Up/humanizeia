@@ -8,6 +8,7 @@ import {
 import {
   buildFunnelPromptEditorRequest,
   buildTenantSdrSystemPrompt,
+  enforceCanonicalV3Sections,
   validateAiGeneratedFunnelPrompt,
 } from './pedroFunnelPrompt';
 
@@ -181,7 +182,7 @@ describe('Pedro v3 tenant funnel policies', () => {
 
     expect(prompt).toContain('# PEDRO V3 — PROMPT COMERCIAL DO PORTAL');
     expect(prompt).toContain('A mensagem atual do lead vence um objetivo antigo');
-    expect(prompt).toContain('reproduza exatamente esta apresentação');
+    expect(prompt).toContain('reproduza exatamente o texto entre as tags abaixo');
     expect(prompt).toContain('[PERIODO]! Sou o Carvalho');
     expect(prompt).toContain('se houver ');
     expect(prompt).toContain('trate o veículo do anúncio como assunto inicial');
@@ -190,13 +191,100 @@ describe('Pedro v3 tenant funnel policies', () => {
     expect(prompt).toContain('nao repita o mesmo fato');
     expect(prompt).toContain('mencione cada informacao uma unica vez');
     expect(prompt).toContain('A decisão de transferência pertence a você, a LLM');
-    expect(prompt).toContain('Consulte estoque quando precisar de disponibilidade');
+    expect(prompt).toContain('use `stock_search` no mesmo turno lógico');
+    expect(prompt).toContain('use `vehicle_ref` nos atributos e `money_ref` no preço');
+    expect(prompt).toContain('faça `vehicle_photos_resolve`');
+    expect(prompt).toContain('inclua o efeito `send_media`');
+    expect(prompt).toContain('não podem ser herdados de um anúncio que o lead acabou de abandonar');
+    expect(prompt).toContain('O teto de orçamento informado pelo lead não é o preço do veículo');
     expect(prompt).toContain('[no_entry] Sem entrada');
     expect((prompt.match(/## PRIMEIRO CONTATO/g) ?? []).length).toBe(1);
     expect((prompt.match(/## QUALIFICAÇÃO ADAPTATIVA/g) ?? []).length).toBe(1);
     expect((prompt.match(/## CAPACIDADES OPERACIONAIS/g) ?? []).length).toBe(1);
     expect(prompt).not.toContain('SE O CLIENTE RESPONDER');
     expect(prompt).not.toContain('if (');
+  });
+
+  it('normalizes a pasted legacy opening and duplicate company labels', () => {
+    const prompt = buildTenantSdrSystemPrompt({
+      agent_type: 'sdr',
+      bloco1_identidade: { agent_name: 'Aline', role: 'Marketing', company: 'Mônaco Automóveis', niche: 'automóveis' },
+      bloco3_abordagem: {
+        presentation: `# PRIMEIRO CONTATO\nNa primeira resposta, use exatamente esta apresentação, alterando somente a saudação conforme o horário atual do Brasil:\n"[PERIODO]! Muito prazer, meu nome é Aline e sou do Marketing da Mônaco Automóveis 😊"\nSubstitua [PERIODO] e não altere as demais palavras.`,
+      },
+      bloco9_empresa: {
+        name: 'Empresa: Mônaco Automóveis',
+        address: 'Endereço: Endereço: Avenida Central, 100',
+        hours: 'Horário: Segunda a sábado, 8h30 às 18h',
+      },
+    });
+
+    const firstContact = prompt.slice(prompt.indexOf('## PRIMEIRO CONTATO'), prompt.indexOf('## QUALIFICAÇÃO ADAPTATIVA'));
+    expect(firstContact).toContain('<APRESENTACAO_LITERAL>\n[PERIODO]! Muito prazer, meu nome é Aline e sou do Marketing da Mônaco Automóveis 😊\n</APRESENTACAO_LITERAL>');
+    expect(firstContact).not.toContain('Regra de saudação');
+    expect(firstContact).not.toContain('Substitua [PERIODO]');
+    expect(prompt).toContain('- Empresa: Mônaco Automóveis');
+    expect(prompt).toContain('- Endereço: Avenida Central, 100');
+    expect(prompt).not.toContain('Endereço: Endereço:');
+  });
+
+  it('extracts the spoken opening from the real Monaco greeting instructions', () => {
+    const prompt = buildTenantSdrSystemPrompt({
+      agent_type: 'sdr',
+      bloco1_identidade: { agent_name: 'Aline', role: 'Marketing', company: 'Mônaco Automóveis' },
+      bloco3_abordagem: {
+        presentation: `Regra de saudação por horário:
+Se o horário for entre 00h e 11h59 → "Bom dia!"
+Se o horário for entre 12h e 17h59 → "Boa tarde!"
+Se o horário for entre 18h e 23h59 → "Boa noite!"
+
+Texto completo para o campo:
+
+Identifique o horário atual e cumprimente conforme o momento. Em seguida, apresente-se: " Muito prazer, sou do Marketing da Mônaco Automóveis"`,
+      },
+    });
+
+    const firstContact = prompt.slice(prompt.indexOf('## PRIMEIRO CONTATO'), prompt.indexOf('## QUALIFICAÇÃO ADAPTATIVA'));
+    expect(firstContact).toContain('<APRESENTACAO_LITERAL>\n[PERIODO]! Muito prazer, sou Aline, do Marketing da Mônaco Automóveis\n</APRESENTACAO_LITERAL>');
+    expect(firstContact).not.toContain('Regra de saudação por horário');
+    expect(firstContact).not.toContain('Identifique o horário atual');
+    expect(firstContact).not.toContain('Texto completo para o campo');
+  });
+
+  it('restores immutable Pedro v3 sections after AI editorial changes', () => {
+    const config = {
+      agent_type: 'sdr',
+      bloco1_identidade: { agent_name: 'Aline', company: 'Mônaco Automóveis' },
+      bloco3_abordagem: { presentation: '[PERIODO]! Sou Aline, da Mônaco Automóveis 😊' },
+      bloco9_empresa: { name: 'Mônaco Automóveis' },
+    };
+    const canonical = buildTenantSdrSystemPrompt(config);
+    const altered = canonical
+      .replace('use `stock_search` no mesmo turno lógico', 'talvez consulte o estoque depois')
+      .replace('[PERIODO]! Sou Aline, da Mônaco Automóveis 😊', 'Olá! Sou outra pessoa.');
+
+    expect(validateAiGeneratedFunnelPrompt(altered, canonical, config).valid).toBe(false);
+    const protectedPrompt = enforceCanonicalV3Sections(altered, canonical);
+    expect(protectedPrompt).toContain('use `stock_search` no mesmo turno lógico');
+    expect(protectedPrompt).toContain('[PERIODO]! Sou Aline, da Mônaco Automóveis 😊');
+    expect(validateAiGeneratedFunnelPrompt(protectedPrompt, canonical, config).valid).toBe(true);
+  });
+
+  it('teaches the prompt editor to preserve tool chains without making the engine conduct the sale', () => {
+    const config = {
+      agent_type: 'sdr',
+      bloco1_identidade: { agent_name: 'Duda', company: 'Wa Veículos' },
+      bloco3_abordagem: { presentation: '[PERIODO]! Sou Duda, da Wa Veículos 😊' },
+      bloco9_empresa: { name: 'Wa Veículos' },
+    };
+    const canonical = buildTenantSdrSystemPrompt(config);
+    const request = buildFunnelPromptEditorRequest(config, canonical);
+
+    expect(request).toContain('SEÇÕES FIXAS DO PRODUTO');
+    expect(request).toContain('anúncio, consulta de estoque, detalhes, aterramento, fotos, mídia');
+    expect(request).toContain('Não troque o preço retornado por uma tool pelo teto de orçamento do lead');
+    expect(request).toContain('não transforme a engine em cérebro do atendimento');
+    expect(request).not.toContain('peça esclarecimento ao responsável pela configuração');
   });
 
   it('keeps the general SDR prompt free of automotive capabilities', () => {
