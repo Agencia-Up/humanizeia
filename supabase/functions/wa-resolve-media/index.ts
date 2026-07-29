@@ -110,8 +110,15 @@ Deno.serve(async (req) => {
           p_before: null,
         },
       );
+      // A timeline deduplica a copia sincronizada quando a mesma mensagem ja
+      // existe no wa_inbox. Nesse caso o id UUID da copia sincronizada nao
+      // aparece na RPC, mas o id real do provedor continua sendo o mesmo.
+      // Autorizar por esse identificador preserva o isolamento da RPC e evita
+      // bloquear justamente as mensagens deduplicadas.
       const allowed = !allowedError && (allowedRows || []).some((r: any) =>
-        r.source === "synced" && String(r.id) === messageId
+        (r.source === "synced" && String(r.id) === messageId)
+        || (synced.provider_message_id
+          && String(r.remote_message_id || "") === String(synced.provider_message_id))
       );
       if (!allowed) return json({ error: "Message not found" }, 404);
       sourceTable = "wa_synced_messages";
