@@ -189,8 +189,8 @@ describe('Pedro v3 tenant funnel policies', () => {
     expect(prompt).toContain('trate o veículo do anúncio como assunto inicial');
     expect(prompt).toContain('lista ampla nesse primeiro contato');
     expect(prompt).toContain('transforme as perguntas abaixo em checklist');
-    expect(prompt).toContain('nao repita o mesmo fato');
-    expect(prompt).toContain('mencione cada informacao uma unica vez');
+    expect(prompt).toContain('não repita o mesmo fato');
+    expect(prompt).toContain('mencione cada informação uma única vez');
     expect(prompt).toContain('A decisão de transferência pertence a você, a LLM');
     expect(prompt).toContain('use `stock_search` no mesmo turno lógico');
     expect(prompt).toContain('use `vehicle_ref` nos atributos e `money_ref` no preço');
@@ -255,19 +255,28 @@ Identifique o horário atual e cumprimente conforme o momento. Em seguida, apres
   it('restores immutable Pedro v3 sections after AI editorial changes', () => {
     const config = {
       agent_type: 'sdr',
-      bloco1_identidade: { agent_name: 'Aline', company: 'Mônaco Automóveis' },
+      bloco1_identidade: { agent_name: 'Aline', role: 'Marketing', company: 'Mônaco Automóveis' },
       bloco3_abordagem: { presentation: '[PERIODO]! Sou Aline, da Mônaco Automóveis 😊' },
-      bloco9_empresa: { name: 'Mônaco Automóveis' },
+      bloco7_transferencia: { customer_message: '{nome}, vou te conectar com um consultor.' },
+      bloco9_empresa: { name: 'Mônaco Automóveis', address: 'Rua Central, 100' },
     };
     const canonical = buildTenantSdrSystemPrompt(config);
     const altered = canonical
       .replace('use `stock_search` no mesmo turno lógico', 'talvez consulte o estoque depois')
-      .replace('[PERIODO]! Sou Aline, da Mônaco Automóveis 😊', 'Olá! Sou outra pessoa.');
+      .replace('[PERIODO]! Sou Aline, da Mônaco Automóveis 😊', 'Olá! Sou outra pessoa.')
+      .replace('Sua identidade configurada é **Aline**.', 'Sua identidade configurada é **Outra pessoa**.')
+      .replace('{nome}, vou te conectar com um consultor.', 'Seu financiamento foi aprovado.')
+      .replace('- Endereço: Rua Central, 100', '- Endereço: Rua inventada, 999');
 
     expect(validateAiGeneratedFunnelPrompt(altered, canonical, config).valid).toBe(false);
     const protectedPrompt = enforceCanonicalV3Sections(altered, canonical);
     expect(protectedPrompt).toContain('use `stock_search` no mesmo turno lógico');
     expect(protectedPrompt).toContain('[PERIODO]! Sou Aline, da Mônaco Automóveis 😊');
+    expect(protectedPrompt).toContain('Sua identidade configurada é **Aline**.');
+    expect(protectedPrompt).toContain('{nome}, vou te conectar com um consultor.');
+    expect(protectedPrompt).toContain('- Endereço: Rua Central, 100');
+    expect(protectedPrompt).not.toContain('Seu financiamento foi aprovado.');
+    expect(protectedPrompt).not.toContain('Rua inventada, 999');
     expect(validateAiGeneratedFunnelPrompt(protectedPrompt, canonical, config).valid).toBe(true);
   });
 
@@ -421,6 +430,8 @@ Identifique o horário atual e cumprimente conforme o momento. Em seguida, apres
       bloco8_regras: {
         always: [
           'Toda mensagem termina com pergunta de condução',
+          'Máximo 2 linhas por mensagem',
+          'Respeitar o funil de vendas do prompt',
           'Follow-up mínimo 3-4 horas depois, sempre com contexto',
           'Tratar o cliente pelo nome assim que souber',
         ],
@@ -436,6 +447,8 @@ Identifique o horário atual e cumprimente conforme o momento. Em seguida, apres
     const editorRequest = buildFunnelPromptEditorRequest(config, canonical);
     for (const unsafe of [
       'Toda mensagem termina com pergunta de condução',
+      'Máximo 2 linhas por mensagem',
+      'Respeitar o funil de vendas do prompt',
       'Follow-up mínimo 3-4 horas depois, sempre com contexto',
       'Nunca deixar conversa terminar sem tentar capturar o contato',
     ]) {
@@ -443,7 +456,7 @@ Identifique o horário atual e cumprimente conforme o momento. Em seguida, apres
       expect(editorRequest).not.toContain(unsafe);
     }
     expect(canonical).toContain('Tratar o cliente pelo nome assim que souber');
-    expect(canonical).toContain('Nunca dar desconto sem consultar o vendedor');
+    expect(canonical).toContain('Não dar desconto sem consultar o vendedor.');
   });
 
   it('answers requested facts before qualification and removes stale fact-withholding rules', () => {
@@ -467,7 +480,7 @@ Identifique o horário atual e cumprimente conforme o momento. Em seguida, apres
     expect(canonical).not.toContain(unsafe);
     expect(editorRequest).not.toContain(unsafe);
     expect(canonical).toContain('Não repetir perguntas respondidas');
-    expect(canonical).toContain('Nunca inventar preço');
+    expect(canonical).toContain('Não inventar preço.');
     expect(canonical).toContain('Qualificação não é pré-condição para entregar um fato solicitado');
 
     const generated = validateAiGeneratedFunnelPrompt(
@@ -487,14 +500,15 @@ Identifique o horário atual e cumprimente conforme o momento. Em seguida, apres
       bloco9_empresa: { name: 'Wa Veículos' },
     };
     const canonical = buildTenantSdrSystemPrompt(config);
-    const result = validateAiGeneratedFunnelPrompt(
-      `${canonical}\nToda mensagem termina com pergunta de condução.`,
-      canonical,
-      config,
-    );
-
-    expect(result.valid).toBe(false);
-    expect(result.reasons).toContain('regra de runtime ou condução rígida concorrente com o Pedro v3');
+    for (const directive of [
+      'Toda mensagem termina com pergunta de condução.',
+      'Máximo 2 linhas por mensagem.',
+      'Respeitar o funil de vendas do prompt.',
+    ]) {
+      const result = validateAiGeneratedFunnelPrompt(`${canonical}\n${directive}`, canonical, config);
+      expect(result.valid).toBe(false);
+      expect(result.reasons).toContain('regra de runtime ou condução rígida concorrente com o Pedro v3');
+    }
   });
 
   it('reconciles the real Monaco branch conflicts before either AI or fallback can publish them', () => {
@@ -539,11 +553,11 @@ Identifique o horário atual e cumprimente conforme o momento. Em seguida, apres
     expect(branches).not.toContain('Coletar CPF, data de nascimento');
     expect(branches).not.toContain('Avançar para aprovação comercial');
     expect(branches).not.toContain('Dar faixa de avaliação');
-    expect(branches).toContain('CPF ou data de nascimento só podem ser solicitados se uma análise escolhida pelo lead realmente exigir esses dados');
-    expect(branches).toContain('use handoff quando disponível; não afirme aprovação');
+    expect(branches).toContain('solicitando CPF ou data de nascimento somente se uma análise escolhida pelo lead realmente exigir esses dados');
+    expect(branches).toContain('usando handoff quando disponível, sem afirmar aprovação');
     expect(branches).toContain('Coletar modelo, ano e km do carro');
-    expect(branches).toContain('use handoff quando disponível; não estime nem afirme o valor do veículo');
-    expect(prompt).toContain('Nunca avaliar quanto vale o carro do cliente.');
+    expect(branches).toContain('usando handoff quando disponível, sem estimar nem afirmar o valor do veículo');
+    expect(prompt).toContain('Não avaliar quanto vale o carro do cliente.');
     expect(prompt).not.toContain('Pular etapas do funil');
     expect(validateAiGeneratedFunnelPrompt(prompt, prompt, config)).toEqual({ valid: true, reasons: [] });
   });
@@ -619,11 +633,156 @@ Identifique o horário atual e cumprimente conforme o momento. Em seguida, apres
     const prompt = buildTenantSdrSystemPrompt(config);
 
     expect(safe.bloco8_regras.always.join('\n')).not.toMatch(/Dar faixa de avaliação|Avançar para aprovação|Coletar CPF/);
-    expect(safe.bloco8_regras.always.join('\n')).toContain('use handoff quando disponível');
+    expect(safe.bloco8_regras.always.join('\n')).toContain('usando handoff quando disponível');
     expect(safe.bloco8_regras.never).toEqual([
-      'Nunca avaliar quanto vale o carro do cliente',
-      'Nunca coletar CPF sem necessidade',
+      'Não avaliar quanto vale o carro do cliente.',
+      'Não coletar CPF sem necessidade.',
     ]);
     expect(validateAiGeneratedFunnelPrompt(prompt, prompt, config)).toEqual({ valid: true, reasons: [] });
+  });
+
+  it('reconciles the residual Monaco prompt rules without competing with Pedro v3', () => {
+    const config = {
+      agent_type: 'sdr',
+      bloco1_identidade: {
+        agent_name: 'Aline',
+        role: 'consultor',
+        company: 'MÔNACO AUTOMÓVEIS',
+        niche: 'automóveis',
+      },
+      bloco3_abordagem: {
+        presentation: '[PERIODO]! Muito prazer, meu nome é Aline e sou do Marketing da Mônaco Automóveis 😊',
+        avoid: [
+          'Não seja repetitivo falar as mesma coisas',
+          'Não Fingir que sabe ou responder coisas aleatórios do lead',
+        ],
+      },
+      bloco4_qualificacao: {
+        required_data: ['Nome', 'Forma de pagamento'],
+      },
+      bloco5_ramificacoes: { branches: [] },
+      bloco6_criterios: {
+        qualified_when: [
+          'Tem condições financeiras compatíveis',
+          'Forneceu todos os dados obrigatórios',
+          'Demonstrou interesse em avançar',
+        ],
+        disqualified_when: [],
+      },
+      bloco7_transferencia: {
+        required_data: [],
+        customer_message: '{nome}, vou te conectar agora com nosso especialista da MÔNACO AUTOMÓVEIS! 🤝',
+      },
+      bloco8_regras: {
+        always: [
+          'Variar tom e aberturas das mensagens',
+          'Máximo 2 linhas por mensagem — uma ideia por vez',
+          'Se o cliente pergunta quero o Jeep Renegade cinza mas no estoque tem um preto, mande o preto e informe que não tem o cinza; assim deve ser feito com todos os veículos do estoque',
+          'Sempre consultar o BNDV para confirmar se o carro está no estoque e se é o carro pedido, ou similar.',
+          'Respeitar o funil de vendas do prompt',
+          'Sempre dar a saudação na primeira mensagem',
+          'Nunca inventar dados de ano, km, preço ou câmbio',
+        ],
+        never: [
+          'Não fazemos vendas de veículos na promissória.',
+          'Não é possível contratar garantia estendida da loja',
+          'Dar garantia que não seja câmbio e motor; qualquer outro item não tem garantia.',
+        ],
+      },
+      bloco9_empresa: { name: 'MÔNACO AUTOMÓVEIS' },
+    };
+
+    const safe = sanitizeTenantFunnelPromptConfig(config) as {
+      bloco3_abordagem: { avoid: string[] };
+      bloco6_criterios: { qualified_when: string[] };
+      bloco8_regras: { always: string[]; never: string[] };
+    };
+    const prompt = buildTenantSdrSystemPrompt(config);
+    const safeRules = safe.bloco8_regras.always.join('\n');
+
+    expect(safe.bloco3_abordagem.avoid).toEqual([
+      'Repetir informações ou perguntas já respondidas.',
+      'Fingir que entendeu ou responder algo sem relação com o que o lead disse.',
+    ]);
+    expect(safe.bloco6_criterios.qualified_when).not.toEqual(expect.arrayContaining([
+      'Tem condições financeiras compatíveis',
+      'Forneceu todos os dados obrigatórios',
+    ]));
+    expect(safe.bloco6_criterios.qualified_when).toEqual(expect.arrayContaining([
+      'Demonstrou interesse em avançar',
+      expect.stringContaining('dados preferenciais ainda ausentes não bloqueiam'),
+    ]));
+    expect(safeRules).not.toMatch(/BNDV|não tem o cinza|saudação na primeira mensagem|Nunca inventar|Máximo 2 linhas|Respeitar o funil/i);
+    expect(safeRules).toContain('não foi confirmada no resultado atual');
+    expect(safeRules).toContain('Depois da apresentação literal do primeiro contato');
+    expect(safe.bloco8_regras.never).toEqual([
+      'Não afirmar nem oferecer vendas de veículos na promissória como prática da empresa.',
+      'Não afirmar que é possível contratar garantia estendida da loja.',
+      'Não dar garantia que não seja câmbio e motor; qualquer outro item não tem garantia.',
+      'Não inventar dados de ano, km, preço ou câmbio.',
+    ]);
+    expect(prompt).toContain('Sua identidade configurada é **Aline**. Seu cargo configurado é **consultor**');
+    expect(prompt).toContain('nunca mostre `{nome}` ao lead');
+    expect(prompt).not.toContain('Você é **Aline**, consultor');
+    expect(validateAiGeneratedFunnelPrompt(prompt, prompt, config)).toEqual({ valid: true, reasons: [] });
+    expect(sanitizeTenantFunnelPromptConfig(safe)).toEqual(safe);
+
+    const warningCodes = validateTenantFunnelConfig(config)
+      .filter((issue) => issue.severity === 'warning')
+      .map((issue) => issue.code);
+    expect(warningCodes).toEqual(expect.arrayContaining([
+      'unsupported_stock_absence',
+      'redundant_operational_directive',
+      'undefined_qualification_criterion',
+      'first_contact_conflict',
+      'ambiguous_prohibition_wording',
+    ]));
+  });
+
+  it('drops an undefined mandatory-data qualification criterion when no preferred data exists', () => {
+    const safe = sanitizeTenantFunnelPromptConfig({
+      bloco1_identidade: { agent_name: 'Aline', company: 'Mônaco Automóveis' },
+      bloco3_abordagem: { presentation: '[PERIODO]! Sou Aline.' },
+      bloco4_qualificacao: { required_data: [] },
+      bloco6_criterios: { qualified_when: ['Forneceu todos os dados obrigatórios'] },
+      bloco7_transferencia: { required_data: [] },
+      bloco8_regras: {},
+      bloco9_empresa: { name: 'Mônaco Automóveis' },
+    }) as { bloco6_criterios: { qualified_when: string[] } };
+
+    expect(safe.bloco6_criterios.qualified_when).toEqual([]);
+  });
+
+  it('rejects an AI edit that reintroduces the residual semantic conflicts', () => {
+    const config = {
+      agent_type: 'sdr',
+      bloco1_identidade: { agent_name: 'Aline', company: 'Mônaco Automóveis' },
+      bloco3_abordagem: { presentation: '[PERIODO]! Sou Aline.' },
+      bloco4_qualificacao: {},
+      bloco5_ramificacoes: { branches: [] },
+      bloco6_criterios: {},
+      bloco7_transferencia: {},
+      bloco8_regras: {},
+      bloco9_empresa: { name: 'Mônaco Automóveis' },
+    };
+    const canonical = buildTenantSdrSystemPrompt(config);
+    const candidate = `${canonical}
+- Informe que não temos a cor cinza e apresente o preto.
+- Sempre consultar o BNDV antes de responder.
+- Sempre dar a saudação na primeira mensagem.
+- Variar tom e aberturas das mensagens.
+- Considere qualificado quando tiver condições financeiras compatíveis.
+- Considere qualificado quando fornecer todos os dados obrigatórios.`;
+    const result = validateAiGeneratedFunnelPrompt(candidate, canonical, config);
+
+    expect(result.valid).toBe(false);
+    expect(result.reasons).toEqual(expect.arrayContaining([
+      'ausência de característica de estoque afirmada sem prova factual suficiente',
+      'instrução de provedor de estoque concorrente com o contrato operacional v3',
+      'regra de saudação duplicada fora do contrato literal do primeiro contato',
+      'variação de abertura concorrente com a apresentação literal do primeiro contato',
+      'qualificação baseada em julgamento financeiro subjetivo sem critério objetivo',
+      'qualificação condicionada a dados obrigatórios não definidos objetivamente',
+    ]));
   });
 });

@@ -2,12 +2,22 @@
 // Supabase/Deno. Vite and TypeScript also support it via allowImportingTsExtensions.
 import { buildTenantPolicyPromptSection, type TenantFunnelPolicy } from "./pedroFunnelPolicyContract.ts";
 import {
+  isRedundantInventoryProviderDirective,
+  isRedundantFirstContactDirective,
+  isProhibitionDirective,
   isRigidFunnelSequencingDirective,
+  isSubjectiveFinancialQualificationCriterion,
   isUnconditionalSensitiveDataDirective,
+  isUndefinedRequiredDataQualificationCriterion,
+  isUnscopedOpeningVariationDirective,
+  isUnsupportedStockAttributeAbsenceDirective,
   isUnsupportedFinancingApprovalDirective,
   isUnsupportedVehicleValuationDirective,
+  normalizeConversationalInstruction,
   normalizeBusinessHours,
+  normalizeNeverInstructions,
   reconcileBranchInstructions,
+  reconcileQualificationCriteria,
 } from "./pedroFunnelCommercialSemantics.ts";
 
 type FunnelRecord = Record<string, unknown>;
@@ -172,6 +182,7 @@ const isCompetingRuntimeDirective = (value: string): boolean => {
   const normalized = normalizeInstruction(value);
   return isRigidFunnelSequencingDirective(value) || [
     /\b(?:toda|cada) mensagem\b.{0,35}\b(?:termina|termine|finaliza|finalize)\b.{0,30}\bpergunta\b/,
+    /\b(?:maxim\w*|limit\w*)\b.{0,12}\b\d+\b.{0,12}\b(?:linhas?|frases?|periodos?)\b.{0,24}\b(?:mensagem|resposta)\b/,
     /\bfollow[ -]?up\b.{0,45}\b(?:minim|depois|apos|hora|horas|minuto|minutos|dia|dias)\b/,
     /\bnunca (?:deixe|deixar) (?:a )?conversa (?:terminar|encerrar)\b.{0,55}\b(?:capturar|pedir|obter|coletar)\b.{0,20}\bcontato\b/,
     /\b(?:sempre|antes de qualquer coisa)\b.{0,25}\b(?:peca|pedir|solicite|solicitar)\b.{0,25}\b(?:nome|cpf)\b/,
@@ -225,16 +236,24 @@ export function sanitizeTenantFunnelPromptConfig(input: unknown): Record<string,
   const cfg = record(input);
   const b1 = record(cfg.bloco1_identidade);
   const b3 = record(cfg.bloco3_abordagem);
+  const b4 = record(cfg.bloco4_qualificacao);
   const b5 = record(cfg.bloco5_ramificacoes);
   const b6 = record(cfg.bloco6_criterios);
+  const b7 = record(cfg.bloco7_transferencia);
   const b8 = record(cfg.bloco8_regras);
   const b9 = record(cfg.bloco9_empresa);
+  const preferredQualificationData = [...items(b4.required_data), ...items(b7.required_data)];
+  const compatibleAlwaysRules = conversationalBusinessRules(b8.always)
+    .filter((rule) => !isFactAnswerGatedByQualification(rule));
+  const prohibitionsMisplacedInAlways = compatibleAlwaysRules.filter(isProhibitionDirective);
   return {
     ...cfg,
     bloco3_abordagem: {
       ...b3,
       presentation: normalizeFirstContactPresentation(b3.presentation, b1),
-      avoid: items(b3.avoid).filter((rule) => !isFactWithholdingAvoidRule(rule) && !isCompetingRuntimeDirective(rule)),
+      avoid: items(b3.avoid)
+        .filter((rule) => !isFactWithholdingAvoidRule(rule) && !isCompetingRuntimeDirective(rule))
+        .map(normalizeConversationalInstruction),
     },
     bloco5_ramificacoes: {
       ...b5,
@@ -252,6 +271,7 @@ export function sanitizeTenantFunnelPromptConfig(input: unknown): Record<string,
     },
     bloco6_criterios: {
       ...b6,
+      qualified_when: reconcileQualificationCriteria(b6.qualified_when, preferredQualificationData),
       disqualified_when: conversationalDisqualificationCriteria(b6.disqualified_when),
       closing_message: safeClosingMessage(b6),
     },
@@ -259,9 +279,14 @@ export function sanitizeTenantFunnelPromptConfig(input: unknown): Record<string,
       ...b8,
       always: reconcileBranchInstructions(
         "Regras específicas da empresa",
-        conversationalBusinessRules(b8.always).filter((rule) => !isFactAnswerGatedByQualification(rule)),
+        compatibleAlwaysRules.filter((rule) => !isProhibitionDirective(rule)),
       ),
-      never: conversationalBusinessRules(b8.never).filter((rule) => !isFactWithholdingAvoidRule(rule)),
+      never: normalizeNeverInstructions(
+        [
+          ...conversationalBusinessRules(b8.never).filter((rule) => !isFactWithholdingAvoidRule(rule)),
+          ...prohibitionsMisplacedInAlways,
+        ],
+      ),
     },
     bloco9_empresa: {
       ...b9,
@@ -290,7 +315,10 @@ export interface FunnelPromptValidationResult {
 
 const LOCKED_V3_SECTIONS = [
   "## PRECEDÊNCIA E PAPEL",
+  "## IDENTIDADE DA EMPRESA",
   "## PRIMEIRO CONTATO",
+  "## TRANSFERÊNCIA PARA HUMANO",
+  "## INFORMAÇÕES DA EMPRESA",
   "## CAPACIDADES OPERACIONAIS",
   "## REGRA FINAL",
 ] as const;
@@ -427,6 +455,24 @@ export function validateAiGeneratedFunnelPrompt(
   if (promptLines.some(isUnconditionalSensitiveDataDirective)) {
     reasons.push("coleta obrigatória de dado sensível sem necessidade e explicação contextual");
   }
+  if (promptLines.some(isUnsupportedStockAttributeAbsenceDirective)) {
+    reasons.push("ausência de característica de estoque afirmada sem prova factual suficiente");
+  }
+  if (promptLines.some(isRedundantInventoryProviderDirective)) {
+    reasons.push("instrução de provedor de estoque concorrente com o contrato operacional v3");
+  }
+  if (promptLines.some(isRedundantFirstContactDirective)) {
+    reasons.push("regra de saudação duplicada fora do contrato literal do primeiro contato");
+  }
+  if (promptLines.some(isUnscopedOpeningVariationDirective)) {
+    reasons.push("variação de abertura concorrente com a apresentação literal do primeiro contato");
+  }
+  if (promptLines.some(isUndefinedRequiredDataQualificationCriterion)) {
+    reasons.push("qualificação condicionada a dados obrigatórios não definidos objetivamente");
+  }
+  if (promptLines.some(isSubjectiveFinancialQualificationCriterion)) {
+    reasons.push("qualificação baseada em julgamento financeiro subjetivo sem critério objetivo");
+  }
 
   const cfg = sanitizeTenantFunnelPromptConfig(config);
   const b1 = record(cfg.bloco1_identidade);
@@ -466,7 +512,7 @@ O prompt do portal é a fonte principal da personalidade, do funil, das pergunta
 
 SEÇÕES FIXAS DO PRODUTO:
 - Preserve literalmente a primeira linha do PROMPT_CANONICO_V3, incluindo o título raiz "# PEDRO V3 — PROMPT COMERCIAL DO PORTAL".
-- Copie literalmente do PROMPT_CANONICO_V3 as seções ## PRECEDÊNCIA E PAPEL, ## PRIMEIRO CONTATO, ## CAPACIDADES OPERACIONAIS e ## REGRA FINAL. Elas serão recompostas pelo código depois da sua edição e não são espaço para criatividade.
+- Copie literalmente do PROMPT_CANONICO_V3 as seções ## PRECEDÊNCIA E PAPEL, ## IDENTIDADE DA EMPRESA, ## PRIMEIRO CONTATO, ## TRANSFERÊNCIA PARA HUMANO, ## INFORMAÇÕES DA EMPRESA, ## CAPACIDADES OPERACIONAIS e ## REGRA FINAL. Elas serão recompostas pelo código depois da sua edição e não são espaço para criatividade.
 - A seção de capacidades já descreve as cadeias corretas de anúncio, consulta de estoque, detalhes, aterramento, fotos, mídia, mudança de interesse, conhecimento e transferência. Não resuma, não remova tools e não crie uma segunda versão concorrente dessas regras em outra seção.
 
 COMO ENRIQUECER SEM INVENTAR:
@@ -482,7 +528,12 @@ COMO ENRIQUECER SEM INVENTAR:
 - Falta de produto numa consulta, incompatibilidade pontual de estoque, silêncio e demora não desqualificam a pessoa. Inatividade pertence à cadência automatizada; desqualificação conversacional exige evidência explícita no bloco atual de um critério comercial válido.
 - Explique que perguntas são preferências adaptativas: a LLM usa somente o que ainda falta e nunca repete pergunta ou fato já confirmado.
 - Quando o lead pedir preço, valor, quilometragem, ano, cor, câmbio, fotos ou outro dado objetivo, responda primeiro com o fato aterrado ou consulte a ferramenta apropriada. Qualificação não é pré-condição para entregar um fato solicitado; depois, prossiga naturalmente com a próxima pergunta relevante.
+- Se uma característica pedida não puder ser filtrada ou comprovada pela fonte, não transforme a ausência de correspondência em “não temos”. Apresente opções reais como alternativas transparentes e diga somente o que foi ou não foi confirmado no resultado atual.
+- Não replique em regras comerciais ordens como “sempre consultar BNDV/RevendaMais”. A seção de capacidades já define quando consultar estoque e qual tool usar; preserve apenas a intenção comercial útil.
 - Não transforme dados úteis de qualificação em requisitos absolutos. Não peça novamente telefone já conhecido pelo WhatsApp. CPF e data de nascimento só aparecem quando o cliente os configurou explicitamente, a etapa escolhida realmente os exige e o motivo pode ser explicado naturalmente.
+- Remova critérios vagos como “condições financeiras compatíveis” e “todos os dados obrigatórios” quando não houver limiar ou conjunto objetivo definido. Dados preferenciais ajudam a conversa, mas não bloqueiam pedido explícito de humano.
+- A apresentação literal do primeiro contato não pode ser variada. Uma preferência por variar tom ou abertura vale somente para as mensagens seguintes.
+- Nunca exponha placeholders como {nome}. Substitua-os somente por fatos conhecidos; quando o valor não for conhecido, omita o trecho naturalmente.
 - Mantenha uma seção de abertura literal, uma seção de condução natural, qualificação adaptativa, ramificações, critérios de transferência/encerramento, regras específicas, informações da empresa e capacidades operacionais.
 - Use exatamente estes títulos principais para o contrato ser validado: ## PRECEDÊNCIA E PAPEL, ## IDENTIDADE DA EMPRESA, ## CONDUÇÃO NATURAL, ## PRIMEIRO CONTATO, ## QUALIFICAÇÃO ADAPTATIVA, ## QUALIFICAÇÃO, DESQUALIFICAÇÃO E ENCERRAMENTO, ## TRANSFERÊNCIA PARA HUMANO, ## REGRAS ESPECÍFICAS DA EMPRESA, ## INFORMAÇÕES DA EMPRESA, ## CAPACIDADES OPERACIONAIS e ## REGRA FINAL.
 
@@ -491,12 +542,13 @@ REGRAS INEGOCIÁVEIS:
 - A mensagem atual do lead vence objetivo antigo; a LLM decide a resposta e se há tool necessária.
 - A engine não conduz a venda, não escolhe assunto, não inventa pergunta e não pode ser instruída a forçar uma tool.
 - Não crie regex, handlers, roteamento determinístico, etapas obrigatórias ou regras por frase.
-- Não crie regras artificiais como "toda mensagem termina com pergunta", "sempre peça nome/CPF", "encerre se o lead demorar" ou "siga esta ordem sem exceção".
+- Não crie regras artificiais como "toda mensagem termina com pergunta", "máximo de duas linhas", "sempre peça nome/CPF", "encerre se o lead demorar", "respeite o funil" ou "siga esta ordem sem exceção".
 - Não publique ordem para dar faixa de avaliação, estimar o carro da troca, avançar para aprovação comercial ou declarar financiamento aprovado. Substitua por coleta contextual e encaminhamento humano executável.
 - Não invente produto, preço, política, endereço, horário, tool ou capacidade.
 - Não troque o preço retornado por uma tool pelo teto de orçamento do lead e não apresente estimativa como fato. Não prometa “vou verificar e te aviso” quando não existe tarefa de retorno; use a tool no turno ou encaminhe com handoff real quando isso for útil.
 - Nunca aconselhe o lead a não comprar, nem conclua que ele não está apto ou no momento adequado para comprar. Uma busca vazia descreve somente o recorte consultado e não autoriza encerrar o atendimento.
 - Nunca esconda preço, valor, quilometragem, ano, cor, câmbio, fotos ou outro fato solicitado até o lead concluir a qualificação. Entregue ou consulte o fato primeiro; qualifique depois, se ainda fizer sentido.
+- Nunca afirme que uma cor, opcional ou característica não existe no estoque quando a fonte só deixou de confirmar aquele atributo ou a busca não consegue filtrá-lo.
 - Preserve todos os fatos configurados pelo cliente, inclusive regras específicas e apresentação.
 - Não remova as seções do contrato v3, as capacidades autorizadas, a precedência do portal ou a autoria da LLM.
 - Este pedido contém a palavra JSON porque a resposta deve ser JSON puro. Não use markdown nem cercas de código.
@@ -596,10 +648,11 @@ Este é o prompt configurado pela empresa para conduzir o atendimento SDR. Ele �
 - Use estas instruções para decidir como conversar, qual pergunta faz sentido e quando uma transferência comercial é apropriada.
 - O contrato técnico do Pedro v3 só governa formato, segurança, evidência factual, PII, grounding e execução de efeitos. Ele não substitui nem reescreve a condução comercial deste portal.
 - Você é a autora da resposta comercial e da decisão de usar uma tool. Não diga que enviou, transferiu ou consultou algo sem declarar a ação correspondente e receber um resultado válido.
+- Nunca exponha placeholders como \`{nome}\` ou \`{telefone}\`. Substitua somente por fatos conhecidos; se o valor não existir, omita o trecho naturalmente.
 
 ## IDENTIDADE DA EMPRESA
 
-Você é **${text(b1, "agent_name", "o assistente") }**, ${text(b1, "role", "consultor(a) de vendas")} da **${text(b1, "company", "(empresa)")}**.
+Sua identidade configurada é **${text(b1, "agent_name", "o assistente") }**. Seu cargo configurado é **${text(b1, "role", "consultor(a) de vendas")}** na **${text(b1, "company", "(empresa)")}**.
 Segmento: **${text(b1, "niche", "(não definido)")}**.
 Seu papel é atuar como SDR: entender a necessidade, responder com fatos, qualificar sem interrogatório e encaminhar ao humano quando fizer sentido. Você não fecha a venda nem inventa condições.
 
@@ -616,7 +669,7 @@ Objetivo comercial: ${text(b3, "objective", "criar conexão e entender a necessi
 
 ## PRIMEIRO CONTATO
 
-Na mesma mensagem, nao repita o mesmo fato: se um veiculo ou resultado de tool ja foi descrito, nao acrescente uma segunda linha resumindo nome, ano, cor, quilometragem, cambio ou preco. Una os fatos em uma descricao natural e mencione cada informacao uma unica vez.
+Na mesma mensagem, não repita o mesmo fato: se um veículo ou resultado de tool já foi descrito, não acrescente uma segunda linha resumindo nome, ano, cor, quilometragem, câmbio ou preço. Una os fatos em uma descrição natural e mencione cada informação uma única vez.
 
 Na primeira resposta, reproduza exatamente o texto entre as tags abaixo, alterando somente o marcador **[PERIODO]** para o período atual do Brasil:
 
@@ -680,6 +733,8 @@ Use a transferência quando a conversa e este funil indicarem que o humano deve 
 
 Mensagem ao cliente:
 "${text(b7, "customer_message", "Vou te conectar agora com um de nossos consultores.")}"
+
+Substitua placeholders somente por fatos conhecidos. Se o nome não estiver confirmado, omita o vocativo naturalmente; nunca mostre \`{nome}\` ao lead.
 
 Resumo interno para o vendedor — nunca mostrar ao lead:
 ${text(b7, "internal_summary_template", "Interesse: (contexto real)\nDados tratados: (fatos confirmados)\nPróximo passo: (ação sugerida)")}

@@ -9,8 +9,15 @@
 
 import {
   hasAmbiguousBusinessHours,
+  isAmbiguousNeverDirective,
+  isRedundantInventoryProviderDirective,
+  isRedundantFirstContactDirective,
   isRigidFunnelSequencingDirective,
+  isSubjectiveFinancialQualificationCriterion,
   isUnconditionalSensitiveDataDirective,
+  isUndefinedRequiredDataQualificationCriterion,
+  isUnscopedOpeningVariationDirective,
+  isUnsupportedStockAttributeAbsenceDirective,
   isUnsupportedFinancingApprovalDirective,
   isUnsupportedVehicleValuationDirective,
 } from "./pedroFunnelCommercialSemantics.ts";
@@ -110,7 +117,12 @@ export interface TenantFunnelConfigIssue {
     | "rigid_funnel_sequence"
     | "unsupported_commercial_action"
     | "sensitive_data_requires_context"
-    | "ambiguous_business_hours";
+    | "ambiguous_business_hours"
+    | "unsupported_stock_absence"
+    | "redundant_operational_directive"
+    | "undefined_qualification_criterion"
+    | "first_contact_conflict"
+    | "ambiguous_prohibition_wording";
   path?: string;
   message: string;
 }
@@ -245,6 +257,17 @@ export function validateTenantFunnelConfig(input: unknown): TenantFunnelConfigIs
     });
   }
 
+  for (const criterion of listValues(b6.qualified_when)) {
+    if (isUndefinedRequiredDataQualificationCriterion(criterion) || isSubjectiveFinancialQualificationCriterion(criterion)) {
+      issues.push({
+        severity: "warning",
+        code: "undefined_qualification_criterion",
+        path: "bloco6_criterios.qualified_when",
+        message: `O critério “${criterion}” não define evidência objetiva e será removido ou convertido em contexto suficiente, sem bloquear a conversa.`,
+      });
+    }
+  }
+
   for (const [path, instructions] of [
     ["bloco3_abordagem.avoid", listValues(b3.avoid)],
     ["bloco8_regras.always", listValues(b8.always)],
@@ -263,6 +286,24 @@ export function validateTenantFunnelConfig(input: unknown): TenantFunnelConfigIs
     }
     if (isUnconditionalSensitiveDataDirective(instruction)) {
       issues.push({ severity: "warning", code: "sensitive_data_requires_context", path: "bloco8_regras.always", message: `A coleta de dado sensível em “${instruction}” será condicionada à necessidade da etapa e à explicação do motivo.` });
+    }
+    if (isUnsupportedStockAttributeAbsenceDirective(instruction)) {
+      issues.push({ severity: "warning", code: "unsupported_stock_absence", path: "bloco8_regras.always", message: `A regra “${instruction}” afirma ausência de característica sem cobertura factual. A geração preservará apenas a alternativa transparente e o que a fonte realmente confirmou.` });
+    }
+    if (isRedundantInventoryProviderDirective(instruction)) {
+      issues.push({ severity: "warning", code: "redundant_operational_directive", path: "bloco8_regras.always", message: `A regra “${instruction}” duplica a mecânica de consulta do Pedro v3 e será removida; o contrato operacional já define quando consultar estoque.` });
+    }
+    if (isUnscopedOpeningVariationDirective(instruction)) {
+      issues.push({ severity: "warning", code: "first_contact_conflict", path: "bloco8_regras.always", message: `A regra “${instruction}” conflita com a apresentação literal. A variação será limitada às mensagens após o primeiro contato.` });
+    }
+    if (isRedundantFirstContactDirective(instruction)) {
+      issues.push({ severity: "warning", code: "first_contact_conflict", path: "bloco8_regras.always", message: `A regra “${instruction}” duplica a saudação já garantida pelo primeiro contato literal e será removida.` });
+    }
+  }
+
+  for (const instruction of listValues(b8.never)) {
+    if (isAmbiguousNeverDirective(instruction)) {
+      issues.push({ severity: "warning", code: "ambiguous_prohibition_wording", path: "bloco8_regras.never", message: `A regra “${instruction}” está como negativa dentro do campo “Nunca” e será reescrita como proibição inequívoca.` });
     }
   }
 

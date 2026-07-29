@@ -92,7 +92,7 @@ async function improvePromptWithAi(
               'O prompt do portal governa personalidade, funil, perguntas, qualificação, desqualificação e estilo.',
               'O contrato v3 governa apenas formato, segurança, evidência, grounding e efeitos operacionais.',
               'Preserve literalmente o título raiz # PEDRO V3 — PROMPT COMERCIAL DO PORTAL.',
-              'As seções fixas de precedência, primeiro contato, capacidades operacionais e regra final devem permanecer idênticas ao contrato canônico; o servidor também as recompõe após sua edição.',
+              'As seções fixas de precedência, identidade, primeiro contato, transferência, informações da empresa, capacidades operacionais e regra final devem permanecer idênticas ao contrato canônico; o servidor também as recompõe após sua edição.',
               'Não resuma nem contradiga as cadeias canônicas de anúncio, stock_search, vehicle_details, vehicle_photos_resolve, referências aterradas, send_media e handoff.',
                'Preserve fatos e regras compatíveis do cliente. Quando houver conflito, uma proibição explícita em Nunca vence a orientação incompatível.',
                'Reescreva textos livres em português claro e profissional, corrigindo ortografia e concordância sem inventar fatos do negócio.',
@@ -101,8 +101,13 @@ async function improvePromptWithAi(
                'CPF e data de nascimento só podem aparecer de modo condicional, quando indispensáveis à etapa escolhida e com explicação do motivo.',
                'Não preserve nem crie despedidas que julguem negativamente a capacidade, a prontidão ou o momento de compra do lead; reescreva-as como encerramento cordial, neutro e com porta aberta.',
                'Falta de produto numa consulta, silêncio e demora não desqualificam a pessoa. Uma busca vazia descreve somente o recorte consultado; inatividade pertence à cadência automatizada.',
+               'Não afirme ausência de cor, opcional ou característica quando a fonte apenas não confirmou o atributo. Apresente alternativas reais com transparência e limite a afirmação ao resultado consultado.',
+               'Não replique regras de sempre consultar BNDV ou RevendaMais; o contrato canônico já define quando e como consultar estoque.',
+               'Critérios vagos como condições financeiras compatíveis ou todos os dados obrigatórios sem definição objetiva não podem bloquear qualificação nem pedido de humano.',
+               'A apresentação literal do primeiro contato não pode ser variada. Preferências de variar abertura valem somente para as mensagens seguintes.',
+               'Nunca exponha placeholders como {nome}; substitua apenas por fatos conhecidos ou omita o trecho naturalmente.',
                'Não transforme a conversa em checklist, script rígido, regex, handler, roteador ou sequência obrigatória.',
-              'Não imponha pergunta no fim de toda mensagem, pedido automático de nome/CPF, encerramento por silêncio ou repetição de fatos.',
+              'Não imponha pergunta no fim de toda mensagem, limite rígido de linhas, pedido automático de nome/CPF, encerramento por silêncio, ordem genérica de respeitar o funil ou repetição de fatos.',
               'A palavra JSON é obrigatória porque o contrato exige JSON.',
             ].join(' '),
           },
@@ -390,7 +395,7 @@ serve(async (req) => {
     const configErrors = funnelIssues.filter((issue) => issue.severity === 'error');
     const policyErrors = policyIssues.filter((issue) => issue.severity === 'error');
     if (configErrors.length > 0) {
-      throw new Error(`A configuraÃ§Ã£o do Funil possui erros: ${configErrors.map((issue) => issue.message).join(' ')}`);
+      throw new Error(`A configuração do Funil possui erros: ${configErrors.map((issue) => issue.message).join(' ')}`);
     }
     if (policyErrors.length > 0) {
       throw new Error(`Políticas comerciais inválidas: ${policyErrors.map((issue) => issue.message).join(' ')}`);
