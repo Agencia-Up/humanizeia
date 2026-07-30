@@ -92,17 +92,31 @@ const bndvRow = (v: Partial<Record<string, unknown>>): Record<string, unknown> =
   transmissionName: "Automatico", pictureJs: "[]", vehicleExternalKey: "9001", subCategoryName: "suv", ...v });
 
 // Loader BNDV no modo NOVO (external_key+password = fluxo /login), como a Mônaco. O transporte ramifica /login vs /graphql.
-function makeBndvLoginLoader(opts: { loginStatus?: number; loginBody?: string; loginCt?: string; graphqlBody?: unknown }): V2StockLoader {
+function makeBndvLoginLoader(opts: {
+  loginStatus?: number;
+  loginBody?: string;
+  loginCt?: string;
+  graphqlBody?: unknown;
+  loginTransientFailures?: number;
+  counters?: { login: number; graphql: number };
+}): V2StockLoader {
   // O seed integrationSecrets do gateway não alimenta a auth (a credencial vem do FakeCredentialProvider); só o material
   // abaixo importa. Usamos a forma aceita pelo tipo IntegrationSecret no seed do gateway.
   const gateway = new FakeV2ReadGateway({ agents: AGENTS, funnels: [], integrationsByTenant: { [TENANT]: [BNDV] },
     integrationSecrets: { "int-bndv": { api_token: "unused", feed_url: "unused" } } });
   const creds = new FakeCredentialProvider({ "int-bndv": { tenantId: TENANT, provider: "bndv", material: JSON.stringify({ external_key: "EK", password: "PW" }) } });
+  let loginAttempts = 0;
   const transport = new FakeTransport(async (u) => {
     if (u.includes("/login")) {
+      loginAttempts++;
+      if (opts.counters) opts.counters.login++;
+      if (loginAttempts <= (opts.loginTransientFailures ?? 0)) {
+        throw new Error("simulated transient network failure");
+      }
       return new Response(opts.loginBody ?? JSON.stringify({ token: "fresh-login-token" }),
         { status: opts.loginStatus ?? 200, headers: new Headers({ "content-type": opts.loginCt ?? "application/json" }) });
     }
+    if (opts.counters) opts.counters.graphql++;
     return new Response(JSON.stringify(opts.graphqlBody ?? { data: { vehiclesBy: [bndvRow({})] } }), { headers: new Headers({ "content-type": "application/json" }) });
   });
   const http = new SafeHttpClient(new FakeDns(), transport, new FakeSleeper());
@@ -161,6 +175,30 @@ async function main(): Promise<void> {
 
   await expectThrow("[L-10] BNDV /login OK mas sem token no corpo -> loadAll LANÇA",
     () => makeBndvLoginLoader({ loginBody: JSON.stringify({ foo: "bar" }) }).loadAll(ref), "STOCK_UNAVAILABLE");
+
+  const transientCounters = { login: 0, graphql: 0 };
+  const recoveredAfterTransientLogin = await makeBndvLoginLoader({
+    loginTransientFailures: 1,
+    counters: transientCounters,
+    graphqlBody: { data: { vehiclesBy: [bndvRow({ modelName: "Equinox" })] } },
+  }).loadAll(ref);
+  check("[L-11] falha transitoria no primeiro /login repete o ciclo e recupera o estoque",
+    recoveredAfterTransientLogin.length === 1
+      && recoveredAfterTransientLogin[0].modelName === "Equinox"
+      && transientCounters.login === 2
+      && transientCounters.graphql === 1,
+    JSON.stringify(transientCounters));
+
+  const permanentCounters = { login: 0, graphql: 0 };
+  await expectThrow("[L-12] /login 401 e permanente e nao entra em retry",
+    () => makeBndvLoginLoader({
+      loginStatus: 401,
+      loginBody: JSON.stringify({ message: "invalid" }),
+      counters: permanentCounters,
+    }).loadAll(ref), "STOCK_UNAVAILABLE");
+  check("[L-12] falha permanente chamou /login uma unica vez",
+    permanentCounters.login === 1 && permanentCounters.graphql === 0,
+    JSON.stringify(permanentCounters));
 
   // ── PARTE 2 — RUNNER: throw do loader vira stock_search {ok:false} UPSTREAM (wasObserved-compatível) ──
   const runnerFail = createReadQueryRunner(ref, {

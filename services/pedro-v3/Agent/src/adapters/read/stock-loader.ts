@@ -76,7 +76,7 @@ const STOCK_LOAD_RETRY_DELAY_MS = 150;
 
 function isRetryableStockLoadError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /SAFE_FETCH_FAILURE:\s*(?:TIMEOUT|NETWORK_ERROR|HTTP_STATUS_(?:408|425|429|5\d\d))\b/i.test(message);
+  return /SAFE_FETCH_FAILURE:\s*(?:TIMEOUT|NETWORK_ERROR|DNS_RESOLUTION_FAILED|BNDV_AUTH_TRANSIENT|HTTP_STATUS_(?:408|425|429|5\d\d))\b/i.test(message);
 }
 
 async function loadStockSnapshotWithBoundedRetry<T>(load: () => Promise<T>): Promise<T> {
@@ -171,6 +171,9 @@ export class V2StockLoader implements StockLoader {
       // resolve = FALHA DE CARGA honesta (STOCK_UNAVAILABLE), nunca "loja vazia".
       const auth = await resolveBndvAuthHeader(parseBndvCredentials(cred), this.httpClient);
       if (!auth.ok) {
+        if (auth.error === "BNDV_LOGIN_TRANSIENT") {
+          throw new Error("SAFE_FETCH_FAILURE: BNDV_AUTH_TRANSIENT");
+        }
         throw new Error(`STOCK_UNAVAILABLE: BNDV auth (${auth.error})`);
       }
 

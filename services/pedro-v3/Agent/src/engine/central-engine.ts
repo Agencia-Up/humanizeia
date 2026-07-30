@@ -38,7 +38,7 @@ import {
 import { shouldSupersedeStaleBlock, DEFAULT_DEBOUNCE_CONFIG } from "./debounce-policy.ts";
 import {
   adFingerprintOf, buildOperationalContext, buildGroundedFleet, carryForwardProof, compactGroundedFleet, deriveSendMediaAvailability,
-  evaluateAdIdentityProof, resolveAdConfirmation, type AdIdentityProof, type GroundedVehicleRef,
+  evaluateAdIdentityProof, resolveAdConfirmation, type AdIdentityProof, type GroundedVehicleRef, type VehicleTargetRuntimeFacts,
 } from "../domain/operational-context.ts";
 import { detectCommercialConstraints, sufficientForStockSearch, canonicalBrand, describeConstraints, mergeActiveConstraints, constraintsToStockInput, detectCorrections, activeConstraintsFromStockInput, mentionsMotorcycle, deriveScopeFromHomogeneousOffer, detectSimilarityIntent, relaxToSimilar, type RelaxKind, type CommercialConstraints } from "./commercial-constraints.ts";
 import { applyMonetarySemanticsToCurrentConstraints, sanitizeStockSearchInputMoney } from "./monetary-semantics.ts";
@@ -439,6 +439,39 @@ export type CentralTurnResult =
 // ── Enforcement determinístico de invariantes (Brain/11 §5: validador/executor; NÃO conduz o assunto) ──────────
 // PEDIDO de foto AGORA (imperativo) — distinto de PERGUNTA de memória ("qual carro pedi fotos?").
 const PHOTO_MEMORY_Q_RX = /\b(qual|que|quais)\b[^?]*\b(foto|carro|ve[ií]culo|modelo)\b[^?]*\b(pedi|pediu|mandei|mostrei|recebi)\b/;
+/**
+ * Projeta o mesmo alvo canonico usado pelas guardas de detalhes/midia para o
+ * contexto factual da LLM. Nao resolve novamente, nao escolhe tool e nao
+ * promove identidade de anuncio. Ambiguidade permanece ambiguidade.
+ */
+function projectTargetResolution(target: TargetResolution): VehicleTargetRuntimeFacts {
+  if (target.kind === "resolved") {
+    return {
+      status: "resolved",
+      vehicleKey: target.vehicleKey,
+      candidateVehicleKeys: [...new Set(target.candidateVehicleKeys)],
+      source: target.source,
+      subjectModel: target.subjectModel,
+    };
+  }
+  if (target.kind === "ambiguous") {
+    return {
+      status: "ambiguous",
+      vehicleKey: null,
+      candidateVehicleKeys: [...new Set(target.candidateVehicleKeys)],
+      source: "ambiguous",
+      subjectModel: target.subjectModel,
+    };
+  }
+  return {
+    status: target.kind,
+    vehicleKey: null,
+    candidateVehicleKeys: [],
+    source: null,
+    subjectModel: target.subjectModel,
+  };
+}
+
 const PHOTO_MORE_REQUEST_RX = /\b(?:tem\s+)?(?:mais|outr[ao]s?)\s+(?:fotos?|imagens?|midias?|fotografias?)\b|\b(?:fotos?|imagens?)\s+(?:a\s+)?mais\b/;
 const PHOTO_REQUEST_RX = /\b(manda|mandar|mande|envia|enviar|envie|mostra|mostrar|mostre|me\s+ve|quero\s+ver|posso\s+ver|ver\s+as?)\b[^?]*\bfotos?\b|\bfotos?\s+d(o|a|e|esse|essa|ele|ela|aquele)\b|\bfoto\s+d(a|o)\s+(primeir|segund|terceir|quart)/;
 function isPhotoRequestBlock(text: string): boolean {
@@ -667,6 +700,7 @@ function authorFromBrainDraft(args: {
   readonly openingNeedsDiscovery?: boolean;          // PARTE A (missão): abertura sem alvo -> discovery, não pedir nome/telefone
   readonly openingNeedsIntroduction?: boolean;       // primeiro contato sem anúncio -> identidade do prompt + discovery
   readonly specificAdVehicle?: string | null;        // PARTE A (missão P0): entrada por anúncio ESPECÍFICO -> abertura DEVE falar do veículo
+  readonly adVehicleIdentity?: string | null;        // identidade declarada do anúncio; não prova estoque/chave, mas permite à LLM aterrar o pedido de foto
   readonly searchExpectedThisTurn?: boolean;         // Missão P0 INC1/A: turno comercial/busca -> proíbe promessa "vou buscar" sem stock_search
   readonly noCommercialContextYet?: boolean;         // Missão P0 INC2/F: sem intenção comercial ainda -> não pedir nome (nem sobrenome)
   readonly advancedThisTurn?: boolean;               // LLM-first: o lead deu um slot novo neste turno (ex.: o nome) -> reperguntar o não-respondido é condução
@@ -735,6 +769,21 @@ function authorFromBrainDraft(args: {
   const pendingPhotoTargetAuthorized = args.photoVU?.fromBrain === true
     && args.photoVU.trusted
     && authorizesPhotoByResolvedTarget(args.target, args.leadMessage, args.ctx.state, args.photoVU);
+  // Fonte exclusiva do pós-requisito operacional em central_active: a
+  // capability que a própria LLM declarou COM evidência própria de foto no
+  // bloco do lead. Reaproveitar a mesma função que autoriza o efeito evita
+  // transformar uma oferta proativa ("quer fotos?") em obrigação de
+  // prefetch. Autorizações contextuais nunca passam a obrigar a tool.
+  const photoCapabilityDeclaredNow = authorizesPhotoSend(args.photoVU, args.leadMessage, args.requireBrain);
+  // Coerencia entre dois campos autorados pela propria LLM. Isto nao infere
+  // pedido por regex nem escolhe uma tool: apenas impede que o mesmo resultado
+  // declare `request_photos` como ato principal e, ao mesmo tempo, encerre a
+  // midia como `none`. Recusa/adiamento explicito continua fora deste contrato.
+  const photoIntentDeclaredNow = args.requireBrain
+    && args.photoVU?.fromBrain === true
+    && args.photoVU.trusted
+    && args.photoVU.understanding.primaryIntent === "request_photos"
+    && !isPhotoDeclined(args.leadMessage);
   const photoAuthorized = authorizesPhotoSend(args.photoVU, args.leadMessage, args.requireBrain)
     || acceptedPhotoAuthorized
     || pendingPhotoTargetAuthorized;
@@ -1113,16 +1162,27 @@ function authorFromBrainDraft(args: {
     institutionalObs: args.institutionalObs ?? new Map(),
     proposedEffects,
     // Em llmFirst, a semântica aceita do bloco atual vence um objetivo antigo.
-    // Quando a própria LLM declarou request_photos, o objetivo pendente não
+    // Quando a própria LLM declarou send_photos, o objetivo pendente não
     // pode tornar opcional justamente a completude desse pedido. Replay legado
     // não possui essa autoridade semântica e preserva o contrato anterior.
     pendingObjective: args.ctx.state.currentObjective?.status === "pending"
-      && !(args.requireBrain && photoAuthorized),
+      && !(args.requireBrain && (photoCapabilityDeclaredNow || photoIntentDeclaredNow)),
     photoRequested: args.requireBrain
-      ? photoAuthorized
+      ? photoCapabilityDeclaredNow
       : photoAuthorized || authorizesPhotoByResolvedTarget(args.target, args.leadMessage, args.ctx.state, args.photoVU) || leadRequestsPhoto(args.leadMessage),
+    photoIntentDeclared: photoIntentDeclaredNow,
+    photoTargetKind: args.target.kind,
+    // `selected_vehicle` sem seleção inequívoca diante de uma lista com
+    // 2+ itens é uma ambiguidade estrutural, ainda que o resolvedor termine
+    // em `none` por não haver ordinal/modelo no bloco. Repetir stock_search
+    // não escolhe qual unidade o lead quis; somente a conversa pode fazê-lo.
+    photoTargetAmbiguous: args.target.kind === "ambiguous"
+      || (args.target.kind === "none"
+        && args.photoVU?.understanding.subject === "selected_vehicle"
+        && (args.ctx.state.lastRenderedOfferContext?.items.length ?? 0) > 1),
     photoTargetResolved: args.target.kind === "resolved",
     photoLookupStatus: photoLookupStatus(args.facts, args.target),
+    adVehicleIdentity: args.adVehicleIdentity ?? null,
   });
   if (incomplete) return { ok: false, feedback: incomplete };
   // ⭐A GUARDA DE PROMESSA FOI REMOVIDA (decisão do dono + auditoria, 25/07). Ela lia a FRASE do agente para decidir
@@ -1261,6 +1321,52 @@ function photoLookupStatus(facts: readonly QueryResult[], target: TargetResoluti
 // de recuperação produzido pela engine.
 const PHOTO_EXTERNAL_PROMISE_RX = /\b(?:vou|irei|vamos)\b[^.?!]{0,100}\b(?:pedir|solicitar|confirmar|verificar)\b[^.?!]{0,100}\b(?:equipe|consultor|vendedor|time)\b[^.?!]{0,80}\b(?:enviar|mandar)\b|\b(?:equipe|consultor|vendedor|time)\b[^.?!]{0,70}\b(?:vai|ira)\b[^.?!]{0,40}\b(?:enviar|mandar)\b/;
 const PHOTO_ORDINAL_CLARIFY_RX = /\b(?:qual|quais|numero|n[uú]mero|op[cç][aã]o|item|lista|primeir|segund|terceir|quart|quint)\b/;
+function photoOperationalPostcondition(args: {
+  readonly pendingObjective: boolean;
+  readonly photoRequested: boolean;
+  readonly photoIntentDeclared: boolean;
+  readonly photoTargetKind: TargetResolution["kind"];
+  readonly photoTargetAmbiguous: boolean;
+  readonly photoTargetResolved: boolean;
+  readonly photoLookupStatus: PhotoLookupStatus;
+  readonly proposedEffects: readonly ProposedEffectPlan[];
+  readonly adVehicleIdentity?: string | null;
+}): string | null {
+  const sentMedia = args.proposedEffects.some((effect) => effect.kind === "send_media");
+  const currentPhotoAct = args.photoIntentDeclared || args.photoRequested;
+
+  // `send_media` já atravessou `groundProposedMediaEffects` antes desta
+  // pós-condição. Essa é a autoridade factual única: a mesma vehicleKey precisa
+  // ter um resultado inequívoco de vehicle_photos_resolve, fotos não vazias e
+  // snapshot coerente. Revalidar o efeito pelo alvo conversacional criava uma
+  // segunda autoridade e bloqueava mídia correta quando a lista anterior tinha
+  // alternativas. A LLM escolhe a chave; o grounding factual valida e encerra.
+  if (sentMedia) {
+    return null;
+  }
+
+  // Um objetivo antigo não obriga uma nova ação. Porém, quando a própria LLM
+  // reconheceu request_photos no bloco atual, esse ato atual vence a memória e
+  // precisa terminar de modo coerente com os fatos do turno.
+  if ((args.pendingObjective && !args.photoIntentDeclared) || !currentPhotoAct) return null;
+
+  // Ambiguidade real admite esclarecimento. A engine não escolhe um veículo e
+  // não força uma consulta incapaz de resolver a escolha do lead.
+  if (args.photoTargetAmbiguous || args.photoTargetKind === "conflict") return null;
+  if (!args.photoTargetResolved) {
+    if (!args.adVehicleIdentity) return null;
+    return `O understanding reconheceu request_photos para o anúncio "${args.adVehicleIdentity}", mas ainda não existe uma vehicleKey inequívoca e aterrada. Para atender o pedido, use stock_search com a identidade atual do anúncio; se a identidade realmente for insuficiente, esclareça o alvo sem afirmar envio ou indisponibilidade.`;
+  }
+  if (args.photoLookupStatus === "not_queried") {
+    return "O understanding reconheceu request_photos para um veículo resolvido, mas vehicle_photos_resolve ainda não foi executada neste turno. Consulte a tool com a vehicleKey aterrada antes do FINAL; se o pedido foi classificado incorretamente, corrija o understanding sem prometer envio.";
+  }
+  if (args.photoLookupStatus === "available") {
+    return "vehicle_photos_resolve retornou fotos para o pedido atual, mas o FINAL não materializou send_media. Inclua send_media para a mesma vehicleKey ou corrija o understanding se não se tratava de um pedido de fotos; não afirme envio sem o efeito.";
+  }
+  // `empty` e `failed` são resultados reais. A LLM continua autora da resposta
+  // honesta; a engine não escolhe nem redige o que dizer.
+  return null;
+}
 function turnCompletenessFeedback(args: {
   readonly authorityMode: ResponseAuthorityMode;
   readonly leadMessage: string;
@@ -1269,13 +1375,20 @@ function turnCompletenessFeedback(args: {
   readonly proposedEffects: readonly ProposedEffectPlan[];
   readonly pendingObjective: boolean;   // objetivo antigo ainda aplicável; request_photos aceito no bloco atual sempre vence
   readonly photoRequested: boolean;     // T2 (fonte única): o turno autoriza foto pela semântica (não regex de frase)
+  readonly photoIntentDeclared: boolean; // ato atual autorado: request_photos exige cadeia factual ou esclarecimento real
+  readonly photoTargetKind: TargetResolution["kind"];
+  readonly photoTargetAmbiguous: boolean;
   readonly photoTargetResolved: boolean;
   readonly photoLookupStatus: PhotoLookupStatus;
+  readonly adVehicleIdentity?: string | null;
 }): string | null {
   const authority = responseAuthorityProfile(args.authorityMode);
+  const photoOperationalFeedback = photoOperationalPostcondition(args);
+  if (photoOperationalFeedback) return photoOperationalFeedback;
   // No fluxo ativo, completude conversacional e escolha de tool pertencem à
-  // LLM. Estrutura, referências e efeitos factuais já foram validados antes;
-  // portanto não existe uma segunda autorização baseada em texto/intenção.
+  // LLM. O pós-requisito estrutural acima só valida a capability send_photos
+  // que ela própria declarou necessária agora; abaixo dele não existe segunda
+  // autorização por texto.
   if (!authority.conversationalTextVeto) return null;
   const normResp = normalizeText(args.composed.text);
   // Institucional: cada tópico PEDIDO tem que aparecer na resposta (valor ou ausência honesta), senão foi ignorado.
@@ -1817,7 +1930,11 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const adVehicle = adHasVehicle(adConstraints);
       // Identity declared by the ad and exact proof are separate from "this vehicle exists". Old states without a
       // typed proof remain unknown; a rendered family candidate can never silently become the advertised trim.
-      const adIdentityTarget = llmFirst ? buildAdIdentityTarget(effectiveAdContext) : null;
+      // The tenant catalog complements the finite market taxonomy. Without
+      // this structured fallback, a catalogued model unknown to the taxonomy
+      // could be found repeatedly by stock_search but never become the exact
+      // ad target, trapping photo/detail turns in a grounding retry loop.
+      const adIdentityTarget = llmFirst ? buildAdIdentityTarget(effectiveAdContext, adConstraints) : null;
       // The ad declaration is a weaker, independent authority: it lets the LLM name exactly what the structured
       // ad payload named even when a finite taxonomy does not know that model. It never confirms stock or attributes.
       const adDeclaredIdentity = llmFirst ? buildAdDeclaredVehicleIdentity(effectiveAdContext) : null;
@@ -2048,6 +2165,11 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
             confidence: effectiveAdContext?.confidence ?? null,
             referenceKey: adConfirmation.vehicleKey,
           },
+          // Projeta exatamente a mesma resolucao canonica usada pelas guardas
+          // de detalhe e midia. Este eixo responde "qual veiculo e o alvo
+          // inequivoco do bloco?"; ele nao promove nem substitui a prova
+          // estrita da versao anunciada (`ad.inventoryConfirmed`).
+          target: projectTargetResolution(resolveTargetWithAd()),
         }),
         };
       };
@@ -2365,6 +2487,40 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       const resultBySig = new Map<string, QueryResult>();
       let duplicateToolCallsServedFromCache = 0;
       let dupOtherLoopCount = 0;
+      // A cache hit is not a new operational action: no adapter runs and no
+      // fact is added. Keep `brainSteps` as the real LLM-call counter, but let
+      // one idempotent reuse extend the tool window by one call. This prevents
+      // a no-op at the boundary from pushing the LLM's next legitimate tool
+      // into final authorship (where tools are closed). The credit is bounded
+      // and does not choose what the next action will be.
+      const IDEMPOTENT_REUSE_STEP_CREDIT_CAP = 1;
+      let idempotentReuseStepCredits = 0;
+      const grantIdempotentReuseStepCredit = (): void => {
+        if (idempotentReuseStepCredits < IDEMPOTENT_REUSE_STEP_CREDIT_CAP) idempotentReuseStepCredits += 1;
+      };
+      // O reuso idempotente precisa produzir uma mudança de estado observável
+      // para a LLM sem duplicar a observação canônica nem criar um deny. O
+      // marcador vive por exatamente um passo do cérebro; depois é limpo.
+      let lastToolReuse: NonNullable<TurnFrame["toolControl"]>["lastReuse"] = null;
+      // A autoria final sempre teve duas chamadas extras, mas ambas fechavam
+      // todas as tools. Isso criava uma armadilha: se a própria LLM percebesse
+      // no primeiro desses passos que ainda faltava uma consulta legítima, a
+      // engine recusava a decisão correta com FINAL_TOOL_FORBIDDEN. Reserve uma
+      // dessas mesmas chamadas para conclusão ainda com a janela operacional
+      // aberta. O orçamento total não aumenta (1 chamada aberta + 1 autoria
+      // fechada substituem as 2 autorias fechadas), e nenhuma tool é escolhida
+      // pela engine: allowlist, autoridade, policy e grounding seguem iguais.
+      const OPEN_TOOL_COMPLETION_RESERVE = singleAuthor && llmFirst ? 1 : 0;
+      const FINAL_AUTHORSHIP_RETRY_CAP = singleAuthor && llmFirst ? 1 : 2;
+      const toolWindowLimit = (): number => (
+        brainMaxSteps + idempotentReuseStepCredits + OPEN_TOOL_COMPLETION_RESERVE
+      );
+      const duplicateLoopReachedCap = (tool: CentralQueryCall["tool"]): boolean => {
+        if (tool === "stock_search") return ++dupStockLoopCount >= 2;
+        if (tool === "vehicle_details") return ++dupDetailLoopCount >= 2;
+        if (tool === "vehicle_photos_resolve") return ++dupPhotoLoopCount >= 2;
+        return ++dupOtherLoopCount >= 2;
+      };
       const runQueryDedup = async (call: QueryCall): Promise<QueryResult> => {
         if (call.tool === "stock_search") {
           const fp = stockSearchFingerprint(call.input as Record<string, unknown>);
@@ -2382,11 +2538,18 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         toolExecCache.set(sig, res);
         return res;
       };
-      for (; brainSteps < brainMaxSteps; brainSteps++) {
+      for (; brainSteps < toolWindowLimit(); brainSteps++) {
         let step;
         let stepUnderstandingTrusted = false;
         try {
-          step = noteBrainStep(await withTimeout(brain.proposeNextStep(frameNow(), observations), limits.proposeTimeoutMs ?? 30_000, "propose: agent brain step exceeded timeout"));
+          const currentFrame = {
+            ...frameNow(),
+            toolControl: { lastReuse: lastToolReuse },
+          } satisfies TurnFrame;
+          // `currentFrame` conserva o valor para esta chamada; a próxima só o
+          // verá novamente se houver outro reuso real do cache.
+          lastToolReuse = null;
+          step = noteBrainStep(await withTimeout(brain.proposeNextStep(currentFrame, observations), limits.proposeTimeoutMs ?? 30_000, "propose: agent brain step exceeded timeout"));
         } catch (err) {
           // falha técnica do cérebro (timeout/transporte) -> sai do loop -> fallback seguro (nunca silêncio).
           // FASE 1: registra a causa de provedor sanitizada p/ o diagnóstico (não vira "resposta rejeitada por política").
@@ -2422,7 +2585,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             const missingInst = institutionalTopicsRequested(leadMessage).filter((t) => !institutionalObs.has(t));
             if (missingInst.length > 0) {
               for (const topic of missingInst) await resolveInstitutional(topic);
-              if (brainSteps + 1 < brainMaxSteps) continue; else break;
+              if (brainSteps + 1 < toolWindowLimit()) continue; else break;
             }
           }
           // Metadado semântico rejeitado já foi excluído acima. Não há uma
@@ -2459,7 +2622,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             frame.signals.mentionsMoreOptions === true && brainNeedsStockFact(),
             brainStoreInfoAct(),
           );
-          if (missingTool && brainSteps + 1 < brainMaxSteps) {
+          if (missingTool && brainSteps + 1 < toolWindowLimit()) {
             // A engine exige consistência com o ato que a própria LLM declarou, mas
             // nunca executa estoque por retomada, anúncio, memória ou regex.
             // ⭐AD-1: rótulo e contador vêm do REQUISITO QUE FALTOU (missingTool.tool), nunca de uma palavra do bloco.
@@ -2498,7 +2661,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // P0-2 (exceção sistêmica TIPADA): necessidade de grounding do engine AUTORIZA vehicle_details do key selecionado
             // (separada da intenção da LLM). Registra o key p/ o gate de tool liberar a consulta de aterramento.
             if (needDetail) { const detailKey = detailTarget.kind === "resolved" ? detailTarget.vehicleKey : frame.workingMemory.selectedVehicle?.vehicleKey; if (detailKey) systemDetailKeys.add(detailKey); }
-            if (needDetail && brainSteps + 1 < brainMaxSteps) { observations.push({ tool: "vehicle_details", ok: false, error: { code: "REQUIRED_TOOL_MISSING", message: needDetail } }); continue; }
+            if (needDetail && brainSteps + 1 < toolWindowLimit()) { observations.push({ tool: "vehicle_details", ok: false, error: { code: "REQUIRED_TOOL_MISSING", message: needDetail } }); continue; }
             if (needDetail) break;
             // Renderiza+valida a autoria do cérebro AQUI. Deny/fato ausente -> feedback tipado ao MESMO cérebro
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
@@ -2507,7 +2670,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           const acceptedStepDecision = llmFirst && !stepUnderstandingTrusted
             ? withoutUntrustedSemanticPayload(step.decision)
             : step.decision;
-          const authored = authorFromBrainDraft({ finalDecision: acceptedStepDecision, leadMessage, facts, identities, ctx: authoringContext(), proposedPrimaryIntent: acceptedBrainPrimaryIntent(), turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: llmFirst && brainNeedsStockFact(), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, qualifiedHandoffReadyFor, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
+          const authored = authorFromBrainDraft({ finalDecision: acceptedStepDecision, leadMessage, facts, identities, ctx: authoringContext(), proposedPrimaryIntent: acceptedBrainPrimaryIntent(), turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, adVehicleIdentity: adVehicleHint ?? null, searchExpectedThisTurn: llmFirst && brainNeedsStockFact(), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, qualifiedHandoffReadyFor, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
             if (authored.ok) {
               finalDecision = acceptedStepDecision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
@@ -2528,7 +2691,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             const fp = denyFingerprint(authored.feedback);
             if (seenDenyFingerprints.has(fp)) { repeatedDeny = true; break; }
             seenDenyFingerprints.add(fp);
-            if (brainSteps + 1 < brainMaxSteps) {
+            if (brainSteps + 1 < toolWindowLimit()) {
               const currentTurnAnchor = `REVISAO DO MESMO TURNO: o bloco atual do lead e "${leadMessage.slice(0, 280)}". Esta mensagem e feedback de validacao tecnica, nao uma nova ordem comercial.`;
               const retryFeedback = `${currentTurnAnchor}\n${effFeedback}`;
               observations.push({ tool: "response", ok: false, error: { code: "RESPONSE_REJECTED", message: retryFeedback } });
@@ -2633,10 +2796,20 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           if (llmFirst) {
             duplicateToolCallsBlocked += 1;
             if (call.tool === "stock_search") duplicateStockCallsBlocked += 1;
-            if (cachedResult) duplicateToolCallsServedFromCache += 1;
-            // O fato (ou erro real) da primeira execucao ja esta nas
-            // observacoes acumuladas. Nao reexecute, nao reinsira o fato e nao
-            // transforme idempotencia em um deny conversacional.
+            if (cachedResult) {
+              duplicateToolCallsServedFromCache += 1;
+              const reachedCap = duplicateLoopReachedCap(call.tool);
+              if (!reachedCap) {
+                lastToolReuse = { tool: call.tool, ok: cachedResult.ok, mode: "cache_reuse" };
+                grantIdempotentReuseStepCredit();
+                // O fato original continua uma única vez em `observations`.
+                // A fase de tools permanece aberta para a LLM decidir se
+                // finaliza ou se chama outra tool necessária ao mesmo ato.
+                continue;
+              }
+            }
+            // Sem resultado executado, ou após repetição patológica, encerra o
+            // loop de forma limitada. Nenhum adapter é reexecutado.
             break;
           }
           const dupCap = (): boolean => {
@@ -2720,8 +2893,14 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           duplicateStockCallsBlocked += 1;
           if (cachedStock) { duplicateToolCallsServedFromCache += 1; resultBySig.set(sig, cachedStock); }
           if (llmFirst) {
-            // A primeira observacao continua disponivel. A repeticao semantica
-            // encerra a fase de tools sem gerar uma nova rejeicao para a LLM.
+            const reachedCap = duplicateLoopReachedCap("stock_search");
+            if (cachedStock && !reachedCap) {
+              lastToolReuse = { tool: "stock_search", ok: cachedStock.ok, mode: "cache_reuse" };
+              grantIdempotentReuseStepCredit();
+              // Igualdade semântica (ex.: `SUV` vs `suv`) também é reuso
+              // idempotente: mantém a fase aberta e não duplica observações.
+              continue;
+            }
             break;
           }
           observations.push({ tool: "response", ok: false, error: { code: "DUP_STOCK_SEARCH", message: cachedStock && !cachedStock.ok
@@ -2827,7 +3006,6 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           ].join(" ");
           observations.push({ tool: "response", ok: false, error: { code: "FINAL_AUTHORSHIP_REQUIRED", message: finalContext } });
 
-          const FINAL_AUTHORSHIP_RETRY_CAP = 2;
           for (let attempt = 0; attempt < FINAL_AUTHORSHIP_RETRY_CAP; attempt++) {
             finalAuthorshipAttempts += 1;
             brainSteps += 1;
@@ -2884,7 +3062,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             const acceptedFinalDecision = llmFirst && !finalStepUnderstandingTrusted
               ? withoutUntrustedSemanticPayload(finalStep.decision)
               : finalStep.decision;
-            const authored = authorFromBrainDraft({ finalDecision: acceptedFinalDecision, leadMessage, facts, identities, ctx: authoringContext(), proposedPrimaryIntent: acceptedBrainPrimaryIntent(), turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: false, noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, qualifiedHandoffReadyFor, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
+            const authored = authorFromBrainDraft({ finalDecision: acceptedFinalDecision, leadMessage, facts, identities, ctx: authoringContext(), proposedPrimaryIntent: acceptedBrainPrimaryIntent(), turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, adVehicleIdentity: adVehicleHint ?? null, searchExpectedThisTurn: false, noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, qualifiedHandoffReadyFor, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
             if (authored.ok) {
               finalDecision = acceptedFinalDecision;
               authoredDecision = authored.decision;

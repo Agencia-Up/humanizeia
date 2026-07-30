@@ -17,6 +17,7 @@ import {
   resolveAdConfirmation,
   type AdIdentityProof,
   type AdIdentityTarget,
+  type VehicleTargetRuntimeFacts,
 } from "../src/domain/operational-context.ts";
 import type { QueryResult } from "../src/domain/decision.ts";
 import type { VehicleFact } from "../src/domain/types.ts";
@@ -128,6 +129,7 @@ function operational(input: {
   executionFailures?: string[];
   activeFilters?: Record<string, unknown>;
   shownVehicleKeys?: string[];
+  target?: VehicleTargetRuntimeFacts;
 }) {
   const fleet = buildGroundedFleet({
     previousGroundedVehicles: input.previousGrounded ?? [],
@@ -154,6 +156,7 @@ function operational(input: {
         confidence: 0.9,
         referenceKey: confirmation.vehicleKey,
       },
+      target: input.target,
     }),
   };
 }
@@ -169,6 +172,8 @@ function main(): void {
     JSON.stringify(before.context.ad));
   check("[1a] ausência de consulta é not_queried, nunca estoque vazio",
     before.context.stock.status === "not_queried" && before.context.stock.resultCount === 0);
+  check("[1b] atributo veicular omitido permanece desconhecido",
+    before.context.vehicleFactSemantics.omittedAttributeStatus === "unknown");
 
   const remembered = operational({
     facts: [],
@@ -329,9 +334,57 @@ function main(): void {
     && before.context.capabilities.automatedLeadFollowupEnabled === null
     && !("agentAsyncReturn" in (before.context.capabilities as Record<string, unknown>)));
 
+  check("[11a] sem resolucao canonica o alvo permanece none",
+    before.context.target.status === "none"
+    && before.context.target.vehicleKey === null
+    && before.context.target.candidateVehicleKeys.length === 0,
+    JSON.stringify(before.context.target));
+
+  const resolvedTarget = operational({
+    facts: [search([COMPASS], { marca: "Jeep", modelo: "Compass", anos: [2021] })],
+    // Deliberadamente sem AdIdentityProof: alvo conversacional utilizavel nao
+    // pode promover a versao estrita declarada pelo anuncio.
+    target: {
+      status: "resolved",
+      vehicleKey: AD_KEY,
+      candidateVehicleKeys: [AD_KEY],
+      source: "current_model_unique",
+      subjectModel: "Compass",
+    },
+  });
+  check("[11b] alvo resolvido e prova do anuncio sao eixos independentes",
+    resolvedTarget.context.target.status === "resolved"
+    && resolvedTarget.context.target.vehicleKey === AD_KEY
+    && resolvedTarget.context.ad.inventoryConfirmed === false,
+    JSON.stringify({ target: resolvedTarget.context.target, ad: resolvedTarget.context.ad }));
+
+  const ambiguousTarget = operational({
+    facts: [search([
+      COMPASS,
+      vehicle("rm:compass-2", "Jeep", "Compass", 2022, "Longitude Flex"),
+    ], { modelo: "Compass" })],
+    target: {
+      status: "ambiguous",
+      vehicleKey: null,
+      candidateVehicleKeys: [AD_KEY, "rm:compass-2"],
+      source: "ambiguous",
+      subjectModel: "Compass",
+    },
+  });
+  check("[11c] ambiguidade preserva candidatos sem escolher chave",
+    ambiguousTarget.context.target.status === "ambiguous"
+    && ambiguousTarget.context.target.vehicleKey === null
+    && ambiguousTarget.context.target.candidateVehicleKeys.length === 2,
+    JSON.stringify(ambiguousTarget.context.target));
+
   const serialized = JSON.stringify(before.context);
   check("[12] contexto é dado neutro, sem instrução de condução",
     !/pergunte|ofereça|ofereca|conduza|diga |responda |transfira/i.test(serialized), serialized);
+
+  check("[12a] semantica factual nao escolhe tool, texto ou efeito",
+    serialized.includes('\"vehicleFactSemantics\":{\"omittedAttributeStatus\":\"unknown\"}')
+    && !/stock_search|vehicle_details|handoff|send_media/.test(JSON.stringify(before.context.vehicleFactSemantics)),
+    JSON.stringify(before.context.vehicleFactSemantics));
 
   console.log(`\n== F2.82: ${ok} OK | ${fail} FALHA ==`);
   if (fail > 0) {

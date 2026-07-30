@@ -279,6 +279,10 @@ check("horario Brasil de madrugada UTC e noite local", getBrazilChannelTime("202
 check("meia-noite no Brasil continua noite", getBrazilChannelTime("2026-07-16T03:15:00.000Z").period === "noite");
 check("horario Brasil de manha", getBrazilChannelTime("2026-07-15T14:00:00.000Z").period === "manha");
 check("horario Brasil de tarde", getBrazilChannelTime("2026-07-15T17:00:00.000Z").period === "tarde");
+check("saudacao Brasil de madrugada e Boa noite", getBrazilChannelTime("2026-07-16T02:00:00.000Z").greeting === "Boa noite");
+check("saudacao Brasil de manha e Bom dia", getBrazilChannelTime("2026-07-15T14:00:00.000Z").greeting === "Bom dia");
+check("saudacao Brasil de tarde e Boa tarde", getBrazilChannelTime("2026-07-15T17:00:00.000Z").greeting === "Boa tarde");
+check("data invalida nao inventa saudacao", getBrazilChannelTime("nao-e-data").greeting === null);
 check("saudacao contraditoria volta para retry factual", invalidBrazilGreeting("Boa tarde!", "2026-07-16T03:15:00.000Z")?.includes("boa noite") === true);
 
 const persisted = state();

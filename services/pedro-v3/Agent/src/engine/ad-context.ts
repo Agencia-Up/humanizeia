@@ -227,29 +227,41 @@ function identityTokens(value: string): string[] {
  * trim. This keeps compound base models (Grand Siena, Corolla Cross, City
  * Hatchback) distinct from actual versions.
  */
-export function buildAdIdentityTarget(ad: AdContext | null | undefined): AdIdentityTarget | null {
+export function buildAdIdentityTarget(
+  ad: AdContext | null | undefined,
+  catalogConstraints?: Pick<CommercialConstraints, "marca" | "modelos">,
+): AdIdentityTarget | null {
   if (!ad) return null;
   const fullText = adText(ad);
   const market = resolveAdVehicleFromMarket(fullText);
-  if (!market) return null;
+  // The market taxonomy is finite by design. The tenant catalog is the
+  // authoritative fallback for models it does not know yet (for example, a
+  // newly added/imported model). It is safe only when the catalog extraction
+  // resolved one model unambiguously; multiple alternatives never become an
+  // ad identity by guesswork.
+  const catalogModels = catalogConstraints?.modelos?.filter((model) => model.trim().length > 0) ?? [];
+  const catalogModel = catalogModels.length === 1 ? catalogModels[0] : null;
+  const modelo = market?.modelo ?? catalogModel;
+  if (!modelo) return null;
+  const marca = market?.marca ?? (catalogConstraints?.marca ? canonicalBrand(catalogConstraints.marca) : null);
 
   const semanticIdentity = typeof ad.vehicleQuery === "string" && ad.vehicleQuery.trim()
     ? ad.vehicleQuery.trim()
     : null;
   const years = adYears(semanticIdentity ?? fullText);
   const ano = years.length > 0 ? years[years.length - 1] : null;
-  const identity = semanticIdentity ?? [market.marca, market.modelo, ano].filter(Boolean).join(" ");
+  const identity = semanticIdentity ?? [marca, modelo, ano].filter(Boolean).join(" ");
 
   const excluded = new Set([
-    ...identityTokens(market.marca),
-    ...identityTokens(market.modelo),
+    ...identityTokens(marca ?? ""),
+    ...identityTokens(modelo),
     ...(ano == null ? [] : [String(ano)]),
   ]);
   const variantTokens = semanticIdentity
     ? [...new Set(identityTokens(semanticIdentity).filter((t) => !excluded.has(t)))]
     : [];
 
-  return { identity, marca: market.marca || null, modelo: market.modelo, ano, variantTokens };
+  return { identity, marca, modelo, ano, variantTokens };
 }
 
 /**

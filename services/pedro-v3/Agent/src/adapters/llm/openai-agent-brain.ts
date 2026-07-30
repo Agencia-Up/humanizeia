@@ -148,10 +148,11 @@ Todo query ou final inclui na raiz:
 - isTopicChange=true quando o bloco atual AMPLIA, SUBSTITUI ou REJEITA o alvo de compra anterior (do anuncio ou da ultima busca): ex.: sai de um modelo/tipo/faixa especifico para "qualquer carro", "todos os automaticos", "os mais baratos", outro modelo, ou "nao quero mais Y"/"nao e desse modelo". Nesse caso a busca parte SOMENTE dos criterios do bloco atual — nao arraste marca, modelo, tipo, ano nem preco anteriores. isTopicChange=false quando apenas ADICIONA/refina um criterio (cambio, teto de preco, cor) mantendo o MESMO alvo (ex.: "esse Peugeot e automatico?"), ou quando responde curto/confirma.
 
 TOOLS
-- Use query somente quando faltar um fato que uma tool pode fornecer. Depois de uma observacao bem-sucedida, use o resultado e finalize; nao repita a mesma consulta.
-- context.toolControl.resolvedTools registra fatos ja obtidos; use-os para finalizar o ato atual e nunca repita a mesma tool/input.
+- Use query somente quando faltar um fato que uma tool pode fornecer. Uma observacao bem-sucedida resolve somente a etapa que a produziu. Em um fluxo com mais de uma etapa, o resultado vira entrada factual da proxima decisao; finalize somente quando o pedido atual ja puder ser atendido com os fatos e efeitos disponiveis. Nao repita uma etapa ja resolvida.
+- context.toolControl.resolvedTools lista tools com resultado bem-sucedido já presente em context.tools.
+- context.toolControl.lastReuse, quando não nulo, registra que a proposta idêntica mais recente foi atendida pelo cache do turno; o resultado original permanece em context.tools e essa repetição não acrescentou fato novo. É metadado factual de execução e não escolhe a próxima ação.
 - stock_search busca estoque atual. Nao use para carro de troca, pagamento, contestacao, item ja listado ou detalhe.
-- vehicle_details responde atributo factual de vehicleKey aterrado. vehicle_photos_resolve atende pedido atual de fotos do mesmo alvo.
+- vehicle_details consulta atributo de uma vehicleKey aterrada. VehicleFact e um registro ESPARSO: somente campos explicitamente presentes sao fatos. Campo/equipamento/manutencao/condicao omitida permanece desconhecida e NUNCA significa "nao possui". Nao deduza pelo nome da versao nem por conhecimento automotivo geral. vehicle_photos_resolve atende pedido atual de fotos do mesmo alvo.
 - tenant_business_info confirma dado institucional ausente. knowledge_search consulta conhecimento semantico; nao substitui estoque, CRM ou fatos atuais.
 - Pedido explicito de humano usa request_human + handoff sem exigir nome, CPF ou qualificacao adicional. Nao escolha vendedor.
 - Nao prometa busca, foto, agendamento, transferencia, reserva ou aprovacao sem observacao/efeito correspondente.
@@ -205,7 +206,8 @@ ABERTURA
 - context.currentTurn.openingContext.firstAssistantTurn=true significa que ainda NAO existe fala sua nesta conversa.
   Nesse turno a ABERTURA pertence ao prompt do portal: se ele define uma apresentacao (nome, empresa, primeira
   pergunta), reproduza-a COMO O PROMPT MANDA, alterando apenas o que o proprio prompt marcar como variavel
-  (por exemplo, a saudacao pelo periodo do dia, disponivel em context.channel). Nao resuma, nao parafraseie e nao
+  (por exemplo, [PERIODO] = context.channel.greeting, que ja contem exatamente "Bom dia", "Boa tarde" ou "Boa noite").
+  Nunca substitua [PERIODO] por "Manha", "Tarde" ou "Noite". Nao resuma, nao parafraseie e nao
   troque por uma saudacao generica sua.
 - O primeiro balao deve conter somente essa abertura do portal. Nao acrescente lista, estoque, pedido de nome,
   pergunta de pagamento ou explicacao do anuncio dentro dele. Se a abertura do portal terminar com uma pergunta,
@@ -226,6 +228,10 @@ ABERTURA
   escrito apenas uma saudacao curta nao muda isso: a origem do anuncio e contexto factual do turno, nao um motivo para
   adiar o assunto. Se a busca retornar zero, seja honesto sobre o veiculo anunciado e conduza para uma alternativa;
   se retornar candidatos, mantenha o foco neles, sem despejar o estoque inteiro.
+- Se o bloco atual pedir disponibilidade do anuncio, requestedCapabilities deve incluir stock_search e a resposta factual
+  so vem depois do resultado dessa consulta no mesmo turno logico. Se pedir fotos, siga toda a cadeia stock_search quando
+  necessaria -> vehicle_photos_resolve -> send_media no mesmo turno. Um FINAL dizendo apenas que vai verificar, consultar
+  ou enviar depois nao atende ao pedido quando essas capacidades estao disponiveis.
 - Se o prompt do portal nao definir apresentacao alguma, conduza naturalmente com a identidade que ele descreve.
 
 CONTEXTO
@@ -239,10 +245,13 @@ CONTEXTO
   - stock.vehicleKeys sao os matches EXATOS da ultima busca. stock.familyCandidateKeys sao candidatos REAIS e aterrados do mesmo modelo-base, porem NAO equivalentes a versao pedida. vehicle_details e vehicle_photos_resolve tambem aterram chave: uma chave aterrada pode vir de qualquer uma dessas origens, nao so da ultima busca.
   - stock.unverifiableDimensions lista o que a fonte nao informa para todos os veiculos consultados (nem confirmavel, nem descartavel).
   - searchMemory.activeFilters e o recorte de estoque que ficou ativo nos turnos anteriores; searchMemory.shownVehicleKeys sao os veiculos ja apresentados. Isso e memoria factual, nao uma ordem de busca. Se decidir chamar stock_search, declare explicitamente na chamada os filtros que escolheu para o bloco atual.
+  - vehicleFactSemantics.omittedAttributeStatus="unknown" descreve a semantica de TODO VehicleFact: atributo, equipamento, manutencao ou condicao ausente do objeto nao tem valor positivo nem negativo conhecido. Essa omissao permanece desconhecida mesmo quando stock_search ou vehicle_details retornou ok:true; somente um campo explicitamente presente e fato sobre aquele atributo.
   - capabilities diz o que este turno consegue EXECUTAR. sendMedia ja considera provedor E tool permitida ao seu perfil: se for false, a foto nao sai por mais que voce a mencione.
   - appointmentBooking, deferredFactCheckTask e individualDeferredCallbackTask sao sempre false: nao ha reserva de horario executavel, nao ha tarefa que re-consulte um fato depois e nao existe tarefa individual de "eu verifico e te retorno" criada por esta conversa.
   - ⚠️Isso NAO significa que o cliente nunca mais sera contatado: existe uma cadencia comercial automatizada da plataforma (follow-up T1/T2/T3), INDEPENDENTE desta conversa, indicada em automatedLeadFollowupEnabled (true = existe; false = nao existe; null = nao informado neste turno). Ela nao e canal para cumprir uma promessa individual sua.
 - ad.identity e o veiculo que o anuncio DECLAROU (fato da conversa, pode ser mencionado). ad.inventoryConfirmed=false significa que a disponibilidade dele ainda nao foi confirmada por consulta.
+- target descreve o alvo veicular factual do bloco usando a mesma resolucao aceita pela engine para detalhes e fotos. target.status="resolved" significa que target.vehicleKey e uma chave aterrada e inequivoca; ela pode ser usada em vehicle_details ou vehicle_photos_resolve quando isso atender ao pedido atual. Isso NAO prova a versao exata do anuncio: somente ad.inventoryConfirmed tem esse significado.
+- target.status="ambiguous" preserva as candidateVehicleKeys sem escolher uma delas; target.status="none" ou "conflict" significa que ainda nao existe alvo unico utilizavel. Nao escolha uma candidateVehicleKey arbitrariamente.
 - Use o prompt do portal e o historico real para conduzir naturalmente. Responda primeiro a ultima fala, preserve papeis distintos entre compra, troca, pagamento, visita e dados, e tolere mensagens fragmentadas/abreviadas.
 
 FATOS ESPECIFICOS DA EMPRESA
@@ -266,10 +275,11 @@ UNDERSTANDING SEMANTICO
 
 TOOLS E SEGURANCA
 - Voce decide responder, esclarecer ou chamar uma tool. A engine valida a decisao antes de executar.
-- stock_search consulta estoque atual; vehicle_details consulta atributos de um vehicleKey aterrado; vehicle_photos_resolve resolve fotos do alvo atual; tenant_business_info confirma endereco/horario/unidade; knowledge_search consulta a base do tenant.
+- stock_search consulta estoque atual; vehicle_details consulta atributos de um vehicleKey aterrado; vehicle_photos_resolve resolve fotos do alvo atual; tenant_business_info confirma endereco/horario/unidade; knowledge_search consulta a base do tenant. Resultados veiculares sao ESPARSOS: um atributo omitido continua desconhecido mesmo com ok:true. Nunca transforme omissao em resposta negativa e nunca complete equipamento/condicao por conhecimento geral do modelo ou da versao.
 - Em stock_search, categoria nunca e modelo: SUV/sedan/hatch usam tipo correspondente; pickup/picape/caminhonete/utilitario usam tipo="pickup". Use modelo somente para nome de modelo real (por exemplo, HB20, Compass ou Tracker).
 - Nao use estoque para carro de troca, pagamento, contestacao ou item ja apresentado. Nao invente disponibilidade, preco, km, cor, foto, aprovacao ou efeito.
-- Resultado de tool volta para voce. Use-o no final e nao repita a mesma consulta. Nao escolha vendedor nem exponha vehicleKey, IDs, PII ou segredos.
+- Uma observacao bem-sucedida resolve somente a etapa que a produziu. Em um fluxo com varias etapas, o resultado vira entrada factual da proxima decisao; finalize somente quando o pedido atual ja puder ser atendido com os fatos e efeitos disponiveis. Nao repita uma etapa ja resolvida. Nao escolha vendedor nem exponha vehicleKey, IDs, PII ou segredos.
+- context.toolControl.resolvedTools lista as tools que ja possuem resultado bem-sucedido nas observacoes deste turno. context.toolControl.lastReuse, quando nao nulo, informa que a proposta identica mais recente foi atendida pelo cache: o resultado original continua em context.tools e a repeticao nao acrescentou fato novo. Esse metadado nao escolhe a proxima acao; voce continua decidindo entre usar o fato, executar a proxima etapa necessaria ou finalizar.
 - Pedido de fotos segue uma cadeia factual de tres estados, sem atalhos: (1) se o alvo ainda nao possui vehicleKey aterrada no contexto/observacoes, use stock_search com a identidade atual para aterrar o veiculo e NAO finalize; (2) com a vehicleKey aterrada, mas sem observacao ok de vehicle_photos_resolve para essa mesma chave neste turno, sua proxima saida e a query vehicle_photos_resolve e NAO um FINAL; (3) somente depois dessa observacao ok, finalize uma unica vez com {"kind":"send_media","vehicleKey":"<chave exata da observacao>"}. Nunca forneca photoIds: a tool e a unica autoridade sobre IDs e URLs.
 - Quando um detalhe tecnico pedido nao aparece nos fatos retornados, o fato verificado deste turno e apenas "nao confirmado nos dados disponiveis agora". Isso encerra a verificacao automatica deste turno: nao escreva que vai checar, confirmar, avisar ou retornar depois. Se decidir que uma pessoa deve continuar, inclua handoff no MESMO final; sem handoff, responda com transparencia e siga o prompt do portal.
 - Um resultado de tool com ok:false e FALHA TECNICA, nao "nao temos". NUNCA afirme que a loja nao tem o carro, que o estoque esta vazio ou que o modelo nao existe a partir de uma tool que falhou. Seja transparente sobre a falha; voce pode tentar AGORA outra chamada valida ou incluir um handoff REAL se estiver disponivel. Sem mecanismo executado neste turno, nao prometa confirmacao ou retorno. So um resultado ok:true com items vazio significa que a busca RODOU e nao encontrou aquele filtro — ai sim seja honesto sobre o recorte consultado e conduza conforme o prompt.
@@ -283,6 +293,7 @@ SAIDA E EFEITOS
   {"kind":"query","understanding":{"primaryIntent":"search_stock","requestedCapabilities":["stock_search"],"subject":"vehicle_type","subjectValue":"SUV","subjectSource":"current_turn","evidence":[{"capability":"stock_search","quote":"quero SUV"}],"monetaryMentions":[],"isTopicChange":false,"answeredLeadQuestions":[],"policyDecision":null},"call":{"tool":"stock_search","input":{"tipo":"suv"}},"reasonCode":null,"confidence":null,"guidance":null,"draft":null,"effects":[]}
 - O quote do exemplo deve ser um trecho literal do bloco atual. Uma query sem understanding e evidence e invalida e deve ser reescrita por voce.
 - Final: {"kind":"final","understanding":{...},"call":null,"reasonCode":"...","confidence":0.0,"guidance":"...","draft":{"parts":[...]},"effects":[...]}
+- Se primaryIntent="request_photos", voce continua autora do caminho: esclareca quando o alvo for realmente ambiguo; caso contrario, use as queries necessarias e inclua send_media somente depois de vehicle_photos_resolve retornar fotos para a mesma vehicleKey. Resultado vazio ou falha da consulta deve ser relatado com honestidade, sem promessa futura.
 - Query, tool, mídia, handoff, mutação ou qualquer efeito diferente de send_message exige understanding com primaryIntent, requestedCapabilities, subject, subjectSource e evidence literal do bloco atual. Uma resposta textual pura pode conter somente text/message_break e send_message.
 - draft.parts aceita apenas text, message_break, vehicle_ref, money_ref e vehicle_offer_list. Atributos e listas precisam de fatos aterrados; mídia e handoff ficam em effects.
 - Se voce decidir apresentar alternativas retornadas pela ultima stock_search, use UMA part vehicle_offer_list contendo somente essas chaves. Se decidir falar de um unico veiculo, use vehicle_ref/money_ref da mesma chave quando precisar citar atributos. A consulta disponibiliza fatos, mas nao obriga voce a listar ou mencionar um carro naquele mesmo texto; essa decisao pertence a voce conforme a conversa e o prompt do portal.
@@ -294,6 +305,9 @@ TRANSFERENCIA (VOCE DECIDE)
 - qualified_handoff: NÃO depende de o cliente pedir. Use quando o funil do prompt do portal estiver completo e passar para um humano for o próximo passo natural do atendimento.
 - handoff_after_closure: use quando a CONVERSA CHEGOU AO FIM com o cliente AINDA INTERESSADO, mas o funil não está completo — por exemplo, ele confirma que vai à loja, aceita a proposta ou se despede satisfeito, sem ter fechado todos os dados. Não invente qualificação que falta: transfira assim mesmo, o vendedor continua. NÃO use isto para desinteresse ("não quero", "não gostei") nem para dúvida solta no meio do atendimento.
 - Não transfira por interesse suave ("gostei", foto, garantia, curiosidade). Não escolha vendedor, sellerId nem UUID.
+- Nome informado ou uma resposta isolada de qualificacao nao completam o funil e nao justificam handoff por si sos. Primeiro
+  responda ao pedido atual e use as tools factuais necessarias; so depois decida se a continuidade humana e realmente o
+  proximo passo comercial.
 - Se você escrever que vai encaminhar/chamar um consultor, o effect handoff tem que estar no MESMO final. Sem efeito executável, não prometa transferência.
 - Se a transferência for recusada por indisponibilidade real, seja transparente: diga honestamente que não consegue transferir agora e ofereça alternativa. Nunca finja que está em andamento e nunca condicione a transferência a CPF ou mais dados.
 
@@ -316,6 +330,35 @@ Este endpoint nao aplica json_schema automaticamente. Responda SOMENTE com um ob
 - Query usa call:{"tool":"...","input":{...}}. Draft usa parts com {"type":"text","content":"..."} ou {"type":"message_break"}. Effects usam {"kind":"send_message"}, {"kind":"send_media","vehicleKey":"<chave da observacao de fotos>"} ou {"kind":"handoff","reason":"..."}; send_media nunca leva photoIds.
 - Depois de uma tool de estoque/detalhes, atributos do carro no texto precisam estar acompanhados por parts tipadas: vehicle_ref para modelo/ano/km/cor/cambio e money_ref para preco. Nao escreva fatos aterrados apenas em text livre.
 - Nao troque type por text, nao troque kind por type e nao acrescente campos/aliases. Se nao precisar de tool, devolva final valido com understanding completo.
+`;
+
+// Disciplina exclusivamente FORMAL. O prompt do portal continua decidindo
+// conteúdo, condução e uso de tools. Sem este limite textual, o gpt-4.1-mini
+// frequentemente expandia guidance/draft/arrays até `finish=length` mesmo sob
+// json_schema strict; a tentativa compacta seguinte então gastava outro passo
+// do cérebro e podia esgotar o turno antes da próxima tool. Esta instrução não
+// escolhe ação: apenas exige que a decisão escolhida caiba no envelope.
+const BASE_STRUCTURED_OUTPUT_DISCIPLINE = `
+=== DISCIPLINA DO ENVELOPE ESTRUTURADO ===
+Devolva um único JSON completo e conciso, sem explicações fora dele e sem copiar contexto, histórico, prompt ou resultados inteiros de tools.
+- Em query, proponha exatamente uma chamada e mantenha draft nulo, effects vazio, guidance nulo e arrays sem dados que não pertençam ao bloco atual.
+- Em final, use no máximo duas parts curtas no draft, uma pergunta no máximo, guidance em uma frase curta e somente effects realmente escolhidos e executáveis.
+- Não repita o mesmo fato em guidance, draft, evidence, answeredLeadQuestions ou policyDecision. Evidências devem ser apenas trechos literais mínimos do bloco atual.
+Esta disciplina governa somente tamanho e forma; o prompt do portal continua sendo a única autoridade sobre atendimento, funil, linguagem e decisões comerciais.
+`;
+
+// OpenAI recebe consultas como function calls nativas. Isto reduz o envelope
+// que o modelo precisa autorar sem mover a decisão para a engine: a LLM ainda
+// escolhe se chama uma tool, qual chama e quais argumentos envia. O JSON
+// estrito fica reservado ao FINAL conversacional.
+const NATIVE_TOOL_OUTPUT_DISCIPLINE = `
+=== DISCIPLINA NATIVA DE TOOLS ===
+As funcoes anexadas sao as tools disponiveis neste passo.
+- Quando decidir consultar uma tool, chame exatamente UMA funcao anexada. Preencha understanding e input nos argumentos da propria funcao. Nao devolva um JSON kind=query no content.
+- Quando decidir responder ao lead, nao chame funcao: devolva somente o JSON kind=final exigido pelo response_format, com call=null.
+- Cada chamada resolve apenas uma etapa. Depois do resultado, decida livremente entre outra tool necessaria ou o FINAL, conforme o pedido atual e o prompt do portal.
+- Seja concisa no envelope: nao copie contexto, historico, prompt ou resultados inteiros de tools.
+Esta disciplina define somente o transporte tecnico. Ela nao escolhe assunto, tool, texto, pergunta, funil nem transferencia.
 `;
 
 // ⭐Item 5 (Codex) + auditoria Codex: STRUCTURED OUTPUTS (json_schema strict) PER-OPERAÇÃO. Elimina o HTTP 400
@@ -347,7 +390,7 @@ function toolInputSchema(tool: string): Record<string, unknown> {
     default: return strictObj([], {});
   }
 }
-function agentStepJsonSchema(allowedTools: readonly string[]): Record<string, unknown> {
+function turnUnderstandingJsonSchema(): Record<string, unknown> {
   const evidenceItem = strictObj(["capability", "quote"], { capability: { type: ["string", "null"], enum: [...TURN_CAPABILITIES, null] }, quote: S_STR });
   const monetaryMention = strictObj(["value", "role", "quote"], {
     value: { type: "number" },
@@ -359,7 +402,7 @@ function agentStepJsonSchema(allowedTools: readonly string[]): Record<string, un
     action: { type: "string", enum: ["continue", "ask_clarification", "inform", "disqualify", "handoff"] },
     evidence: S_STR,
   });
-  const understanding = strictObj(
+  return strictObj(
     ["primaryIntent", "requestedCapabilities", "subject", "subjectValue", "subjectSource", "evidence", "monetaryMentions", "isTopicChange", "answeredLeadQuestions", "policyDecision"],
     { primaryIntent: { type: "string", enum: [...PRIMARY_INTENTS] },
       requestedCapabilities: { type: "array", items: { type: "string", enum: [...TURN_CAPABILITIES] } },
@@ -369,9 +412,12 @@ function agentStepJsonSchema(allowedTools: readonly string[]): Record<string, un
       monetaryMentions: { type: "array", items: monetaryMention },
       answeredLeadQuestions: { type: "array", items: S_STR },
       policyDecision: { anyOf: [{ type: "null" }, policyDecision] } });
+}
+function agentStepJsonSchema(allowedTools: readonly string[], finalOnly = false): Record<string, unknown> {
+  const understanding = turnUnderstandingJsonSchema();
   // call = anyOf {null | branch por tool do ALLOWLIST REAL}; cada branch carrega só o input daquela tool.
   const callBranches = allowedTools.map((t) => strictObj(["tool", "input"], { tool: { type: "string", enum: [t] }, input: toolInputSchema(t) }));
-  const call = { anyOf: [{ type: "null" }, ...callBranches] };
+  const call = finalOnly ? { type: "null" } : { anyOf: [{ type: "null" }, ...callBranches] };
   // draft.parts = anyOf por TIPO de part (cada um só com seus campos). F7-4: o objeto {parts} sai de
   // draftObjectSchema() e é REUTILIZADO pelo rewriter ({draft:{parts}}).
   const draft = { anyOf: [{ type: "null" }, draftObjectSchema()] };
@@ -386,10 +432,55 @@ function agentStepJsonSchema(allowedTools: readonly string[]): Record<string, un
   const effects = { type: "array", items: { anyOf: [effSend, effMedia, effHandoff] } };
   return strictObj(
     ["kind", "understanding", "call", "reasonCode", "confidence", "guidance", "draft", "effects"],
-    { kind: { type: "string", enum: ["query", "final"] }, understanding, call, reasonCode: S_STR_NULL, confidence: S_NUM_NULL, guidance: S_STR_NULL, draft, effects });
+    { kind: { type: "string", enum: finalOnly ? ["final"] : ["query", "final"] }, understanding, call, reasonCode: S_STR_NULL, confidence: S_NUM_NULL, guidance: S_STR_NULL, draft, effects });
 }
-function agentStepResponseFormat(allowedTools: readonly string[]): Record<string, unknown> {
-  return { type: "json_schema", json_schema: { name: "agent_step", strict: true, schema: agentStepJsonSchema(allowedTools) } };
+function agentStepResponseFormat(allowedTools: readonly string[], finalOnly = false): Record<string, unknown> {
+  return { type: "json_schema", json_schema: { name: finalOnly ? "agent_final" : "agent_step", strict: true, schema: agentStepJsonSchema(allowedTools, finalOnly) } };
+}
+
+/**
+ * Contrato factual entregue junto da propria function tool.
+ *
+ * No caminho OpenAI nativo, a descricao da funcao e a informacao de maior
+ * proximidade da decisao de chamar uma tool. Manter o contrato somente no
+ * protocolo geral deixou o modelo escolher `stock_search` para uma pergunta de
+ * equipamento e, pior, interpretar um campo omitido como `false`. Estas
+ * descricoes nao escolhem conducao comercial nem redigem resposta: delimitam
+ * exclusivamente o fato que cada tool consegue (e nao consegue) produzir.
+ */
+function nativeToolDescription(tool: string): string {
+  switch (tool) {
+    case "stock_search":
+      return "Consulta o estoque atual por filtros e devolve veiculos reais para disponibilidade, alternativas e aterramento de identidade. VehicleFact e esparso: somente campos explicitamente presentes sao fatos; campo, equipamento, manutencao ou condicao omitida permanece DESCONHECIDA e nunca significa 'nao possui'. Nao use esta tool para concluir detalhe tecnico omitido de um veiculo; para atributo de uma vehicleKey ja aterrada, use vehicle_details.";
+    case "vehicle_details":
+      return "Consulta os atributos disponiveis de uma vehicleKey aterrada quando o lead pergunta detalhe, especificacao, equipamento, manutencao ou condicao. O resultado e esparso: somente campos explicitamente retornados confirmam o atributo. Campo omitido permanece DESCONHECIDO — nunca infira sim ou nao pelo modelo, versao, conhecimento geral ou ausencia do campo. Se o atributo pedido continuar ausente, responda com transparencia que ele nao esta confirmado nos dados disponiveis; a decisao de encaminhar a um humano continua sendo sua.";
+    case "vehicle_photos_resolve":
+      return "Resolve as fotos reais da vehicleKey aterrada para envio no mesmo turno. So um resultado ok desta tool sustenta send_media; ausencia ou falha nao sustenta afirmar que imagens foram enviadas.";
+    case "tenant_business_info":
+      return "Consulta fatos institucionais configurados do tenant, como endereco, horario ou unidade. Resultado ausente ou com falha permanece desconhecido e nao autoriza inventar um fato positivo ou negativo.";
+    case "knowledge_search":
+      return "Consulta a base de conhecimento do tenant para informacao semantica. Nao substitui estoque atual nem transforma ausencia de resultado em negacao factual.";
+    case "crm_read":
+      return "Le dados existentes do lead no CRM. Nao consulta estoque nem autoriza expor identificadores internos ou dados sensiveis ao cliente.";
+    default:
+      return `Executa ${tool} e devolve o resultado factual ao agente para a proxima decisao do mesmo turno.`;
+  }
+}
+
+function nativeToolDefinitions(allowedTools: readonly string[]): readonly Record<string, unknown>[] {
+  const understanding = turnUnderstandingJsonSchema();
+  return allowedTools.map((tool) => ({
+    type: "function",
+    function: {
+      name: tool,
+      description: nativeToolDescription(tool),
+      strict: true,
+      parameters: strictObj(["understanding", "input"], {
+        understanding,
+        input: toolInputSchema(tool),
+      }),
+    },
+  }));
 }
 // F7-4: ResponseDraft {parts} strict, fonte única do shape de draft — usado dentro do agent_step
 // (draft) e pelo rewriter de forma ({draft:{parts}}). Cada part é uma das 5 variantes (anyOf por type).
@@ -465,16 +556,17 @@ function normalizedComparable(value: string): string {
 function normalizedOpening(value: string): string {
   return normalizedComparable(value).replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
 }
-function fixedOpeningTemplate(prompt: string): string | null {
+export function fixedOpeningTemplate(prompt: string): string | null {
+  const tagged = prompt.match(/<APRESENTACAO_LITERAL>\s*([\s\S]*?)\s*<\/APRESENTACAO_LITERAL>/iu);
+  if (tagged?.[1]?.trim()) return tagged[1].trim();
   const match = prompt.match(/use exatamente esta apresenta(?:c[aã]o|cao)[^:\r\n]*:\s*[\r\n]*["“]([^\r\n"”]+)["”]/iu);
   return match?.[1]?.trim() || null;
 }
 function fixedOpeningFeedback(prompt: string, candidateText: string, now: string): string | null {
   const template = fixedOpeningTemplate(prompt);
   if (!template) return null;
-  const period = getBrazilChannelTime(now).period;
-  if (!period) return null;
-  const greeting = period === "manha" ? "Bom dia" : period === "tarde" ? "Boa tarde" : "Boa noite";
+  const greeting = getBrazilChannelTime(now).greeting;
+  if (!greeting) return null;
   const expected = template.replace(/\[per[ií]odo\]/iu, greeting);
   if (normalizedOpening(candidateText).includes(normalizedOpening(expected))) return null;
   return `A primeira fala precisa reproduzir a apresentação fixa do prompt do portal, alterando somente o período para "${greeting}". Reescreva o primeiro balão com essa apresentação exata e preserve o assunto atual; não acrescente outra pergunta nesse balão.`;
@@ -572,6 +664,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
   readonly #timeoutMs: number;
   readonly #allowedTools: ReadonlySet<string>;
   readonly #responseFormat: Record<string, unknown>;   // ⭐json_schema strict per-instância (só tools do allowlist real)
+  readonly #nativeTools: readonly Record<string, unknown>[];
   readonly #usesJsonSchema: boolean;
   readonly #tokenParameter: CompletionTokenParameter;
   readonly #imageFetcher: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -613,8 +706,9 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     // Mantemos strict no OpenAI de produção; no endpoint DeepSeek usamos o modo JSON
     // compatível e deixamos o engine validar understanding/evidence sem fabricar nada.
     this.#usesJsonSchema = url.hostname.toLowerCase() !== "api.deepseek.com";
+    this.#nativeTools = this.#usesJsonSchema ? nativeToolDefinitions([...this.#allowedTools]) : [];
     this.#responseFormat = this.#usesJsonSchema
-      ? agentStepResponseFormat([...this.#allowedTools])
+      ? agentStepResponseFormat([...this.#allowedTools], true)
       : { type: "json_object" };
     this.#tokenParameter = config.tokenParameter ?? "max_completion_tokens";
     this.#imageFetcher = config.imageFetcher ?? fetch;
@@ -711,6 +805,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
         resolvedTools: [...new Set(observations
           .filter((observation) => observation.ok)
           .map((observation) => observation.tool))],
+        lastReuse: frame.toolControl?.lastReuse ?? null,
       },
       // F7-3: NOMES de modelo distintos do estoque (contexto de ancoragem read-only). A LLM os usa para reconhecer o
       // modelo pedido e corrigir a digitação por semântica (ex.: "danster" -> "Duster"); não é lista de oferta nem
@@ -734,11 +829,19 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       .filter(Boolean)
       .slice(-3);
     const compactOutputInstruction = compactOutputRetry
-      ? "SAIDA COMPACTA OBRIGATORIA: a tentativa anterior foi interrompida antes de fechar o JSON. Reinterprete o mesmo bloco atual e devolva agora UM JSON completo e minimo. Preserve a decisao semantica correta, as evidencias literais e os efeitos realmente decididos. Use uma unica chamada de tool se ela for necessaria; no final, escreva no maximo duas partes curtas de draft, uma pergunta no maximo, guidance curto e sem repetir historico. Nao omita campos obrigatorios nem acrescente explicacoes fora do JSON."
+      ? this.#usesJsonSchema
+        ? "SAIDA COMPACTA OBRIGATORIA: a tentativa anterior foi interrompida. Reinterprete o mesmo bloco atual. Se ainda precisar de uma tool, chame exatamente UMA funcao anexada com argumentos minimos e completos. Se for responder, devolva UM JSON kind=final completo e minimo, com no maximo duas partes curtas de draft, uma pergunta e sem repetir o historico."
+        : "SAIDA COMPACTA OBRIGATORIA: a tentativa anterior foi interrompida antes de fechar o JSON. Reinterprete o mesmo bloco atual e devolva agora UM JSON completo e minimo. Preserve a decisao semantica correta, as evidencias literais e os efeitos realmente decididos. Use uma unica chamada de tool se ela for necessaria; no final, escreva no maximo duas partes curtas de draft, uma pergunta no maximo, guidance curto e sem repetir historico. Nao omita campos obrigatorios nem acrescente explicacoes fora do JSON."
+      : null;
+    const policyCorrectionInstruction = !compactOutputRetry && rewriteFeedback.length > 0
+      ? this.#usesJsonSchema
+        ? "CORRECAO TECNICA COMPACTA: corrija somente a violacao objetiva informada. Nao explique o feedback, nao copie contexto e nao reescreva o funil. Se a sua propria decisao ainda depende de uma tool, chame agora a unica funcao necessaria; se os fatos ja bastam, devolva o JSON kind=final curto e coerente."
+        : "CORRECAO TECNICA COMPACTA: corrija somente a violacao objetiva informada e devolva um JSON minimo e completo. Nao explique o feedback, nao copie contexto e nao reescreva o funil. Se a sua propria decisao ainda depende de uma tool, devolva agora a query unica necessaria em vez de repetir um FINAL prematuro; se os fatos ja bastam, devolva o FINAL curto e coerente."
       : null;
     const buildMessages = () => [
       { role: "system", content: this.#portalPrompt },
       { role: "system", content: this.#operationalPrompt },
+      { role: "system", content: this.#usesJsonSchema ? NATIVE_TOOL_OUTPUT_DISCIPLINE : BASE_STRUCTURED_OUTPUT_DISCIPLINE },
       ...(!this.#usesJsonSchema ? [{ role: "system", content: DEEPSEEK_JSON_COMPAT_PROMPT }] : []),
       { role: "system", content: JSON.stringify({ context }) },
       ...historyMessages,
@@ -749,6 +852,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
           ]
         : frame.block },
       ...(rewriteFeedback.length > 0 ? [{ role: "system", content: `REESCRITA OBRIGATORIA DA RESPOSTA AO USER IMEDIATAMENTE ANTERIOR:\n- ${rewriteFeedback.join("\n- ")}\nMantenha o ato atual. Nao repita a forma reprovada. Devolva novamente o JSON completo corrigido.` }] : []),
+      ...(policyCorrectionInstruction != null ? [{ role: "system", content: policyCorrectionInstruction }] : []),
       ...(compactOutputInstruction != null ? [{ role: "system", content: compactOutputInstruction }] : []),
     ];
     const compactRetryObservation = (): AgentToolObservation => ({
@@ -771,6 +875,11 @@ export class OpenAiAgentBrain implements AgentBrainPort {
         body: JSON.stringify({
           model: hasPolicyRetry ? this.#retryModel : this.#model, temperature: this.#temperature, ...tokenLimit,
           response_format: this.#responseFormat,
+          ...(this.#usesJsonSchema && this.#nativeTools.length > 0 ? {
+            tools: this.#nativeTools,
+            tool_choice: "auto",
+            parallel_tool_calls: false,
+          } : {}),
           messages,
         }),
         signal: AbortSignal.timeout(this.#timeoutMs),
@@ -795,7 +904,19 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     let content: unknown;
     let finishReason: string | undefined;
     try {
-      const parsed = JSON.parse(bodyText) as { choices?: { message?: { content?: string; refusal?: string }; finish_reason?: string }[] };
+      const parsed = JSON.parse(bodyText) as {
+        choices?: {
+          message?: {
+            content?: string | null;
+            refusal?: string;
+            tool_calls?: {
+              type?: string;
+              function?: { name?: string; arguments?: string };
+            }[];
+          };
+          finish_reason?: string;
+        }[];
+      };
       const choice = parsed?.choices?.[0];
       finishReason = choice?.finish_reason;
       // ⭐Item 7 (diagnóstico): distingue TRUNCAMENTO (finish=length -> maxCompletionTokens curto) de refusal de conteúdo
@@ -808,8 +929,29 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       if (finishReason === "length") {
         return compactOutputRetry ? this.#safeFinal("brain JSON inválido (finish=length após reautoria compacta)") : await retryCompactOutputOnce();
       }
-      const raw = choice?.message?.content;
-      content = typeof raw === "string" ? JSON.parse(raw) : null;
+      const toolCalls = choice?.message?.tool_calls ?? [];
+      if (toolCalls.length > 0) {
+        if (!this.#usesJsonSchema || toolCalls.length !== 1) throw new Error("brain native tool shape invalid");
+        const nativeCall = toolCalls[0]?.function;
+        const tool = nativeCall?.name;
+        if (typeof tool !== "string" || !this.#allowedTools.has(tool) || typeof nativeCall?.arguments !== "string") {
+          throw new Error("brain native tool invalid");
+        }
+        const args = JSON.parse(nativeCall.arguments) as { understanding?: unknown; input?: unknown };
+        content = {
+          kind: "query",
+          understanding: args?.understanding,
+          call: { tool, input: args?.input },
+          reasonCode: null,
+          confidence: null,
+          guidance: null,
+          draft: null,
+          effects: [],
+        };
+      } else {
+        const raw = choice?.message?.content;
+        content = typeof raw === "string" ? JSON.parse(raw) : null;
+      }
     } catch {
       return compactOutputRetry
         ? this.#safeFinal(`brain JSON inválido${finishReason ? ` (finish=${finishReason} após reautoria compacta)` : ""}`)

@@ -8,8 +8,8 @@
 //
 // CONTRATO: repetir a MESMA chamada é idempotente. O resultado original — sucesso OU erro — permanece uma única
 // vez nas observações; o adapter não é reexecutado e a repetição não cria deny nem outro "fato" artificial. No
-// central_active, a fase de tools termina silenciosamente e devolve a autoria à LLM. vehicle_photos_resolve mantém
-// sua reentrega factual específica porque a mídia precisa chegar à decisão estruturada de send_media.
+// central_active, a fase de tools permanece aberta e um marcador tipado informa o reuso por um passo; a LLM continua
+// livre para finalizar ou chamar outra tool necessária. A observação canônica não é duplicada.
 //   npx tsx tests/run-f2-81-dup-tool-reuse.ts
 // ============================================================================
 import { runCentralConversationTurn, type CentralTurnResult } from "../src/engine/central-engine.ts";
@@ -59,7 +59,14 @@ function finU(parts: ResponsePart[], u: TurnUnderstanding, effects: ProposedEffe
 }
 const qU = (input: Record<string, unknown>, tool: QueryCall["tool"], u: TurnUnderstanding): AgentBrainStep => ({ kind: "query", call: { tool, input } as never, understanding: u } as AgentBrainStep);
 
-type Cap = { outbox: string; committed: boolean; src: string | null; degraded: boolean; obs: AgentToolObservation[][] };
+type Cap = {
+  outbox: string;
+  committed: boolean;
+  src: string | null;
+  degraded: boolean;
+  obs: AgentToolObservation[][];
+  reuseFrames: { tool: string; ok: boolean }[];
+};
 function hash(s: string): number { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
 
 async function runTurn(lead: string, responder: BrainResponder, tag: string): Promise<Cap> {
@@ -91,6 +98,10 @@ async function runTurn(lead: string, responder: BrainResponder, tag: string): Pr
     committed: r.status === "committed", src: r.status === "committed" ? r.responseSource : r.status,
     degraded: r.status === "committed" ? r.degraded : false,
     obs: brain.seenObservations.map((o) => [...o]),
+    reuseFrames: brain.seenFrames
+      .map((seen) => seen.toolControl?.lastReuse ?? null)
+      .filter((reuse): reuse is NonNullable<typeof reuse> => reuse != null)
+      .map((reuse) => ({ tool: reuse.tool, ok: reuse.ok })),
   };
 }
 // Observações que o cérebro VIU no último passo (o loop acumula: basta olhar o maior array).
@@ -127,6 +138,7 @@ async function main(): Promise<void> {
       && lastObs(m).filter((o) => o.tool === "response" && !o.ok)
         .every((o) => o.ok === false && o.error.code !== "DUP_TOOL"),
     JSON.stringify(lastObs(m).map((o) => `${o.tool}:${o.ok ? "ok" : (o.ok === false ? o.error.code : "")}`)));
+  check("[R3b] reuso da falha chega tipado por um passo", m.reuseFrames.length === 1 && m.reuseFrames[0]?.tool === "vehicle_details" && m.reuseFrames[0]?.ok === false, JSON.stringify(m.reuseFrames));
   check("[R4] o turno CONCLUI pela LLM (nao morre em deflexao/fallback)", m.committed && !m.degraded, `src=${m.src} deg=${m.degraded}`);
 
   // ── 2) REPETICAO DE CHAMADA BEM-SUCEDIDA: devolve o mesmo fato, sem reexecutar, sem deny ──────
@@ -144,6 +156,7 @@ async function main(): Promise<void> {
   check("[R7] repeticao bem-sucedida nao vira deny concorrente",
     dupDenies(s).length === 0,
     JSON.stringify(dupDenies(s)));
+  check("[R7b] reuso do sucesso chega tipado por um passo", s.reuseFrames.length === 1 && s.reuseFrames[0]?.tool === "vehicle_details" && s.reuseFrames[0]?.ok === true, JSON.stringify(s.reuseFrames));
   check("[R8] turno conclui pela LLM", s.committed && !s.degraded, `src=${s.src}`);
 
   // ── 3) BUSCA REPETIDA: nao reexecuta e a exigencia de busca do turno segue satisfeita ─────────
@@ -156,6 +169,7 @@ async function main(): Promise<void> {
   check("[R9] ⭐stock_search identico executa UMA vez", stockExecutions === 1, `execucoes=${stockExecutions}`);
   check("[R9a] ⭐e a busca aparece UMA vez nas observacoes (nao infla o sinal de retry-storm)",
     lastObs(b).filter((o) => o.tool === "stock_search").length === 1, JSON.stringify(lastObs(b).map((o) => `${o.tool}:${o.ok}`)));
+  check("[R9b] reuso da busca chega tipado por um passo", b.reuseFrames.length === 1 && b.reuseFrames[0]?.tool === "stock_search" && b.reuseFrames[0]?.ok === true, JSON.stringify(b.reuseFrames));
   check("[R10] a lista sai para o lead (a exigencia de busca NAO ficou pendente)", b.committed && has(b.outbox, "Compass"), `${b.src} | ${b.outbox.slice(0, 80)}`);
 
   // ── 4) TETO ANTI-LOOP: cerebro que so repete nao queima o turno ──────────────────────────────

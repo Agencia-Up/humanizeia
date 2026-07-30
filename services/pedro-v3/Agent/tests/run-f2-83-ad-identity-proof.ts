@@ -36,6 +36,18 @@ const RANGER_PROVIDER_FORMAT: VehicleFact = {
   cor: "Cinza",
   tipo: "pickup",
 };
+const EQUINOX_OUTSIDE_MARKET_TAXONOMY: VehicleFact = {
+  vehicleKey: "bndv:equinox-premier",
+  marca: "Chevrolet",
+  modelo: "Equinox",
+  versao: "Premier 1.5 TB",
+  ano: 2023,
+  preco: 139_900,
+  km: 48_000,
+  cambio: "Automatico",
+  cor: "Preto",
+  tipo: "suv",
+};
 
 const search = (items: VehicleFact[], filtersUsed: Record<string, unknown>, family: VehicleFact[] = []): QueryResult => ({
   ok: true, tool: "stock_search", source: "fixture",
@@ -70,6 +82,35 @@ async function main(): Promise<void> {
   check("[T1] extração separa modelo-base de versão", parsed?.modelo === "HB20" && parsed.variantTokens.join("|") === "confort|plus", JSON.stringify(parsed));
   const compound = buildAdIdentityTarget(ad("Fiat Grand Siena 2020"));
   check("[T2] modelo composto não é inventado como versão", compound?.modelo === "Grand Siena" && compound.variantTokens.length === 0, JSON.stringify(compound));
+  const catalogFallback = buildAdIdentityTarget(
+    ad("Chevrolet Equinox Premier 1.5 TB 2023"),
+    { marca: "Chevrolet", modelos: ["Equinox"] },
+  );
+  check(
+    "[T2a] catálogo do tenant completa a taxonomia finita sem regra por modelo",
+    catalogFallback?.modelo === "Equinox"
+      && catalogFallback.ano === 2023
+      && catalogFallback.variantTokens.join("|") === "premier|1|5|tb",
+    JSON.stringify(catalogFallback),
+  );
+  const catalogFallbackEval = evaluateAdIdentityProof({
+    adFingerprint: adFingerprintOf({ adId: "ad-equinox", identity: catalogFallback?.identity ?? null }),
+    target: catalogFallback,
+    facts: [search(
+      [EQUINOX_OUTSIDE_MARKET_TAXONOMY],
+      { marca: "Chevrolet", modelo: "Equinox", anos: [2023] },
+    )],
+  });
+  check(
+    "[T2b] busca catalogada prova a identidade exata fora da taxonomia finita",
+    catalogFallbackEval.status === "exact"
+      && catalogFallbackEval.proof?.vehicleKey === EQUINOX_OUTSIDE_MARKET_TAXONOMY.vehicleKey,
+    JSON.stringify(catalogFallbackEval),
+  );
+  check(
+    "[T2c] catálogo ambíguo nunca inventa a identidade do anúncio",
+    buildAdIdentityTarget(ad("Oferta especial 2023"), { marca: "Chevrolet", modelos: ["Equinox", "Tracker"] }) === null,
+  );
   const rangerTarget = buildAdIdentityTarget(ad("FORD RANGER LIMITED+ 3.0 V6 4x4 CD TB DIESEL AUT. 2025"));
   const rangerEval = evaluateAdIdentityProof({
     adFingerprint: adFingerprintOf({ adId: "ad-ranger", identity: rangerTarget?.identity ?? null }),

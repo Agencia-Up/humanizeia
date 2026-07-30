@@ -292,6 +292,11 @@ async function main(): Promise<void> {
     : "";
   check("[F17] completude conversacional e escolha de tool nao vetam o central_active",
     /if \(!authority\.conversationalTextVeto\) return null;/.test(completenessBoundary));
+  const photoPostconditionAt = completenessBoundary.indexOf("photoOperationalPostcondition(args)");
+  const conversationalVetoAt = completenessBoundary.indexOf("if (!authority.conversationalTextVeto) return null;");
+  check("[F17a] ato de foto declarado valida efeito antes da fronteira conversacional",
+    photoPostconditionAt >= 0 && conversationalVetoAt > photoPostconditionAt,
+    `photo=${photoPostconditionAt} conversational=${conversationalVetoAt}`);
   const activeFallbackStart = centralSource.indexOf("} else if (!legacyReplayEnabled) {");
   const legacyFallbackStart = centralSource.indexOf("} else {", activeFallbackStart + 1);
   const activeFallback = activeFallbackStart >= 0 && legacyFallbackStart > activeFallbackStart

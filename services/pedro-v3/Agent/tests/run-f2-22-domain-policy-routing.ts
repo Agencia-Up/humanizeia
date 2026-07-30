@@ -250,8 +250,10 @@ async function main(): Promise<void> {
     const cap = await c.t("qual o horário?", "ambiguous", [nFin, nFin, nFin]);
     check("[N] horário respondido -> passa sem deny (completude satisfeita)", cap.committed && !cap.degraded && has(cap.outbox, "9h") && !cap.policyFeedback.some((f) => /horario/.test(normalizeText(f))), `src=${cap.src} fb=${JSON.stringify(cap.policyFeedback)}`);
   }
-  // O) FOTO pedida, mas a LLM responde sem tool/efeito: a engine não força vehicle_photos_resolve nem fabrica mídia.
-  //    O caso P, logo abaixo, prova o caminho correto quando a própria LLM escolhe resolver e enviar as fotos.
+  // O) A própria LLM declara send_photos como capability necessária AGORA,
+  //    mas tenta finalizar sem consulta/efeito. A engine não escolhe a ação:
+  //    devolve a contradição estrutural à mesma LLM, que escolhe executar a
+  //    cadeia factual. A promessa sem efeito nunca é publicada.
   {
     const c = conv(makeBI(ADDR, HOURS), selectedOnix); await c.seed();
     const cap = await c.t("me manda foto do Onix", "ambiguous", (_frame, obs) => {
@@ -263,8 +265,32 @@ async function main(): Promise<void> {
       }
       return fin([txt("Beleza! Deixa eu providenciar isso pra você.")]);
     });
-    check("[O] engine não força tool nem efeito de foto", cap.committed && !cap.hasMedia && cap.src === "brain_final" && cap.exec.length === 0, `src=${cap.src} text="${cap.outbox}" media=${cap.hasMedia} exec=${JSON.stringify(cap.exec)}`);
-    check("[O] ausência de tool não cria retry comercial oculto", cap.policyFeedback.length === 0, JSON.stringify(cap.policyFeedback));
+    check("[O] capability declarada não publica promessa sem efeito", cap.committed && cap.hasMedia && cap.src === "brain_retry" && cap.exec.filter((tool) => tool === "vehicle_photos_resolve").length === 1, `src=${cap.src} text="${cap.outbox}" media=${cap.hasMedia} exec=${JSON.stringify(cap.exec)}`);
+    check("[O] feedback trata somente a contradição operacional declarada", cap.policyFeedback.some((f) => /request_photos|vehicle_photos_resolve/i.test(f)) && cap.policyFeedback.every((f) => !/pergunte ao lead|qualifique|etapa comercial|feche a venda/i.test(f)), JSON.stringify(cap.policyFeedback));
+  }
+  // O2) A LLM pode escolher um esclarecimento em vez de executar mídia. Ao
+  //     não declarar send_photos como capability necessária neste passo, a
+  //     engine preserva a autoria: zero tool, zero retry e texto intacto.
+  {
+    const c = conv(makeBI(ADDR, HOURS)); await c.seed();
+    const clarification: AgentBrainStep = {
+      ...fin([txt("Você prefere fotos internas ou externas?")], undefined, "clarify_photos"),
+      understanding: {
+        primaryIntent: "request_photos",
+        requestedCapabilities: [],
+        subject: "selected_vehicle",
+        subjectValue: null,
+        subjectSource: "memory",
+        evidence: [{ quote: "me manda foto do Onix" }],
+        monetaryMentions: [],
+        isTopicChange: false,
+        answeredLeadQuestions: [],
+        policyDecision: null,
+      },
+    };
+    const cap = await c.t("me manda foto do Onix", "ambiguous", [clarification]);
+    check("[O2] LLM pode esclarecer sem engine forçar tool", cap.committed && !cap.hasMedia && cap.src === "brain_final" && cap.exec.length === 0 && has(cap.outbox, "internas ou externas"), `src=${cap.src} text="${cap.outbox}" media=${cap.hasMedia} exec=${JSON.stringify(cap.exec)}`);
+    check("[O2] esclarecer sem capability não cria retry oculto", cap.policyFeedback.length === 0, JSON.stringify(cap.policyFeedback));
   }
   // P) FOTO pura com send_media satisfaz a completude (passa) — não força ausência honesta quando há mídia.
   {

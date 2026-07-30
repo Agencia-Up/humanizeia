@@ -15,7 +15,7 @@
 // ============================================================================
 import { runCentralConversationTurn, type CentralTurnResult } from "../src/engine/central-engine.ts";
 import { isStoreInfoTurn, validateTurnUnderstanding } from "../src/engine/turn-understanding.ts";
-import { COMPACT_OPERATIONAL_PROMPT, authoredQuestionsOutsidePortal } from "../src/adapters/llm/openai-agent-brain.ts";
+import { COMPACT_OPERATIONAL_PROMPT, authoredQuestionsOutsidePortal, fixedOpeningTemplate } from "../src/adapters/llm/openai-agent-brain.ts";
 import { InMemoryPersistence, FakeClock, FakeIdGen } from "../src/adapters/persistence/in-memory-store.ts";
 import { ScriptedAgentBrain, type BrainResponder } from "../src/adapters/llm/fake-agent-brain.ts";
 import { buildTenantCatalog } from "../src/engine/catalog-utils.ts";
@@ -68,18 +68,25 @@ const executed: QueryCall[] = [];
 const runQuery = async (call: QueryCall): Promise<QueryResult> => {
   executed.push(call);
   if (call.tool === "stock_search") {
-    const inp = call.input as { marca?: string; modelo?: string; tipo?: string; precoMax?: number; excludeKeys?: string[] };
+    const inp = call.input as { marca?: string; modelo?: string; tipo?: string; precoMax?: number; anos?: number[]; excludeKeys?: string[] };
     let items = STOCK.slice();
     if (inp.marca) { const m = norm(inp.marca); items = items.filter((v) => norm(v.marca).includes(m)); }
     if (inp.modelo) { const toks = norm(inp.modelo).split(/\s+/).filter(Boolean); items = items.filter((v) => { const vt = norm(`${v.marca} ${v.modelo}`); return toks.every((t) => vt.includes(t)); }); }
     if (inp.tipo) items = items.filter((v) => v.tipo === inp.tipo);
     if (typeof inp.precoMax === "number") items = items.filter((v) => (v.preco ?? Infinity) <= (inp.precoMax as number));
+    if (Array.isArray(inp.anos) && inp.anos.length > 0) items = items.filter((v) => v.ano != null && inp.anos!.includes(v.ano));
     if (inp.excludeKeys) items = items.filter((v) => !inp.excludeKeys!.includes(v.vehicleKey));
     return { ok: true, tool: "stock_search", data: { items, filtersUsed: inp as Record<string, never> }, source: "fake" } as QueryResult;
   }
   if (call.tool === "vehicle_photos_resolve") {
     const key = (call.input as { vehicleRef?: { key?: string } }).vehicleRef?.key ?? "";
     const known = STOCK.some((v) => v.vehicleKey === key);
+    if (key === COMPASS19.vehicleKey) {
+      return { ok: true, tool: "vehicle_photos_resolve", data: { vehicleKey: key, ambiguous: false, photoIds: [] }, source: "fake" } as QueryResult;
+    }
+    if (key === RENEGADE18.vehicleKey) {
+      return { ok: false, tool: "vehicle_photos_resolve", error: { code: "UPSTREAM", message: "fonte de fotos indisponivel", retryable: false } } as QueryResult;
+    }
     return known
       ? { ok: true, tool: "vehicle_photos_resolve", data: { vehicleKey: key, ambiguous: false, photoIds: [`${key}-p1`, `${key}-p2`] }, source: "fake" } as QueryResult
       : { ok: false, tool: "vehicle_photos_resolve", error: { code: "NOT_FOUND", message: "sem fotos", retryable: false } } as QueryResult;
@@ -118,7 +125,7 @@ type Cap = {
   // Chaves REALMENTE passadas ao adapter — a lente que prova que uma chave inventada nunca foi executada.
   execKeys: string[];
 };
-async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, relation: TurnRelation, responder: BrainResponder, ad?: AdContext): Promise<Cap> {
+async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, relation: TurnRelation, responder: BrainResponder, ad?: AdContext, options?: { brainMaxSteps?: number }): Promise<Cap> {
   executed.length = 0; preparer.relation = relation; brain.setResponder(responder);
   const raw = ad ? redact({ text: lead, adContext: ad } as never) : redact({ text: lead });
   await persistence.tryInsert({ eventId: `${convId}-e${seq}`, conversationId: convId, raw, receivedAt: clock.now() });
@@ -128,7 +135,7 @@ async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: S
     persistence, clock, brain, llm: new ComposeSpyLlm(), runQuery, businessInfo: makeBI(), contextPreparer: preparer,
     conversationId: convId, tenantId: TENANT, agentId: AGENT, leadId: null, workerId: "w", turnId, leaseTtlMs: 60_000, portalPromptSha256: SHA,
     limits: { maxSteps: 10, totalTimeoutMs: 9000, proposeTimeoutMs: 3000, queryTimeoutMs: 3000, composeTimeoutMs: 3000 },
-    maxValidationAttempts: 2, brainMaxSteps: 8, sdrPolicy, allowedTools: ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info"],
+    maxValidationAttempts: 2, brainMaxSteps: options?.brainMaxSteps ?? 8, sdrPolicy, allowedTools: ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info"],
     providerCapability: { send_message: "none", send_media: "none" }, singleAuthor: true, llmFirst: true,
   });
   const outbox = (await persistence.listOutbox(convId)).filter((o) => o.turnId === turnId) as unknown as { kind: string; payload?: { text?: string; vehicleKey?: string } }[];
@@ -531,25 +538,27 @@ async function main(): Promise<void> {
   }
 
   // [B4] RESIDUO P0: a LLM insiste na mesma tool/input depois de ja receber o fato.
-  // A primeira repeticao vira feedback de controle; a mesma LLM redige a resposta final com o resultado obtido.
+  // A primeira repeticao recebe um marcador factual de reuso do cache; a fase
+  // de tools permanece aberta e a mesma LLM decide o passo seguinte.
   {
     const c = conv();
     const block = "Quero ver as opcoes de SUV disponiveis";
+    let cacheReuseSeen = 0;
     const responder: BrainResponder = (frame, observations) => {
       const us: TurnUnderstanding = { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: ev(frame.block ?? block, "stock_search") };
       const searched = observations.some((o) => o.tool === "stock_search" && o.ok);
-      const duplicate = observations.some((o) => !o.ok && (o.error.code === "DUP_STOCK_SEARCH" || o.error.code === "DUP_TOOL"));
-      const finalAuthorship = observations.some((o) => !o.ok && o.error.code === "FINAL_AUTHORSHIP_REQUIRED");
       if (!searched) return qU({ tool: "stock_search", input: { tipo: "suv" } }, us);
       // Simula o residuo observado: sem uma passagem final explicita, a LLM propoe a mesma consulta.
-      if (!duplicate && !finalAuthorship) return qU({ tool: "stock_search", input: { tipo: "suv" } }, us);
+      if (frame.toolControl?.lastReuse?.tool !== "stock_search") return qU({ tool: "stock_search", input: { tipo: "suv" } }, us);
+      cacheReuseSeen += 1;
       return finU([txt("Encontrei estas opcoes de SUV no estoque:"), offer(STOCK.filter((v) => v.tipo === "suv").map((v) => v.vehicleKey)), txt("Quer ver fotos ou detalhes de algum deles?")], "offer_stock", us);
     };
     const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "ambiguous", responder);
     check("[B4] turno commitado apos proposta duplicada", r.committed, `${r.responseSource}`);
     check("[B4] nao caiu em fallback tecnico", r.responseSource !== "technical_fallback", `${r.responseSource}`);
     check("[B4] stock_search executou uma unica vez", r.exec.filter((x) => x === "stock_search").length === 1, r.exec.join(","));
-    check("[B4] proposta duplicada consumiu no maximo uma nova autoria", r.brainCalls <= 3, `brainCalls=${r.brainCalls}`);
+    check("[B4] reuso do cache chegou uma vez ao cerebro sem criar deny", cacheReuseSeen === 1 && r.policyFeedback.every((f) => !has(f, "DUP_")), `reuse=${cacheReuseSeen} feedback=${r.policyFeedback.join(" | ")}`);
+    check("[B4] proposta duplicada consumiu no maximo um passo de reuso", r.brainCalls <= 3, `brainCalls=${r.brainCalls}`);
     check("[B4] resposta final usa o estoque obtido", has(r.outbox, "SUV") || has(r.outbox, "EcoSport"), r.outbox.slice(0, 140));
   }
 
@@ -620,6 +629,25 @@ async function main(): Promise<void> {
     // Fragmento trivial não pode ser "perdoado" só por existir em algum ponto do prompt.
     const trivial = authoredQuestionsOutsidePortal(["Ok?"], PORTAL_ICOM);
     check("[D2] fragmento trivial nao e absolvido por acidente", trivial.length === 1, JSON.stringify(trivial));
+  }
+
+  // [D3] O gerador atual protege a abertura com tags. O runtime precisa ler
+  // este formato (nao apenas o texto legado entre aspas), senao "Manha!" ou
+  // uma parafrase podem passar apesar de o portal ter definido [PERIODO].
+  {
+    const tagged = [
+      "# PEDRO V3",
+      "<APRESENTACAO_LITERAL>",
+      "[PERIODO]! Sou Aline, da Monaco Automoveis",
+      "</APRESENTACAO_LITERAL>",
+    ].join("\n");
+    check("[D3] runtime extrai abertura literal protegida por tags",
+      fixedOpeningTemplate(tagged) === "[PERIODO]! Sou Aline, da Monaco Automoveis",
+      String(fixedOpeningTemplate(tagged)));
+    check("[D3] prompt ativo recebe a saudacao pronta do canal",
+      COMPACT_OPERATIONAL_PROMPT.includes("context.channel.greeting"));
+    check("[D3] prompt ativo proibe periodo cru como saudacao",
+      /Nunca substitua \[PERIODO\][\s\S]*Manha[\s\S]*Tarde[\s\S]*Noite/i.test(COMPACT_OPERATIONAL_PROMPT));
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -829,7 +857,7 @@ async function main(): Promise<void> {
     const naoAterrada = r.policyFeedback.filter((f) => has(f, "nao veio de nenhuma consulta") || has(f, "não veio de nenhuma consulta")).length;
     check("[G1] resultado da propria foto NAO vira VEHICLE_KEY_NOT_GROUNDED", naoAterrada === 0, r.policyFeedback.join(" | ").slice(0, 160));
     check("[G1] a foto foi RESOLVIDA uma vez so", r.exec.filter((t) => t === "vehicle_photos_resolve").length === 1, r.exec.join(","));
-    check("[G1] send_media saiu", r.hasMedia, `media=${r.hasMedia}`);
+    check("[G1] send_media saiu", r.hasMedia, `media=${r.hasMedia} feedback=${r.policyFeedback.join(" | ")}`);
     check("[G1] mídia é do veiculo CERTO", r.mediaKey === "rm:cmp22", `mediaKey=${r.mediaKey}`);
     check("[G1] sem fallback tecnico", r.responseSource !== "technical_fallback", `${r.responseSource}`);
   }
@@ -868,11 +896,391 @@ async function main(): Promise<void> {
     const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 2, block, "continues_offer", responder);
     check("[G2] repeticao NAO reexecuta a tool (idempotente, 1 execucao real)", r.exec.filter((t) => t === "vehicle_photos_resolve").length === 1, r.exec.join(","));
     check("[G2] repeticao NAO gera deny (dup_tool ausente)", r.retryReasons.filter((x) => x === "dup_tool").length === 0, r.retryReasons.join("|"));
-    check("[G2] turno termina sem fallback", r.committed && r.responseSource !== "technical_fallback", `${r.responseSource}`);
+    check("[G2] turno termina sem fallback", r.committed && r.responseSource !== "technical_fallback", `${r.responseSource} feedback=${r.policyFeedback.join(" | ")}`);
     check("[G2] lead NAO recebeu 'instabilidade'", !has(r.outbox, INSTABILIDADE), r.outbox.slice(0, 80));
   }
 
+  // [G3] A LLM declarou send_photos, mas tentou finalizar antes de consultar a
+  // tool. O central_active nao avalia a frase; valida somente a pos-condicao do
+  // ato operacional declarado e devolve o controle ao mesmo cerebro.
+  {
+    const c = conv();
+    const searchBlock = "Quero um Compass 2022";
+    const searchResponder: BrainResponder = (frame, observations) => {
+      const u: TurnUnderstanding = { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: ev(frame.block ?? searchBlock, "stock_search") };
+      const found = observations.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      if (!found) return qU({ tool: "stock_search", input: { marca: "Jeep", modelo: "Compass", anos: [2022] } }, u);
+      return finU([txt("Encontrei o Jeep Compass 2022."), offer(found.data.items.map((v) => v.vehicleKey))], "offer_stock", u);
+    };
+    await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, searchBlock, "ambiguous", searchResponder);
+
+    const photoBlock = "Pode me mandar fotos dele?";
+    let finalWithoutTool = true;
+    const photoResponder: BrainResponder = (_frame, observations) => {
+      const u: TurnUnderstanding = {
+        ...U("request_photos"),
+        requestedCapabilities: ["send_photos"],
+        evidence: [{ capability: "send_photos", quote: "mandar fotos" }],
+      };
+      const resolved = observations.find((o) => o.tool === "vehicle_photos_resolve" && o.ok) as { ok: true; data: { vehicleKey: string; photoIds: string[] } } | undefined;
+      if (finalWithoutTool) {
+        finalWithoutTool = false;
+        return finU([txt("Vou enviar as fotos para voce.")], "send_photos", u);
+      }
+      if (!resolved) return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: COMPASS22.vehicleKey } } }, u);
+      return {
+        kind: "final", understanding: u,
+        decision: {
+          reasonCode: "send_photos", reasonSummary: "fotos resolvidas", confidence: 0.95,
+          responsePlan: { guidance: "g", draft: { parts: [txt("Aqui estao as fotos do Jeep Compass 2022.")] } },
+          proposedEffects: [reply, { kind: "send_media", planId: "photos", order: 1, onSuccess: [], vehicleKey: resolved.data.vehicleKey, photoIds: resolved.data.photoIds } as ProposedEffectPlan],
+          memoryMutations: [], stateMutations: [],
+        } as AgentBrainDecision,
+      } as AgentBrainStep;
+    };
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 2, photoBlock, "continues_offer", photoResponder);
+    check("[G3] FINAL prematuro recebe feedback operacional acionavel", r.policyFeedback.some((f) => has(f, "vehicle_photos_resolve")), r.policyFeedback.join(" | "));
+    check("[G3] mesma LLM corrige e executa a consulta uma vez", r.exec.filter((tool) => tool === "vehicle_photos_resolve").length === 1, r.exec.join(","));
+    check("[G3] send_media materializado na chave resolvida", r.hasMedia && r.mediaKey === COMPASS22.vehicleKey, `${r.mediaKey}`);
+    check("[G3] zero fallback tecnico", r.committed && r.responseSource !== "technical_fallback" && !has(r.outbox, INSTABILIDADE), `${r.responseSource}|${r.outbox}`);
+  }
+
+  // [G4] Pedido de foto diretamente no anuncio, antes de qualquer chave. A
+  // identidade declarada do anuncio permite ao cerebro aterrar via stock_search;
+  // a engine nao executa a busca nem escolhe o carro por ele.
+  {
+    const c = conv();
+    const block = "Pode me mandar fotos do carro deste anuncio?";
+    const photoAd: AdContext = {
+      ...adEcoSport,
+      vehicleQuery: "Ford EcoSport SE 1.5 2020",
+      confidence: 1,
+      semanticSource: "image",
+    };
+    let finalWithoutGrounding = true;
+    const responder: BrainResponder = (_frame, observations) => {
+      const u: TurnUnderstanding = {
+        ...U("request_photos"),
+        requestedCapabilities: ["send_photos"],
+        evidence: [{ capability: "send_photos", quote: "fotos do carro" }],
+      };
+      const stock = observations.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      const photos = observations.find((o) => o.tool === "vehicle_photos_resolve" && o.ok) as { ok: true; data: { vehicleKey: string; photoIds: string[] } } | undefined;
+      if (finalWithoutGrounding) {
+        finalWithoutGrounding = false;
+        return finU([txt("Vou providenciar as fotos do veiculo anunciado.")], "send_photos", u);
+      }
+      if (!stock) return qU({ tool: "stock_search", input: { marca: "Ford", modelo: "EcoSport", anos: [2020] } }, u);
+      if (!photos) return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: stock.data.items[0].vehicleKey } } }, u);
+      return {
+        kind: "final", understanding: u,
+        decision: {
+          reasonCode: "send_photos", reasonSummary: "anuncio aterrado e fotos resolvidas", confidence: 0.95,
+          responsePlan: { guidance: "g", draft: { parts: [txt("Aqui estao as fotos do Ford EcoSport 2020 anunciado.")] } },
+          proposedEffects: [reply, { kind: "send_media", planId: "photos", order: 1, onSuccess: [], vehicleKey: photos.data.vehicleKey, photoIds: photos.data.photoIds } as ProposedEffectPlan],
+          memoryMutations: [], stateMutations: [],
+        } as AgentBrainDecision,
+      } as AgentBrainStep;
+    };
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "ambiguous", responder, photoAd);
+    check("[G4] FINAL prematuro recebe o caminho de aterramento do anuncio", r.policyFeedback.some((f) => has(f, "stock_search") && has(f, "anuncio")), r.policyFeedback.join(" | "));
+    check("[G4] LLM executa stock_search e resolve fotos sem ferramenta forçada", r.exec.filter((tool) => tool === "stock_search").length === 1 && r.exec.filter((tool) => tool === "vehicle_photos_resolve").length === 1, r.exec.join(","));
+    check("[G4] send_media usa a chave exata aterrada", r.hasMedia && r.mediaKey === ECOSPORT20.vehicleKey, `${r.mediaKey}`);
+    check("[G4] zero fallback e zero promessa publicada", r.committed && r.responseSource !== "technical_fallback" && !has(r.outbox, "providenciar") && !has(r.outbox, INSTABILIDADE), `${r.responseSource}|${r.outbox}`);
+  }
+
+  // [G4b] Regressao do smoke Monaco: o catalogo do tenant conhece o modelo,
+  // mas a taxonomia finita de mercado ainda nao. Depois da stock_search, o
+  // frame do passo seguinte precisa confirmar a referencia exata do anuncio;
+  // caso contrario a LLM fica presa repetindo a mesma busca sem nunca poder
+  // seguir para vehicle_photos_resolve.
+  {
+    const c = conv();
+    const block = "Vim pelo anuncio e quero as fotos desse veiculo.";
+    let confirmedReferenceSeen: string | null = null;
+    let resolvedTargetSeen: string | null = null;
+    const responder: BrainResponder = (frame, observations) => {
+      const u: TurnUnderstanding = {
+        ...U("request_photos"),
+        requestedCapabilities: ["send_photos", "stock_search"],
+        evidence: [
+          { capability: "send_photos", quote: "fotos desse veiculo" },
+          { capability: "stock_search", quote: "desse veiculo" },
+        ],
+      };
+      const stock = observations.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      const photos = observations.find((o) => o.tool === "vehicle_photos_resolve" && o.ok) as { ok: true; data: { vehicleKey: string; photoIds: string[] } } | undefined;
+      if (!stock) return qU({ tool: "stock_search", input: { marca: "Audi", modelo: "A3", anos: [2020] } }, u);
+
+      confirmedReferenceSeen = frame.operationalContext?.ad.inventoryConfirmed === true
+        ? frame.operationalContext.ad.vehicleKey
+        : null;
+      resolvedTargetSeen = frame.operationalContext?.target.status === "resolved"
+        ? frame.operationalContext.target.vehicleKey
+        : null;
+      // A proxima etapa usa o alvo factual que o mesmo engine aceita nas
+      // guardas, e nao "items[0]". Assim o teste reproduz o contrato entregue
+      // a uma LLM real e falha se o alvo voltar a ficar escondido.
+      if (!photos && resolvedTargetSeen) return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: resolvedTargetSeen } } }, u);
+      if (!photos) return finU([txt("Ainda preciso identificar o veiculo correto antes das fotos.")], "clarify_vehicle", u);
+      return {
+        kind: "final", understanding: u,
+        decision: {
+          reasonCode: "send_photos", reasonSummary: "anuncio fora da taxonomia aterrado pelo catalogo", confidence: 0.95,
+          responsePlan: { guidance: "g", draft: { parts: [txt("Aqui estao as fotos do Audi A3 2020 anunciado.")] } },
+          proposedEffects: [reply, { kind: "send_media", planId: "photos", order: 1, onSuccess: [], vehicleKey: photos.data.vehicleKey, photoIds: photos.data.photoIds } as ProposedEffectPlan],
+          memoryMutations: [], stateMutations: [],
+        } as AgentBrainDecision,
+      } as AgentBrainStep;
+    };
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "ambiguous", responder, adAudi);
+    check("[G4b] busca atual confirma a referencia do anuncio fora da taxonomia", confirmedReferenceSeen === AUDI_A3.vehicleKey, `${confirmedReferenceSeen}`);
+    check("[G4b] frame expoe o alvo canonico aceito para fotos", resolvedTargetSeen === AUDI_A3.vehicleKey, `${resolvedTargetSeen}`);
+    check("[G4b] cadeia executa uma busca e uma resolucao de fotos", r.exec.filter((tool) => tool === "stock_search").length === 1 && r.exec.filter((tool) => tool === "vehicle_photos_resolve").length === 1, r.exec.join(","));
+    check("[G4b] send_media usa a chave catalogada exata", r.hasMedia && r.mediaKey === AUDI_A3.vehicleKey, `${r.mediaKey}`);
+    check("[G4b] zero grounding loop e zero fallback", r.committed && r.responseSource !== "technical_fallback" && !has(r.outbox, INSTABILIDADE), `${r.responseSource}|${r.retryReasons.join("|")}|${r.policyFeedback.join(" | ")}`);
+  }
+
+  // [G4c] Repro exato do segundo smoke Monaco: depois de a busca confirmar o
+  // anúncio, o modelo repete a mesma stock_search uma vez. A idempotência não
+  // pode fechar a fase de tools, porque o pedido atual ainda precisa de
+  // vehicle_photos_resolve e send_media.
+  {
+    const c = conv();
+    const block = "Vim pelo anuncio e quero as fotos desse veiculo.";
+    let repeatedSearchProposed = false;
+    let malformedFinalProposed = false;
+    const responder: BrainResponder = (frame, observations) => {
+      const u: TurnUnderstanding = {
+        ...U("request_photos"),
+        requestedCapabilities: ["send_photos", "stock_search"],
+        evidence: [
+          { capability: "send_photos", quote: "fotos desse veiculo" },
+          { capability: "stock_search", quote: "desse veiculo" },
+        ],
+      };
+      const stock = observations.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      const photos = observations.find((o) => o.tool === "vehicle_photos_resolve" && o.ok) as { ok: true; data: { vehicleKey: string; photoIds: string[] } } | undefined;
+      const search = () => qU({ tool: "stock_search", input: { marca: "Audi", modelo: "A3", anos: [2020] } }, u);
+      if (!stock) return search();
+      if (!repeatedSearchProposed) {
+        repeatedSearchProposed = true;
+        return search();
+      }
+      // Reproduz o limite observado no smoke real: depois do cache hit, a
+      // primeira tentativa de autoria ainda pode ser estruturalmente invalida.
+      // A proxima decisao correta (resolver fotos) precisa continuar dentro da
+      // janela em que tools sao permitidas; autoria final fechada nao pode
+      // transformar essa escolha tardia da LLM em FINAL_TOOL_FORBIDDEN.
+      if (!malformedFinalProposed) {
+        malformedFinalProposed = true;
+        return finU([], "invalid_empty_draft", u);
+      }
+      if (!photos) {
+        return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: stock.data.items[0].vehicleKey } } }, u);
+      }
+      return {
+        kind: "final", understanding: u,
+        decision: {
+          reasonCode: "send_photos", reasonSummary: "cache preservou a cadeia factual de mídia", confidence: 0.95,
+          responsePlan: { guidance: "g", draft: { parts: [txt("Aqui estao as fotos do Audi A3 2020 anunciado.")] } },
+          proposedEffects: [reply, { kind: "send_media", planId: "photos", order: 1, onSuccess: [], vehicleKey: photos.data.vehicleKey, photoIds: photos.data.photoIds } as ProposedEffectPlan],
+          memoryMutations: [], stateMutations: [],
+        } as AgentBrainDecision,
+      } as AgentBrainStep;
+    };
+    // Tight budget reproduces the production failure: search + identical
+    // cached search + one rejected authorship used to push the correct photo
+    // query into final authorship, where tools are closed. One bounded cache
+    // credit plus one tool-capable completion reserve preserve the LLM's
+    // decision. Total call budget is unchanged because one closed authorship
+    // retry was reallocated to this open window.
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "ambiguous", responder, adAudi, { brainMaxSteps: 2 });
+    check("[G4c] busca repetida e autoria invalida ocorreram antes da foto", repeatedSearchProposed && malformedFinalProposed, `proposed=${repeatedSearchProposed} malformed=${malformedFinalProposed}`);
+    check("[G4c] adapter de estoque executou uma vez e fotos executaram depois", r.exec.filter((tool) => tool === "stock_search").length === 1 && r.exec.filter((tool) => tool === "vehicle_photos_resolve").length === 1, r.exec.join(","));
+    check("[G4c] observacao canonica nao foi duplicada nem virou deny", !r.policyFeedback.some((f) => has(f, "DUP_TOOL") || has(f, "DUP_STOCK_SEARCH")), r.policyFeedback.join(" | "));
+    check("[G4c] send_media usa a chave exata e o turno nao cai em fallback", r.hasMedia && r.mediaKey === AUDI_A3.vehicleKey && r.committed && r.responseSource !== "technical_fallback" && !has(r.outbox, INSTABILIDADE), `${r.mediaKey}|${r.responseSource}|${r.retryReasons.join("|")}`);
+    check("[G4c] reserva aberta conclui a cadeia em cinco chamadas", r.brainCalls === 5, `brainCalls=${r.brainCalls}`);
+  }
+
+  // [G4d] Duas unidades do mesmo modelo continuam ambiguas no proprio frame
+  // entregue ao cerebro. O contexto informa candidatos, mas nao escolhe uma
+  // vehicleKey para a LLM nem autoriza foto arbitraria.
+  {
+    const c = conv();
+    const block = "Quero ver fotos de um Compass";
+    let targetStatus: string | null = null;
+    let targetKey: string | null = "sentinel";
+    let candidateKeys: readonly string[] = [];
+    const responder: BrainResponder = (frame, observations) => {
+      const u: TurnUnderstanding = {
+        ...U("request_photos"),
+        requestedCapabilities: ["send_photos", "stock_search"],
+        evidence: [
+          { capability: "send_photos", quote: "fotos de um Compass" },
+          { capability: "stock_search", quote: "um Compass" },
+        ],
+      };
+      const stock = observations.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      if (!stock) return qU({ tool: "stock_search", input: { marca: "Jeep", modelo: "Compass" } }, u);
+      targetStatus = frame.operationalContext?.target.status ?? null;
+      targetKey = frame.operationalContext?.target.vehicleKey ?? null;
+      candidateKeys = frame.operationalContext?.target.candidateVehicleKeys ?? [];
+      return finU([
+        txt("Encontrei dois Jeep Compass. Qual deles voce quer ver pelas fotos?"),
+        offer(stock.data.items.map((vehicle) => vehicle.vehicleKey)),
+      ], "clarify_vehicle", u);
+    };
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "ambiguous", responder);
+    check("[G4d] frame preserva alvo ambiguo sem escolher chave", targetStatus === "ambiguous" && targetKey === null && candidateKeys.length === 2, `${targetStatus}|${targetKey}|${candidateKeys.join(",")}`);
+    check("[G4d] nenhuma resolucao de fotos usa candidato arbitrario", !r.exec.includes("vehicle_photos_resolve") && !r.hasMedia, r.exec.join(","));
+    check("[G4d] LLM pode pedir desambiguacao sem fallback", r.committed && r.responseSource !== "technical_fallback" && !has(r.outbox, INSTABILIDADE), `${r.responseSource}|${r.retryReasons.join("|")}|${r.policyFeedback.join(" | ")}`);
+  }
+
+  // [G5] O pedido do lead e a ação escolhida pela LLM são eixos distintos. A
+  // primeira decisão omite send_photos, mas declara que o FINAL afirma envio.
+  // A engine não infere a tool pelo texto/intenção: apenas rejeita a
+  // contradição estruturada. A mesma LLM então declara capability+evidência,
+  // escolhe a tool e materializa o efeito.
+  {
+    const c = conv();
+    const searchBlock = "Quero um Compass 2022";
+    const searchResponder: BrainResponder = (frame, observations) => {
+      const u: TurnUnderstanding = { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: ev(frame.block ?? searchBlock, "stock_search") };
+      const found = observations.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      if (!found) return qU({ tool: "stock_search", input: { marca: "Jeep", modelo: "Compass", anos: [2022] } }, u);
+      return finU([txt("Encontrei o Jeep Compass 2022."), offer(found.data.items.map((v) => v.vehicleKey))], "offer_stock", u);
+    };
+    await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, searchBlock, "ambiguous", searchResponder);
+
+    let firstFinal = true;
+    const photoResponder: BrainResponder = (_frame, observations) => {
+      const u: TurnUnderstanding = {
+        ...U("request_photos"),
+        requestedCapabilities: firstFinal ? [] : ["send_photos"],
+        evidence: firstFinal ? [{ quote: "fotos desse carro" }] : [{ capability: "send_photos", quote: "fotos desse carro" }],
+      };
+      const resolved = observations.find((o) => o.tool === "vehicle_photos_resolve" && o.ok) as { ok: true; data: { vehicleKey: string; photoIds: string[] } } | undefined;
+      if (firstFinal) {
+        firstFinal = false;
+        return finU([txt("Vou enviar as fotos para voce.")], "send_photos", u);
+      }
+      if (!resolved) return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: COMPASS22.vehicleKey } } }, u);
+      return {
+        kind: "final", understanding: u,
+        decision: {
+          reasonCode: "send_photos", reasonSummary: "fotos resolvidas", confidence: 0.95,
+          responsePlan: { guidance: "g", draft: { parts: [txt("Aqui estao as fotos do Jeep Compass 2022.")] } },
+          proposedEffects: [reply, { kind: "send_media", planId: "photos", order: 1, onSuccess: [], vehicleKey: resolved.data.vehicleKey, photoIds: resolved.data.photoIds } as ProposedEffectPlan],
+          memoryMutations: [], stateMutations: [],
+        } as AgentBrainDecision,
+      } as AgentBrainStep;
+    };
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 2, "Pode me mandar fotos desse carro?", "continues_offer", photoResponder);
+    check("[G5] request_photos sem capability ainda recebe correção factual", r.policyFeedback.some((f) => has(f, "request_photos") && has(f, "vehicle_photos_resolve")), r.policyFeedback.join(" | "));
+    check("[G5] engine não escolhe tool; mesma LLM a executa uma vez", r.exec.filter((tool) => tool === "vehicle_photos_resolve").length === 1, r.exec.join(","));
+    check("[G5] envio final usa chave aterrada e não cai em fallback", r.hasMedia && r.mediaKey === COMPASS22.vehicleKey && r.responseSource !== "technical_fallback", `${r.responseSource}|${r.mediaKey}`);
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
+  // [G6] Regressao do smoke Monaco: a LLM reconheceu request_photos, mas
+  // respondeu que nao acessava fotos sem consultar a tool. A engine nao le o
+  // texto nem escolhe a tool: valida o ato request_photos autorado contra os
+  // fatos do turno. A mesma LLM decide corrigir e completa a cadeia factual.
+  {
+    const c = conv();
+    const searchBlock = "Quero um Compass 2022";
+    const searchResponder: BrainResponder = (frame, observations) => {
+      const u: TurnUnderstanding = { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: ev(frame.block ?? searchBlock, "stock_search") };
+      const found = observations.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      if (!found) return qU({ tool: "stock_search", input: { marca: "Jeep", modelo: "Compass", anos: [2022] } }, u);
+      return finU([txt("Encontrei o Jeep Compass 2022."), offer(found.data.items.map((v) => v.vehicleKey))], "offer_stock", u);
+    };
+    await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, searchBlock, "ambiguous", searchResponder);
+
+    let contradictoryFinal = true;
+    const photoResponder: BrainResponder = (_frame, observations) => {
+      const operational = !contradictoryFinal;
+      const u: TurnUnderstanding = {
+        ...U("request_photos"),
+        requestedCapabilities: operational ? ["send_photos"] : [],
+        evidence: operational
+          ? [{ capability: "send_photos", quote: "mandar fotos" }]
+          : [{ quote: "mandar fotos" }],
+      };
+      const resolved = observations.find((o) => o.tool === "vehicle_photos_resolve" && o.ok) as { ok: true; data: { vehicleKey: string; photoIds: string[] } } | undefined;
+      if (contradictoryFinal) {
+        contradictoryFinal = false;
+        return finU([txt("No momento nao consigo acessar as fotos por aqui.")], "photos_unavailable", u);
+      }
+      if (!resolved) return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: COMPASS22.vehicleKey } } }, u);
+      return {
+        kind: "final", understanding: u,
+        decision: {
+          reasonCode: "send_photos", reasonSummary: "fotos resolvidas", confidence: 0.95,
+          responsePlan: { guidance: "g", draft: { parts: [txt("Aqui estao as fotos do Jeep Compass 2022.")] } },
+          proposedEffects: [reply, { kind: "send_media", planId: "photos", order: 1, onSuccess: [], vehicleKey: resolved.data.vehicleKey, photoIds: resolved.data.photoIds } as ProposedEffectPlan],
+          memoryMutations: [], stateMutations: [],
+        } as AgentBrainDecision,
+      } as AgentBrainStep;
+    };
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 2, "Pode me mandar fotos desse carro?", "continues_offer", photoResponder);
+    check("[G6] request_photos sem consulta recebe feedback factual", r.policyFeedback.some((f) => has(f, "request_photos") && has(f, "vehicle_photos_resolve")), r.policyFeedback.join(" | "));
+    check("[G6] engine nao escolhe tool; a mesma LLM executa a consulta uma vez", r.exec.filter((tool) => tool === "vehicle_photos_resolve").length === 1, r.exec.join(","));
+    check("[G6] envio final usa a chave aterrada e nao cai em fallback", r.hasMedia && r.mediaKey === COMPASS22.vehicleKey && r.responseSource !== "technical_fallback", `${r.responseSource}|${r.mediaKey}`);
+    check("[G6] negativa falsa nao e publicada", !has(r.outbox, "nao consigo acessar"), r.outbox);
+  }
+
+  // [G7] Veiculo aterrado, consulta executada e retorno vazio genuino. A
+  // engine entrega esse fato ao cerebro, mas nao exige um send_media
+  // impossivel nem substitui a resposta comercial honesta da LLM.
+  {
+    const c = conv();
+    const searchResponder: BrainResponder = (frame, observations) => {
+      const u: TurnUnderstanding = { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: ev(frame.block ?? "Quero o Compass 2019", "stock_search") };
+      const found = observations.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      if (!found) return qU({ tool: "stock_search", input: { marca: "Jeep", modelo: "Compass", anos: [2019] } }, u);
+      return finU([txt("Encontrei o Jeep Compass 2019."), offer(found.data.items.map((v) => v.vehicleKey))], "offer_stock", u);
+    };
+    await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, "Quero o Compass 2019", "ambiguous", searchResponder);
+
+    const responder: BrainResponder = (_frame, observations) => {
+      const u: TurnUnderstanding = { ...U("request_photos"), requestedCapabilities: ["send_photos"], evidence: [{ capability: "send_photos", quote: "fotos dele" }] };
+      const resolved = observations.find((o) => o.tool === "vehicle_photos_resolve") as QueryResult | undefined;
+      if (!resolved) return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: COMPASS19.vehicleKey } } }, u);
+      return finU([txt("Esse Compass 2019 esta sem fotos disponiveis no catalogo agora. Posso te passar os detalhes dele.")], "photos_empty", u);
+    };
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 2, "Tem fotos dele?", "continues_offer", responder);
+    check("[G7] retorno vazio genuino consulta a tool uma vez", r.exec.filter((tool) => tool === "vehicle_photos_resolve").length === 1, r.exec.join(","));
+    check("[G7] retorno vazio nao fabrica send_media", !r.hasMedia, `${r.mediaKey}`);
+    check("[G7] LLM publica resposta honesta sem fallback", r.committed && r.responseSource !== "technical_fallback" && has(r.outbox, "sem fotos") && !has(r.outbox, INSTABILIDADE), `${r.responseSource}|${r.outbox}`);
+  }
+
+  // [G8] A fonte de fotos falhou depois de uma chamada real. O resultado de
+  // erro e admissivel como fato final: a engine nao deve mandar repetir,
+  // prometer envio futuro ou degradar um turno que a LLM concluiu honestamente.
+  {
+    const c = conv();
+    const searchResponder: BrainResponder = (frame, observations) => {
+      const u: TurnUnderstanding = { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: ev(frame.block ?? "Quero o Renegade 2018", "stock_search") };
+      const found = observations.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      if (!found) return qU({ tool: "stock_search", input: { marca: "Jeep", modelo: "Renegade", anos: [2018] } }, u);
+      return finU([txt("Encontrei o Jeep Renegade 2018."), offer(found.data.items.map((v) => v.vehicleKey))], "offer_stock", u);
+    };
+    await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, "Quero o Renegade 2018", "ambiguous", searchResponder);
+
+    const responder: BrainResponder = (_frame, observations) => {
+      const u: TurnUnderstanding = { ...U("request_photos"), requestedCapabilities: ["send_photos"], evidence: [{ capability: "send_photos", quote: "fotos dele" }] };
+      const resolved = observations.find((o) => o.tool === "vehicle_photos_resolve") as QueryResult | undefined;
+      if (!resolved) return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: RENEGADE18.vehicleKey } } }, u);
+      return finU([txt("Nao consegui acessar as fotos desse Renegade agora. Posso continuar pelos detalhes confirmados do veiculo.")], "photos_failed", u);
+    };
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 2, "Tem fotos dele?", "continues_offer", responder);
+    check("[G8] falha factual consulta a tool uma vez", r.exec.filter((tool) => tool === "vehicle_photos_resolve").length === 1, r.exec.join(","));
+    check("[G8] falha factual nao fabrica send_media", !r.hasMedia, `${r.mediaKey}`);
+    check("[G8] LLM conclui honestamente sem retry storm", r.committed && r.responseSource === "brain_final" && r.retryReasons.length === 1 && r.retryReasons[0] === "tool_upstream" && !has(r.outbox, INSTABILIDADE), `${r.responseSource}|${r.retryReasons.join(",")}|${r.outbox}`);
+  }
+
   // SEÇÃO H — TESTE DE CONTRATO (exigido pelo Codex): AUTORIDADE FACTUAL ÚNICA.
   // O v3 tinha TRÊS validações decidindo se um veículo está aterrado, e elas DIVERGIAM. Foi essa divergência que
   // produziu o absurdo do smoke real: um deny afirmando "NENHUM veículo foi aterrado nesta conversa ainda"

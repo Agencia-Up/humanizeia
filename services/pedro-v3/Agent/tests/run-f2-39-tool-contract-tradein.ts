@@ -324,19 +324,23 @@ async function main(): Promise<void> {
   }
 
   // ══ AUDIT CODEX smoke real (rodada 2): "cadê? 7x stock_search" + primaryIntent da troca ══
-  // IN-4) LOOP-DEDUP POR OBSERVAÇÃO: o cérebro repropõe a MESMA busca; a repetição vira feedback de controle (tool:"response",
-  //       NÃO stock_search) -> stockObs<=1 (mesmo critério do smoke). O feedback conduz o cérebro a FINALIZAR com a lista.
+  // IN-4) LOOP-DEDUP POR CONTEXTO TIPADO: o cérebro repropõe a MESMA busca;
+  //       o resultado continua uma vez só e `toolControl.lastReuse` registra o
+  //       reuso do cache sem criar resposta de controle/deny.
   {
     const c = conv();
-    const loopThenFinalize: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
-      const dupFeedback = obs.some((o) => o.tool === "response" && o.ok === false);   // recebeu "você já buscou; finalize"
+    let cacheReuseSeen = 0;
+    const loopThenFinalize: BrainResponder = (frame, obs: readonly AgentToolObservation[]) => {
       const so = obs.find((o) => o.tool === "stock_search" && o.ok) as Extract<AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
-      if (dupFeedback && so) return finU([txt("Encontrei estas opções:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart], "reply", searchSuvU);
-      return qU({ tool: "stock_search", input: { tipo: "suv" } }, searchSuvU);   // insiste na MESMA busca até o feedback
+      if (frame.toolControl?.lastReuse?.tool === "stock_search" && so) {
+        cacheReuseSeen += 1;
+        return finU([txt("Encontrei estas opções:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart], "reply", searchSuvU);
+      }
+      return qU({ tool: "stock_search", input: { tipo: "suv" } }, searchSuvU);   // insiste uma vez; o cache sinaliza o reuso
     };
     const t1 = await c.t("quero SUV", { responder: loopThenFinalize });
     check("[IN-4] busca repetida -> stockObs<=1 (loop não infla a contagem do smoke)", t1.stockObs <= 1, `stockObs=${t1.stockObs}`);
-    check("[IN-4b] executou de verdade só 1x + respondeu com a lista", t1.stockCalls === 1 && (has(t1.outbox, "Creta") || has(t1.outbox, "Renegade")), `calls=${t1.stockCalls} outbox="${t1.outbox}"`);
+    check("[IN-4b] cache tipado apareceu uma vez; executou só 1x e respondeu com a lista", cacheReuseSeen === 1 && t1.stockCalls === 1 && (has(t1.outbox, "Creta") || has(t1.outbox, "Renegade")), `reuse=${cacheReuseSeen} calls=${t1.stockCalls} outbox="${t1.outbox}"`);
   }
   // IN-5) CAP ANTI-LOOP: o cérebro NUNCA finaliza (repropõe a busca sem parar) -> o loop sai pelo cap e o turno COMMITA
   //       (recuperação determinística), com stockObs<=1 (não os 7x do relatório) e executando a busca só 1x.

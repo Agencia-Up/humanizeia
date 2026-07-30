@@ -52,6 +52,18 @@ export type StockSearchMemoryFacts = {
   readonly shownVehicleKeys: readonly string[];
 };
 
+/**
+ * Semantica dos objetos `VehicleFact` expostos pelas tools.
+ *
+ * O feed e esparso: ele serializa somente atributos que a fonte informou. A
+ * omissao de um atributo, equipamento, historico de manutencao ou condicao nao
+ * carrega um booleano negativo escondido. Este dado torna essa semantica
+ * explicita antes da autoria, sem escolher tool, resposta ou conducao.
+ */
+export type VehicleFactSemantics = {
+  readonly omittedAttributeStatus: "unknown";
+};
+
 export type RuntimeCapabilities = {
   readonly sendMessage: boolean;
   /**
@@ -93,11 +105,31 @@ export type AdRuntimeFacts = {
   readonly inventoryConfirmed: boolean;
 };
 
+/**
+ * Alvo veicular factual resolvido para o bloco atual. Este eixo e independente
+ * da prova estrita do anuncio: `resolved` significa que a conversa aponta para
+ * uma vehicleKey aterrada e inequivoca; nao significa que a versao anunciada
+ * foi comprovada. `ad.inventoryConfirmed` continua sendo a unica autoridade
+ * para essa segunda afirmacao.
+ *
+ * A engine nao escolhe uma acao a partir deste campo. Ela apenas projeta para
+ * a LLM o mesmo TargetResolution usado depois para validar detalhes e midia.
+ */
+export type VehicleTargetRuntimeFacts = {
+  readonly status: "resolved" | "ambiguous" | "conflict" | "none";
+  readonly vehicleKey: string | null;
+  readonly candidateVehicleKeys: readonly string[];
+  readonly source: string | null;
+  readonly subjectModel: string | null;
+};
+
 export type OperationalContext = {
   readonly stock: StockRuntimeFacts;
   readonly searchMemory: StockSearchMemoryFacts;
+  readonly vehicleFactSemantics: VehicleFactSemantics;
   readonly capabilities: RuntimeCapabilities;
   readonly ad: AdRuntimeFacts;
+  readonly target: VehicleTargetRuntimeFacts;
 };
 
 /** Structured identity declared by the ad. Taxonomy extraction lives in ad-context; proof evaluation stays pure here. */
@@ -396,6 +428,8 @@ export function buildOperationalContext(input: {
   };
   /** Chave confirmada por uma `AdIdentityProof` exata e ainda presente no eixo de existência. */
   readonly ad: { readonly identity: string | null; readonly confidence: number | null; readonly referenceKey: string | null };
+  /** Projecao do TargetResolution canonico usado pela propria engine. */
+  readonly target?: VehicleTargetRuntimeFacts;
 }): OperationalContext {
   // Última busca EXECUTADA manda: é ela que descreve o recorte vigente do turno.
   const searches = input.facts.filter((f): f is Extract<QueryResult, { ok: true; tool: "stock_search" }> => f.ok && f.tool === "stock_search");
@@ -429,12 +463,20 @@ export function buildOperationalContext(input: {
       shownVehicleKeys: [...new Set((input.searchMemory?.shownVehicleKeys ?? [])
         .filter((key): key is string => typeof key === "string" && key.length > 0))],
     },
+    vehicleFactSemantics: { omittedAttributeStatus: "unknown" },
     capabilities: { ...input.capabilities, appointmentBooking: false, deferredFactCheckTask: false, individualDeferredCallbackTask: false },
     ad: {
       identity: input.ad.identity,
       confidence: input.ad.confidence,
       vehicleKey: adKey,
       inventoryConfirmed: adKey != null,
+    },
+    target: input.target ?? {
+      status: "none",
+      vehicleKey: null,
+      candidateVehicleKeys: [],
+      source: null,
+      subjectModel: null,
     },
   };
 }

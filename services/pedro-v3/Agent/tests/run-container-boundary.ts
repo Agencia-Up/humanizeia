@@ -89,6 +89,16 @@ function main(): void {
   check("[PARIDADE] a copia do Agent contem o contrato canonico integral", corpoDaCopia === canonicoTxt,
     corpoDaCopia === canonicoTxt ? "" : `canonico=${canonicoTxt.length} chars, corpo da copia=${corpoDaCopia.length} chars — SINCRONIZE as duas`);
 
+  const semanticaCanonica = resolve(AGENT_ROOT, "../../../src/lib/pedroFunnelCommercialSemantics.ts");
+  const semanticaCopia = join(SRC_ROOT, "domain/pedroFunnelCommercialSemantics.ts");
+  const semanticaCanonicaTxt = norm(readFileSync(semanticaCanonica, "utf8"));
+  const semanticaCopiaTxt = norm(readFileSync(semanticaCopia, "utf8"));
+  check(
+    "[PARIDADE] a semantica editorial importada pelo contrato tambem esta sincronizada",
+    semanticaCopiaTxt === semanticaCanonicaTxt,
+    semanticaCopiaTxt === semanticaCanonicaTxt ? "" : "SINCRONIZE pedroFunnelCommercialSemantics.ts",
+  );
+
   console.log(`\n== CONTAINER BOUNDARY: ${ok} OK | ${fail} FALHA ==`);
   if (fail > 0) {
     console.error("\nFALHAS:\n" + fails.map((f) => ` - ${f}`).join("\n"));

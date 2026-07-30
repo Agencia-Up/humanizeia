@@ -23,6 +23,22 @@
  * executar qualquer efeito.
  */
 
+import {
+  hasAmbiguousBusinessHours,
+  isAmbiguousNeverDirective,
+  isAmbiguousWarrantyCoverageDirective,
+  isRedundantInventoryProviderDirective,
+  isRedundantFirstContactDirective,
+  isRigidFunnelSequencingDirective,
+  isSubjectiveFinancialQualificationCriterion,
+  isUnconditionalSensitiveDataDirective,
+  isUndefinedRequiredDataQualificationCriterion,
+  isUnscopedOpeningVariationDirective,
+  isUnsupportedStockAttributeAbsenceDirective,
+  isUnsupportedFinancingApprovalDirective,
+  isUnsupportedVehicleValuationDirective,
+} from "./pedroFunnelCommercialSemantics.ts";
+
 export const TENANT_POLICY_SCHEMA_VERSION = "v1" as const;
 
 export const TENANT_POLICY_DOMAINS = [
@@ -114,7 +130,17 @@ export interface TenantFunnelConfigIssue {
     | "empty_branch"
     | "duplicate_question"
     | "always_never_conflict"
-    | "qualified_disqualified_overlap";
+    | "qualified_disqualified_overlap"
+    | "rigid_funnel_sequence"
+    | "unsupported_commercial_action"
+    | "sensitive_data_requires_context"
+    | "ambiguous_business_hours"
+    | "unsupported_stock_absence"
+    | "redundant_operational_directive"
+    | "undefined_qualification_criterion"
+    | "first_contact_conflict"
+    | "ambiguous_prohibition_wording"
+    | "ambiguous_warranty_scope";
   path?: string;
   message: string;
 }
@@ -233,8 +259,78 @@ export function validateTenantFunnelConfig(input: unknown): TenantFunnelConfigIs
     b5.branches.forEach((branch, index) => {
       if (!isRecord(branch) || !cleanText(branch.trigger) || listValues(branch.questions).length === 0) {
         issues.push({ severity: "error", code: "empty_branch", path: `bloco5_ramificacoes.branches[${index}]`, message: `A ramificação ${index + 1} precisa ter gatilho e pelo menos uma orientação.` });
+        return;
+      }
+      for (const instruction of listValues(branch.questions)) {
+        if (isRigidFunnelSequencingDirective(instruction)) {
+          issues.push({ severity: "warning", code: "rigid_funnel_sequence", path: `bloco5_ramificacoes.branches[${index}]`, message: `A orientação “${instruction}” transforma o funil em sequência rígida e será removida na geração.` });
+        }
+        if (isUnsupportedVehicleValuationDirective(instruction) || isUnsupportedFinancingApprovalDirective(instruction)) {
+          issues.push({ severity: "warning", code: "unsupported_commercial_action", path: `bloco5_ramificacoes.branches[${index}]`, message: `A orientação “${instruction}” promete uma ação que o agente não executa sozinho e será convertida em coleta contextual + encaminhamento humano.` });
+        }
+        if (isUnconditionalSensitiveDataDirective(instruction)) {
+          issues.push({ severity: "warning", code: "sensitive_data_requires_context", path: `bloco5_ramificacoes.branches[${index}]`, message: `A coleta de dado sensível em “${instruction}” será condicionada à necessidade da etapa e à explicação do motivo.` });
+        }
       }
     });
+  }
+
+  for (const criterion of listValues(b6.qualified_when)) {
+    if (isUndefinedRequiredDataQualificationCriterion(criterion) || isSubjectiveFinancialQualificationCriterion(criterion)) {
+      issues.push({
+        severity: "warning",
+        code: "undefined_qualification_criterion",
+        path: "bloco6_criterios.qualified_when",
+        message: `O critério “${criterion}” não define evidência objetiva e será removido ou convertido em contexto suficiente, sem bloquear a conversa.`,
+      });
+    }
+  }
+
+  for (const [path, instructions] of [
+    ["bloco3_abordagem.avoid", listValues(b3.avoid)],
+    ["bloco8_regras.always", listValues(b8.always)],
+    ["bloco8_regras.never", listValues(b8.never)],
+  ] as const) {
+    for (const instruction of instructions) {
+      if (isRigidFunnelSequencingDirective(instruction)) {
+        issues.push({ severity: "warning", code: "rigid_funnel_sequence", path, message: `A orientação “${instruction}” transforma o funil em sequência rígida e será removida na geração.` });
+      }
+    }
+  }
+
+  for (const instruction of listValues(b8.always)) {
+    if (isUnsupportedVehicleValuationDirective(instruction) || isUnsupportedFinancingApprovalDirective(instruction)) {
+      issues.push({ severity: "warning", code: "unsupported_commercial_action", path: "bloco8_regras.always", message: `A regra “${instruction}” promete uma ação que o agente não executa sozinho e será convertida em coleta contextual + encaminhamento humano.` });
+    }
+    if (isUnconditionalSensitiveDataDirective(instruction)) {
+      issues.push({ severity: "warning", code: "sensitive_data_requires_context", path: "bloco8_regras.always", message: `A coleta de dado sensível em “${instruction}” será condicionada à necessidade da etapa e à explicação do motivo.` });
+    }
+    if (isUnsupportedStockAttributeAbsenceDirective(instruction)) {
+      issues.push({ severity: "warning", code: "unsupported_stock_absence", path: "bloco8_regras.always", message: `A regra “${instruction}” afirma ausência de característica sem cobertura factual. A geração preservará apenas a alternativa transparente e o que a fonte realmente confirmou.` });
+    }
+    if (isRedundantInventoryProviderDirective(instruction)) {
+      issues.push({ severity: "warning", code: "redundant_operational_directive", path: "bloco8_regras.always", message: `A regra “${instruction}” duplica a mecânica de consulta do Pedro v3 e será removida; o contrato operacional já define quando consultar estoque.` });
+    }
+    if (isUnscopedOpeningVariationDirective(instruction)) {
+      issues.push({ severity: "warning", code: "first_contact_conflict", path: "bloco8_regras.always", message: `A regra “${instruction}” conflita com a apresentação literal. A variação será limitada às mensagens após o primeiro contato.` });
+    }
+    if (isRedundantFirstContactDirective(instruction)) {
+      issues.push({ severity: "warning", code: "first_contact_conflict", path: "bloco8_regras.always", message: `A regra “${instruction}” duplica a saudação já garantida pelo primeiro contato literal e será removida.` });
+    }
+  }
+
+  for (const instruction of listValues(b8.never)) {
+    if (isAmbiguousNeverDirective(instruction)) {
+      issues.push({ severity: "warning", code: "ambiguous_prohibition_wording", path: "bloco8_regras.never", message: `A regra “${instruction}” está como negativa dentro do campo “Nunca” e será reescrita como proibição inequívoca.` });
+    }
+    if (isAmbiguousWarrantyCoverageDirective(instruction)) {
+      issues.push({ severity: "warning", code: "ambiguous_warranty_scope", path: "bloco8_regras.never", message: `A regra “${instruction}” mistura a cobertura da garantia da loja com eventual garantia de fábrica. A geração deixará explícito que a restrição se refere à garantia da loja.` });
+    }
+  }
+
+  const configuredHours = cleanText(b9.hours);
+  if (hasAmbiguousBusinessHours(configuredHours)) {
+    issues.push({ severity: "warning", code: "ambiguous_business_hours", path: "bloco9_empresa.hours", message: `O horário “${configuredHours}” parece usar “é” no lugar de “e”. A geração corrigirá a redação para “Sábados e feriados”.` });
   }
 
   return issues;

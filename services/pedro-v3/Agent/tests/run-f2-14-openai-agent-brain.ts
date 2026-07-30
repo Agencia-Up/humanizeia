@@ -77,6 +77,122 @@ async function main(): Promise<void> {
     const step = await brain.proposeNextStep(frame("quero uma suv"), []);
     check("[1] decode query stock_search (tipo+precoMax)", step.kind === "query" && step.call.tool === "stock_search" && (step.call.input as { tipo?: string; precoMax?: number }).tipo === "suv" && (step.call.input as { precoMax?: number }).precoMax === 90000);
   }
+  // [1n] OpenAI usa function calling nativo para query. A LLM continua
+  // escolhendo a tool e os argumentos; o response_format estrito fica menor e
+  // aceita somente o FINAL, evitando truncar um agent_step grande entre tools.
+  {
+    const understanding = {
+      primaryIntent: "request_photos",
+      requestedCapabilities: ["send_photos"],
+      subject: "selected_vehicle",
+      subjectValue: "Equinox 2023",
+      subjectSource: "memory",
+      evidence: [{ capability: "send_photos", quote: "manda foto" }],
+      monetaryMentions: [],
+      isTopicChange: false,
+      answeredLeadQuestions: [],
+      policyDecision: null,
+    };
+    let request: ModelHttpRequest | undefined;
+    const transport: ModelHttpTransport = {
+      async postJson(_url: string, req: ModelHttpRequest): Promise<ModelHttpResponse> {
+        request = req;
+        return {
+          status: 200,
+          contentType: "application/json",
+          bodyText: JSON.stringify({
+            choices: [{
+              finish_reason: "tool_calls",
+              message: {
+                content: null,
+                tool_calls: [{
+                  type: "function",
+                  function: {
+                    name: "vehicle_photos_resolve",
+                    arguments: JSON.stringify({ understanding, input: { vehicleKey: "rm:equinox-2023" } }),
+                  },
+                }],
+              },
+            }],
+          }),
+        };
+      },
+    };
+    const brain = new OpenAiAgentBrain(SECRET, transport, PORTAL_PROMPT, {
+      model: "gpt-4.1-mini",
+      allowedTools: ["vehicle_photos_resolve"],
+    });
+    const step = await brain.proposeNextStep(frame("manda foto"), []);
+    const body = JSON.parse(request!.body) as {
+      tools?: { type?: string; function?: { name?: string; strict?: boolean; parameters?: { required?: string[]; properties?: Record<string, { required?: string[] }> } } }[];
+      tool_choice?: string;
+      parallel_tool_calls?: boolean;
+      response_format?: { json_schema?: { schema?: { properties?: Record<string, { enum?: string[]; type?: string }> } } };
+      messages?: { role?: string; content?: string }[];
+    };
+    const fn = body.tools?.[0]?.function;
+    const finalProperties = body.response_format?.json_schema?.schema?.properties;
+    check("[1n] function call nativa decodifica para query da LLM",
+      step.kind === "query"
+      && step.call.tool === "vehicle_photos_resolve"
+      && (step.call.input as { vehicleRef?: { key?: string } }).vehicleRef?.key === "rm:equinox-2023");
+    check("[1n] request expõe somente tools permitidas e desativa paralelismo",
+      body.tools?.length === 1
+      && fn?.name === "vehicle_photos_resolve"
+      && fn.strict === true
+      && body.tool_choice === "auto"
+      && body.parallel_tool_calls === false);
+    check("[1n] argumentos da tool carregam understanding e input estritos",
+      fn?.parameters?.required?.includes("understanding") === true
+      && fn.parameters.required.includes("input")
+      && fn.parameters.properties?.input?.required?.includes("vehicleKey") === true);
+    check("[1n] response_format OpenAI reserva o JSON apenas ao final",
+      finalProperties?.kind?.enum?.length === 1
+      && finalProperties.kind.enum[0] === "final"
+      && finalProperties.call?.type === "null");
+    const nativeDiscipline = body.messages?.filter((m) => m.role === "system").map((m) => m.content ?? "").join("\n") ?? "";
+    check("[1n] disciplina nativa governa transporte sem escolher tool",
+      nativeDiscipline.includes("DISCIPLINA NATIVA DE TOOLS")
+      && nativeDiscipline.includes("nao escolhe assunto, tool")
+      && !nativeDiscipline.includes("chame vehicle_photos_resolve agora"));
+    check("[1n] semantica de campo omitido chega antes da autoria sem caso especifico",
+      nativeDiscipline.includes('vehicleFactSemantics.omittedAttributeStatus="unknown"')
+      && nativeDiscipline.includes("somente um campo explicitamente presente e fato")
+      && !/teto solar/i.test(nativeDiscipline));
+  }
+  // [1o] O contrato factual deve estar junto da function tool, onde o modelo
+  // decide se e como consulta. Ele descreve limites da fonte; nao escolhe a
+  // resposta, nao cria regra por acessorio e nao introduz hard deny na engine.
+  {
+    const transport = new CannedTransport(JSON.stringify({
+      kind: "final",
+      understanding: { primaryIntent: "vehicle_detail", requestedCapabilities: ["vehicle_details"], subject: "selected_vehicle", subjectValue: "veiculo atual", subjectSource: "memory", evidence: [{ capability: "vehicle_details", quote: "tem esse item?" }], monetaryMentions: [], isTopicChange: false, answeredLeadQuestions: [], policyDecision: null },
+      reasonCode: "reply", confidence: 0.9, guidance: "responder com os fatos disponiveis",
+      draft: { parts: [{ type: "text", content: "Esse dado nao esta confirmado nas informacoes disponiveis." }] },
+      effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [], knowledgeGaps: [],
+    }));
+    const brain = new OpenAiAgentBrain(SECRET, transport, PORTAL_PROMPT, {
+      model: "gpt-4.1-mini",
+      allowedTools: ["stock_search", "vehicle_details"],
+    });
+    await brain.proposeNextStep(frame("tem esse item?"), []);
+    const body = JSON.parse(transport.lastRequest!.body) as {
+      tools?: { function?: { name?: string; description?: string } }[];
+    };
+    const descriptions = new Map((body.tools ?? []).map((entry) => [entry.function?.name ?? "", entry.function?.description ?? ""]));
+    const stockDescription = descriptions.get("stock_search") ?? "";
+    const detailDescription = descriptions.get("vehicle_details") ?? "";
+    check("[1o] stock_search declara dado esparso sem transformar omissao em negativa",
+      /esparso/i.test(stockDescription)
+      && /desconhecid/i.test(stockDescription)
+      && /nunca significa 'nao possui'/i.test(stockDescription));
+    check("[1o] vehicle_details limita prova a campo explicitamente retornado",
+      /somente campos explicitamente retornados confirmam/i.test(detailDescription)
+      && /nunca infira sim ou nao/i.test(detailDescription)
+      && /conhecimento geral/i.test(detailDescription));
+    check("[1o] contrato continua geral e nao contem remendo por acessorio",
+      !/teto solar/i.test(`${stockDescription}\n${detailDescription}`));
+  }
   // [2] final decode com send_media + guidance
   // [1a] A resposta truncada não deve voltar ao engine como um passo vazio
   // para repetir o mesmo envelope pesado. O adapter faz uma única reautoria
@@ -157,6 +273,22 @@ async function main(): Promise<void> {
     check("[2b] adapter nao sintetiza send_media sem decisao explicita da LLM",
       step.kind === "final" && !step.decision.proposedEffects.some((effect) => effect.kind === "send_media"));
   }
+  // [2c] Esclarecimento conversacional nao precisa de um segundo estado de
+  // midia redundante. O draft e os effects ja expressam a decisao da LLM.
+  {
+    const { brain } = brainWith(JSON.stringify({
+      kind: "final",
+      reasonCode: "clarify_photos",
+      guidance: "Esclarecer qual conjunto de fotos o lead prefere",
+      draft: { parts: [{ type: "text", content: "Voce prefere fotos internas ou externas?" }] },
+      effects: [{ kind: "send_message" }],
+    }));
+    const step = await brain.proposeNextStep(frame("manda fotos"), []);
+    check("[2c] adapter preserva esclarecimento sem estado redundante de midia",
+      step.kind === "final"
+      && step.decision.responsePlan.draft?.parts.some((part) => part.type === "text" && part.content.includes("internas ou externas")) === true
+      && !step.decision.proposedEffects.some((effect) => effect.kind === "send_media"));
+  }
   // [3] tool proibida/desconhecida -> final seguro (não trava)
   {
     const { brain } = brainWith(JSON.stringify({ kind: "query", call: { tool: "delete_everything", input: {} } }));
@@ -186,7 +318,10 @@ async function main(): Promise<void> {
   {
     const { brain, transport } = brainWith(JSON.stringify({ kind: "final", guidance: "ok" }));
     await brain.proposeNextStep(frame("oi"), []);
-    const body = JSON.parse(transport.lastRequest!.body) as { messages: { role: string; content: string }[] };
+    const body = JSON.parse(transport.lastRequest!.body) as {
+      messages: { role: string; content: string }[];
+      response_format?: { json_schema?: { schema?: { required?: unknown; properties?: Record<string, { enum?: unknown }> } } };
+    };
     const sys = body.messages
       .filter((m) => m.role === "system")
       .map((m) => m.content)
@@ -199,9 +334,23 @@ async function main(): Promise<void> {
     check("[5a] negocio e funil continuam sob autoridade do portal", sys.includes("O prompt do portal define identidade, personalidade, negocio, funil e estilo") && sys.includes("engine nao escolhe assunto"));
     check("[5a-photo] protocolo explica send_media minimo aterrado pela tool",
       sys.includes("mídia e handoff ficam em effects") && sys.includes("vehicle_photos_resolve"));
+    check("[5a-tools] observacao resolve somente sua etapa e preserva workflows multi-tool",
+      sys.includes("resolve somente a etapa que a produziu") && sys.includes("resultado vira entrada factual da proxima decisao"));
+    check("[5a-tools] protocolo nao manda finalizar apos qualquer tool bem-sucedida",
+      !sys.includes("Depois de uma observacao bem-sucedida, use o resultado e finalize"));
+    const stepSchema = body.response_format?.json_schema?.schema;
+    check("[5a-media-contract] schema strict nao duplica o estado operacional de midia",
+      Array.isArray(stepSchema?.required)
+      && !stepSchema.required.includes("mediaOutcome")
+      && stepSchema.properties?.mediaOutcome == null);
     check("[5a-ad] protocolo trata anuncio exato como foco singular, nao lista implicita",
       sys.includes("sourceContext.advertisedVehicle")
       && sys.includes("O anuncio nao e absoluto se o lead mudar de ideia"));
+    check("[5a-target] protocolo separa alvo utilizavel de prova estrita do anuncio",
+      sys.includes('target.status="resolved"')
+      && sys.includes("mesma resolucao aceita pela engine para detalhes e fotos")
+      && sys.includes("somente ad.inventoryConfirmed tem esse significado")
+      && sys.includes("Nao escolha uma candidateVehicleKey arbitrariamente"));
 
     const contextFrame: TurnFrame = {
       ...frame("mostra o azul"),

@@ -69,6 +69,11 @@ export type BndvAuthResult =
   | { readonly ok: true; readonly authHeader: string; readonly mode: "login" | "bearer" }
   | { readonly ok: false; readonly error: string };
 
+function isTransientLoginFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /SAFE_FETCH_FAILURE:\s*(?:TIMEOUT|NETWORK_ERROR|DNS_RESOLUTION_FAILED|HTTP_STATUS_(?:408|425|429|5\d\d))\b/i.test(message);
+}
+
 // Resolve o header Authorization para o /graphql. Faz o /login quando há ExternalKey+Senha; senão usa o Bearer legado.
 export async function resolveBndvAuthHeader(cred: BndvCredentials, http: SafeHttpClient): Promise<BndvAuthResult> {
   const extKey = cred.external_key?.trim();
@@ -85,9 +90,15 @@ export async function resolveBndvAuthHeader(cred: BndvCredentials, http: SafeHtt
         expectJson: false,   // o /login pode devolver o token como texto puro
       });
       text = res.text;
-    } catch {
+    } catch (error) {
       // SafeHttpClient já lança sanitizado (SAFE_FETCH_FAILURE: HTTP_STATUS_401/timeout/etc.) — nunca vaza credencial.
-      return { ok: false, error: "BNDV_LOGIN_FAILED" };
+      // Preserve somente a classe transitoria para o loader repetir uma vez
+      // o ciclo login -> GraphQL. Nunca devolva mensagem, URL, senha ou token;
+      // 401 e demais falhas permanentes continuam sem retry.
+      return {
+        ok: false,
+        error: isTransientLoginFailure(error) ? "BNDV_LOGIN_TRANSIENT" : "BNDV_LOGIN_FAILED",
+      };
     }
     const token = extractLoginToken(text);
     if (!token) return { ok: false, error: "BNDV_LOGIN_NO_TOKEN" };

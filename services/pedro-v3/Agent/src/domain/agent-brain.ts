@@ -236,6 +236,17 @@ export type TurnFrame = {
   // a LLM interpreta e decide. RECALCULADO A CADA PASSO — depois de uma tool, o frame seguinte já reflete o
   // resultado (um frame congelado antes da busca continuaria afirmando que o estoque não foi consultado).
   readonly operationalContext?: OperationalContext;
+  // Metadado factual e efêmero do protocolo de tools. Quando a LLM propõe de
+  // novo a mesma tool+input, o adapter não é reexecutado: o resultado original
+  // continua em `observations` e este marcador informa, por um único passo, que
+  // a proposta repetida foi atendida pelo cache. Não escolhe a próxima ação.
+  readonly toolControl?: {
+    readonly lastReuse: {
+      readonly tool: CentralQueryCall["tool"];
+      readonly ok: boolean;
+      readonly mode: "cache_reuse";
+    } | null;
+  };
 };
 
 // ── Observação factual das tools (P0-3) — SEPARADA da telemetria ────────────────────────────────────────────
