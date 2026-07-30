@@ -50,14 +50,28 @@ check("[DB4] migração tolera somente diferença de line ending da função em 
   followupMigration.includes("replace(v_definition, E'\\r\\n', E'\\n')")
     && followupMigration.includes("raise exception 'v3_commit_turn_definition_drift'"));
 check("[R1] T1=5", rules.followup.t1Min === 5); check("[R2] T2=8", rules.followup.t2Min === 8); check("[R3] T3=12", rules.followup.t3Min === 12); check("[R4] T3 transfere", rules.followup.t3Transfers); check("[R5] seller timeout=10", rules.transfer.sellerResponseMin === 10);
+const independentIntervals = resolveAutomationRules({ followup: { enabled: true, t1_min: 10, t2_min: 3, t3_min: 1 } });
+check("[R6] intervalos sao independentes e nao sofrem reordenacao silenciosa",
+  independentIntervals.followup.t1Min === 10
+  && independentIntervals.followup.t2Min === 3
+  && independentIntervals.followup.t3Min === 1);
 
 const s = state(), anchor = record();
 check("[P1] T1 vence", evaluateFollowupDue({ state: s, outbox: [anchor], rules: rules.followup, now: "2026-07-11T12:05:00.000Z" })?.stage === 1);
 s.followupCycle = { anchorEffectId: anchor.effectId, anchorAt: ANCHOR, sentStages: [1], plannedStage: null, lastSentAt: "2026-07-11T12:05:00.000Z" };
-check("[P2] T2 vence", evaluateFollowupDue({ state: s, outbox: [anchor], rules: rules.followup, now: "2026-07-11T12:08:00.000Z" })?.stage === 2);
-s.followupCycle = { ...s.followupCycle, sentStages: [1, 2] };
-const due3 = evaluateFollowupDue({ state: s, outbox: [anchor], rules: rules.followup, now: NOW });
-check("[P3] T3 vence", due3?.stage === 3);
+check("[P2a] T2 nao usa mais a ancora inicial para comprimir a regua", evaluateFollowup({ state: s, outbox: [anchor], rules: rules.followup, now: "2026-07-11T12:12:59.000Z" }).reason === "not_due");
+check("[P2] T2 vence oito minutos depois do T1", evaluateFollowupDue({ state: s, outbox: [anchor], rules: rules.followup, now: "2026-07-11T12:13:00.000Z" })?.stage === 2);
+s.followupCycle = { ...s.followupCycle, sentStages: [1, 2], lastSentAt: "2026-07-11T12:13:00.000Z" };
+check("[P3a] T3 nao dispara um minuto depois do T2", evaluateFollowup({ state: s, outbox: [anchor], rules: rules.followup, now: "2026-07-11T12:24:59.000Z" }).reason === "not_due");
+const due3 = evaluateFollowupDue({ state: s, outbox: [anchor], rules: rules.followup, now: "2026-07-11T12:25:00.000Z" });
+check("[P3] T3 vence doze minutos depois do T2", due3?.stage === 3);
+const legacyCycle = state();
+legacyCycle.followupCycle = { anchorEffectId: anchor.effectId, anchorAt: ANCHOR, sentStages: [1], plannedStage: null, lastSentAt: null };
+const legacyT1 = record({ effectId: `followup:${anchor.effectId}:1:message`, createdAt: "2026-07-11T12:05:00.000Z" });
+check("[P3b] outbox preserva a cadencia de ciclos antigos sem lastSentAt",
+  evaluateFollowupDue({ state: legacyCycle, outbox: [anchor, legacyT1], rules: rules.followup, now: "2026-07-11T12:13:00.000Z" })?.stage === 2);
+check("[P3c] ciclo sem horario anterior falha fechado em vez de disparar imediatamente",
+  evaluateFollowup({ state: legacyCycle, outbox: [anchor], rules: rules.followup, now: "2026-07-11T13:00:00.000Z" }).reason === "invalid_time");
 check("[P4] accepted ancora quando provider nao publica delivery", evaluateFollowupDue({ state: state(), outbox: [record({ receiptLevel: "accepted" })], rules: rules.followup, now: NOW })?.stage === 1);
 const degradedAnchor = record({
   effectId: "turn-degraded:message",

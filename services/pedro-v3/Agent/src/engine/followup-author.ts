@@ -15,6 +15,39 @@ function normalizeFollowupText(text: string): string {
   return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+function comparableFollowupText(text: string): string {
+  return normalizeFollowupText(text).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+// Repetir integralmente uma mensagem ja publicada nao e uma escolha comercial:
+// e uma duplicacao observavel. A validacao permanece deliberadamente
+// conservadora para nao impedir a LLM de retomar o mesmo assunto com uma
+// abordagem nova. Igualdade normalizada sempre bloqueia; similaridade so conta
+// em mensagens longas e quase identicas.
+function repeatsRecentAgentMessage(text: string, state: ConversationState): boolean {
+  const current = comparableFollowupText(text);
+  if (!current) return false;
+  const currentTokens = current.split(" ").filter(Boolean);
+  const currentSet = new Set(currentTokens);
+
+  return (state.recentTurns ?? [])
+    .filter((turn) => turn.role === "agent")
+    .slice(-6)
+    .some((turn) => {
+      const prior = comparableFollowupText(turn.text);
+      if (!prior) return false;
+      if (prior === current) return true;
+
+      const priorTokens = prior.split(" ").filter(Boolean);
+      if (currentTokens.length < 12 || priorTokens.length < 12) return false;
+      const priorSet = new Set(priorTokens);
+      const intersection = [...currentSet].filter((token) => priorSet.has(token)).length;
+      const union = new Set([...currentSet, ...priorSet]).size;
+      return intersection / Math.min(currentSet.size, priorSet.size) >= 0.9
+        && intersection / union >= 0.8;
+    });
+}
+
 function lastAgentMessage(state: ConversationState): string | null {
   for (let i = (state.recentTurns ?? []).length - 1; i >= 0; i -= 1) {
     if (state.recentTurns[i]?.role === "agent") return state.recentTurns[i]!.text;
@@ -160,7 +193,7 @@ export async function authorFollowupMessage(args: {
 export type FollowupAuthorResult = {
   readonly text: string | null;
   readonly attempts: number;
-  readonly reason: "authored" | "brain_error" | "query_not_allowed" | "text_missing" | "question_contract" | "unsupported_claim" | "unsupported_handoff_claim";
+  readonly reason: "authored" | "brain_error" | "query_not_allowed" | "text_missing" | "duplicate_message" | "question_contract" | "unsupported_claim" | "unsupported_handoff_claim";
 };
 
 export async function authorFollowupMessageDetailed(args: {
@@ -182,7 +215,7 @@ export async function authorFollowupMessageDetailed(args: {
     const previousLead = lastLeadMessage(args.state);
     const agentQuestions = recentAgentQuestions(args.state);
     const advertisedVehicle = adVehicleLabel(args.state);
-    const block = `[EVENTO SISTEMICO FOLLOW-UP T${args.stage}] O cliente esta inativo. Reabra a conversa com autoria propria, usando apenas o historico factual deste frame. Nao afirme que algo foi enviado se nao aparece nas falas anteriores ou na oferta visivel.${feedback}`;
+    const block = `[EVENTO SISTEMICO FOLLOW-UP T${args.stage}] O cliente esta inativo. Reabra a conversa com autoria propria, usando apenas o historico factual deste frame. Nao repita uma mensagem, ficha, proposta ou CTA ja enviados. Nao afirme que algo foi enviado se nao aparece nas falas anteriores ou na oferta visivel.${feedback}`;
     const conversationContext = buildConversationContext({ state: args.state, workingMemory: memory });
     const frame: TurnFrame = {
       turnId: args.turnId,
@@ -244,6 +277,7 @@ export async function authorFollowupMessageDetailed(args: {
     let text: string;
     try { text = ResponseRenderer.render({ parts: textParts }, [], args.state).trim(); }
     catch { text = ""; }
+    const repeatedMessage = repeatsRecentAgentMessage(text, args.state);
     const repeatedQuestion = args.stage !== 3 && repeatsLastAgentQuestion(text, lastAgentMessage(args.state));
     const repeatedPendingSlot = args.stage !== 3
       && repeatsPendingQuestionSlot(text, memory.pendingAgentQuestion?.slot ?? null);
@@ -253,8 +287,8 @@ export async function authorFollowupMessageDetailed(args: {
     const unsupportedHandoffClaim = claimsHandoffContinuity(text) && !handoffWillBeMaterialized;
     const missingHandoffClaim = args.stage === 3 && args.handoffAvailable === true && !claimsHandoffContinuity(text);
     const questions = questionCount(text);
-    if (!text || invalidStyle || repeatedQuestion || repeatedPendingSlot || unsupportedClaim || unsupportedHandoffClaim || missingHandoffClaim || (args.stage === 3 ? questions !== 0 : questions > 1)) {
-      lastReason = !text ? "text_missing" : unsupportedHandoffClaim ? "unsupported_handoff_claim" : unsupportedClaim ? "unsupported_claim" : "question_contract";
+    if (!text || repeatedMessage || invalidStyle || repeatedQuestion || repeatedPendingSlot || unsupportedClaim || unsupportedHandoffClaim || missingHandoffClaim || (args.stage === 3 ? questions !== 0 : questions > 1)) {
+      lastReason = !text ? "text_missing" : repeatedMessage ? "duplicate_message" : unsupportedHandoffClaim ? "unsupported_handoff_claim" : unsupportedClaim ? "unsupported_claim" : "question_contract";
       feedback = unsupportedHandoffClaim
         ? " FEEDBACK: este follow-up nao materializa uma transferencia. Reescreva com autoria propria sem afirmar que o contato foi ou sera encaminhado e sem prometer acao futura de analista/vendedor/equipe. Uma pergunta ou oferta, sem afirmar que a transferencia aconteceu, continua permitida."
         : args.stage === 3
@@ -263,6 +297,8 @@ export async function authorFollowupMessageDetailed(args: {
             : " FEEDBACK: T3 deve ser uma despedida curta, amigavel e sem pergunta. Nao use saudacao, apresentacao, 'Prefiro ser honesto' ou linguagem de desistencia fria."
           : unsupportedClaim
             ? " FEEDBACK: sua mensagem afirmou que algo foi enviado, mas esse material nao esta comprovado no historico atual. Reescreva sem essa afirmacao e reabra com uma mensagem verdadeira ligada ao contexto disponivel."
+            : repeatedMessage
+              ? " FEEDBACK: esta mensagem repete uma mensagem ja enviada ao cliente. Nao parafraseie a mesma ficha, proposta ou CTA. Escreva uma retomada nova, curta e de baixa friccao, ligada ao historico; a escolha das palavras continua sendo sua."
             : repeatedQuestion || repeatedPendingSlot
               ? " FEEDBACK: voce repetiu uma pergunta de qualificacao que o cliente ainda nao respondeu. Nao a reformule. Faca uma retomada diferente e ligada ao contexto; a escolha do texto continua sendo sua."
               : invalidStyle

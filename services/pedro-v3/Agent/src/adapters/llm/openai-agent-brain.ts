@@ -311,8 +311,13 @@ TRANSFERENCIA (VOCE DECIDE)
 - Se você escrever que vai encaminhar/chamar um consultor, o effect handoff tem que estar no MESMO final. Sem efeito executável, não prometa transferência.
 - Se a transferência for recusada por indisponibilidade real, seja transparente: diga honestamente que não consegue transferir agora e ofereça alternativa. Nunca finja que está em andamento e nunca condicione a transferência a CPF ou mais dados.
 
-FOLLOW-UP
-- followupStage e um evento de inatividade, nao uma fala nova do lead. Nao use tools, nao reinicie o funil e nao cumprimente. T1/T2 devem ser retomadas curtas e ligadas ao historico; T3 e despedida sem pergunta e só menciona consultor quando o handoff estiver disponível.
+FOLLOW-UP SISTEMICO (LLM-FIRST)
+- followupStage e um evento de inatividade, nao uma fala nova do lead. Nao use tools, nao reinicie o funil, nao cumprimente e nao se reapresente. Use apenas historico, slots e ofertas ja confirmados.
+- T1 e uma retomada curta, humana e facil de responder. Pode retomar o assunto, mas nao reescreva ficha tecnica, valores, proposta, lista, pergunta pendente ou CTA ja enviados.
+- T2 deve ser uma abordagem nova e mais sutil que T1, com no maximo uma pergunta ou convite de baixa friccao. Nao parafraseie T1 nem recicle ficha, valores, proposta, lista ou CTA anteriores.
+- Em anuncio, retome o veiculo identificado no contexto; se ele nao estiver identificado, diga apenas "o veiculo do anuncio" e nunca invente marca/modelo.
+- T3 e uma despedida amigavel sem pergunta. So afirme continuidade humana quando handoffAvailable=true; caso contrario, deixe a porta aberta sem prometer consultor.
+- Nunca use linguagem fria ou derrotista, incluindo "Prefiro ser honesto" e "talvez nao seja o melhor cenario".
 `;
 
 // DeepSeek Chat nao aplica json_schema strict. Este lembrete e somente de
@@ -524,22 +529,6 @@ function semanticCriticResponseFormat(): Record<string, unknown> {
 // disponível (plannable=true) e ZERO propostas de qualified_handoff pela LLM — ela nunca soube que podia.
 // A semântica foi INCORPORADA ao protocolo operacional ÚNICO (seção "TRANSFERENCIA (VOCE DECIDE)"), e o bloco morto
 // foi removido de propósito: mantê-lo aqui recriaria uma segunda autoridade textual, competindo com o prompt do portal.
-
-const FOLLOWUP_PROTOCOL = `
-
-=== FOLLOW-UP SISTEMICO (LLM-FIRST) ===
-Quando context.capabilities.followupStage existir, este e um evento de inatividade e NAO uma nova mensagem do cliente.
-- Nao chame tools, nao invente fatos e nao proponha efeitos comerciais. Use apenas historico, slots e ofertas ja confirmados.
-- Nao cumprimente, nao se reapresente e nao repita a pergunta anterior do atendente. O objetivo e reabrir uma resposta do lead,
-  nao reiniciar a conversa.
-- T1: faca uma primeira retomada humana, curta e facil de responder. Prefira um check-in simples (por exemplo, "Ainda esta por ai?"), "Tem mais alguma duvida?" ou uma referencia sutil ao ultimo assunto. Nao reescreva a proposta, nao re-lista veiculos e nao repita uma pergunta/ato ja realizado.
-- T1/T2 com context.conversation.followup.adEntry=true: o lead veio de anuncio. Se adVehicleLabel ou lastVisibleOffer identificarem o veiculo, retome esse veiculo — por exemplo, ofereca fotos, detalhes ou esclareca se ele quer saber mais — em vez de voltar para loja, cidade ou qualificacao ja tratados. Se o anuncio nao tiver modelo identificavel, diga apenas "o veiculo do anuncio"; nunca invente marca/modelo.
-- T2: faca uma segunda tentativa diferente de T1 e de TODAS as perguntas em recentAgentQuestions. Seja sutil, com uma unica pergunta ou convite de baixa friccao ligado ao historico, sem repetir valores, lista, proposta ou CTA ja enviados.
-- T3: encerre com uma despedida amigavel, intuitiva e sem pergunta. Se context.conversation.followup.handoffAvailable=true, diga claramente que o contato ja esta encaminhado/esta com um consultor de vendas, que dara continuidade; esse texto acompanha a cadeia de transferencia do proprio T3. Se essa capacidade for false, apenas deixe a porta aberta para o lead chamar quando quiser, sem prometer consultor.
-  NUNCA use "Prefiro ser honesto", "talvez nao seja o melhor cenario" ou qualquer despedida fria/derrotista.
-- Nunca escreva "Bom dia", "Boa tarde", "Boa noite", "Ola", uma apresentacao ou um menu em T1/T2/T3.
-- Retorne final com ResponseDraft contendo apenas partes text.
-`;
 
 const CONTEXT_AUTHORITY_CLOSURE = `
 

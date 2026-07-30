@@ -69,6 +69,37 @@ const t2Brain = new QueueBrain([
 const t2 = await authorFollowupMessageDetailed({ brain: t2Brain, state: t2State, stage: 2, turnId: "fu60-t2", now: NOW, portalPromptSha256: "sha" });
 check("T2 rejeita repeticao da pergunta anterior", t2.text === "Se ainda estiver avaliando, posso te ajudar com os detalhes desse carro. Quer continuar por aqui?" && t2.attempts === 2);
 
+// Incidente real WA (30/07): T1 e T2 publicaram a mesma ficha declarativa do
+// up! Cross, sem pergunta. O contrato antigo comparava apenas perguntas e nao
+// enxergava a duplicacao integral. A engine nao escolhe a nova abordagem: ela
+// apenas recusa a copia e devolve a autoria para a LLM.
+const duplicateMessageState = state();
+const duplicatedVehicleMessage = "Sobre o Volkswagen up! Cross MC 2017, ele esta com 136.711 km rodados, cambio manual e e flex. O preco e R$ 59.900. Se quiser, posso ajudar com mais informacoes ou tirar duvidas.";
+duplicateMessageState.recentTurns = [
+  { role: "lead", text: "Quero saber mais sobre o up", at: "2026-07-15T12:00:00.000Z" },
+  { role: "agent", text: duplicatedVehicleMessage, at: "2026-07-15T12:05:00.000Z" },
+];
+const duplicateMessageBrain = new QueueBrain([
+  final(duplicatedVehicleMessage.toUpperCase()),
+  final("Se o up! Cross ainda fizer sentido para voce, sigo por aqui para ajudar."),
+]);
+const duplicateMessage = await authorFollowupMessageDetailed({
+  brain: duplicateMessageBrain, state: duplicateMessageState, stage: 2,
+  turnId: "fu60-duplicate-message", now: NOW, portalPromptSha256: "sha",
+});
+check("T2 rejeita mensagem declarativa integralmente repetida", duplicateMessage.attempts === 2
+  && duplicateMessage.text === "Se o up! Cross ainda fizer sentido para voce, sigo por aqui para ajudar.");
+check("retry de duplicacao devolve autoria para a LLM sem texto pronto da engine",
+  duplicateMessageBrain.frames[1]?.block.includes("repete uma mensagem ja enviada") === true);
+
+const duplicateOnlyBrain = new QueueBrain([final(duplicatedVehicleMessage), final(duplicatedVehicleMessage)]);
+const duplicateOnly = await authorFollowupMessageDetailed({
+  brain: duplicateOnlyBrain, state: duplicateMessageState, stage: 2,
+  turnId: "fu60-duplicate-only", now: NOW, portalPromptSha256: "sha", maxAttempts: 2,
+});
+check("nenhuma copia e publicada quando a LLM insiste na duplicacao", duplicateOnly.text === null
+  && duplicateOnly.reason === "duplicate_message" && duplicateOnly.attempts === 2);
+
 const paraphraseState = state();
 paraphraseState.recentTurns = [
   { role: "agent", text: "Voce ainda quer ver os detalhes desse Equinox?", at: NOW },

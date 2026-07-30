@@ -388,10 +388,12 @@ export function RegrasAutomacoesTab() {
 
   const salvarAgente = async () => {
     if (!agentId) return;
-    // Mesmo shape/clamp do AgentFormDialog (fonte que os motores já leem).
+    // Mesmo shape/clamp do AgentFormDialog (fonte que os motores ja leem).
+    // Cada campo e um intervalo independente contado depois da mensagem
+    // anterior; nao existe mais relogio absoluto com valores crescentes.
     const t1 = Math.max(1, Math.round(Number(fu.t1)) || 5);
-    const t2 = Math.max(t1 + 1, Math.round(Number(fu.t2)) || 8);
-    const t3 = Math.max(t2 + 1, Math.round(Number(fu.t3)) || 12);
+    const t2 = Math.max(1, Math.round(Number(fu.t2)) || 8);
+    const t3 = Math.max(1, Math.round(Number(fu.t3)) || 12);
     const rules = {
       followup: { enabled: fu.enabled, t1_min: t1, t2_min: t2, t3_min: t3, t3_transfers: fu.t3_transfers },
       transfer: {
@@ -547,15 +549,15 @@ export function RegrasAutomacoesTab() {
                   <div className={fu.enabled ? '' : 'opacity-50 pointer-events-none'}>
                     <div className="grid gap-4 sm:grid-cols-3">
                       <div className="space-y-2">
-                        <Label className="text-xs">1ª mensagem (min. de inatividade)</Label>
+                        <Label className="text-xs">Resposta → 1ª mensagem (min.)</Label>
                         <Input type="number" min={1} value={fu.t1} onChange={(e) => setFu((f) => ({ ...f, t1: Number(e.target.value) }))} />
                       </div>
                       <div className="space-y-2">
-                        <Label className="text-xs">2ª mensagem (min.)</Label>
+                        <Label className="text-xs">1ª → 2ª mensagem (min.)</Label>
                         <Input type="number" min={1} value={fu.t2} onChange={(e) => setFu((f) => ({ ...f, t2: Number(e.target.value) }))} />
                       </div>
                       <div className="space-y-2">
-                        <Label className="text-xs">Transferir pro vendedor (min.)</Label>
+                        <Label className="text-xs">2ª → 3º tempo (min.)</Label>
                         <Input type="number" min={1} value={fu.t3} onChange={(e) => setFu((f) => ({ ...f, t3: Number(e.target.value) }))} />
                       </div>
                     </div>
@@ -563,7 +565,7 @@ export function RegrasAutomacoesTab() {
                       <Label className="text-xs">No 3º tempo, transferir para um vendedor</Label>
                       <Switch checked={fu.t3_transfers} onCheckedChange={(v) => setFu((f) => ({ ...f, t3_transfers: v }))} />
                     </div>
-                    <p className="text-[11px] text-muted-foreground mt-2">A ordem é corrigida automaticamente (1ª &lt; 2ª &lt; transferência).</p>
+                    <p className="text-[11px] text-muted-foreground mt-2">Cada tempo começa depois da mensagem anterior. Ex.: 5 / 8 / 12 significa 5 min até a 1ª, mais 8 min até a 2ª e mais 12 min até o 3º tempo.</p>
                   </div>
                   {!fu.enabled && <p className="text-xs text-amber-500">Desligado: a IA não fará follow-up automático dos clientes inativos.</p>}
                   <div className="flex justify-end">

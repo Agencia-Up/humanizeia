@@ -55,11 +55,12 @@ export function resolveAutomationRules(raw: unknown): AutomationRules {
   const f = root?.followup && typeof root.followup === "object" ? root.followup as Record<string, unknown> : {};
   const t = root?.transfer && typeof root.transfer === "object" ? root.transfer as Record<string, unknown> : {};
 
-  let t1 = asInt(f.t1_min, DEFAULT_FOLLOWUP.t1Min, 1, 1440);
-  let t2 = asInt(f.t2_min, DEFAULT_FOLLOWUP.t2Min, 1, 1440);
-  let t3 = asInt(f.t3_min, DEFAULT_FOLLOWUP.t3Min, 1, 1440);
-  if (t2 <= t1) t2 = t1 + 1;
-  if (t3 <= t2) t3 = t2 + 1;
+  // Cada valor e um intervalo independente contado depois da mensagem
+  // anterior (resposta -> T1, T1 -> T2, T2 -> T3). Nao ha motivo para
+  // reordenar silenciosamente esses valores como no antigo relogio absoluto.
+  const t1 = asInt(f.t1_min, DEFAULT_FOLLOWUP.t1Min, 1, 1440);
+  const t2 = asInt(f.t2_min, DEFAULT_FOLLOWUP.t2Min, 1, 1440);
+  const t3 = asInt(f.t3_min, DEFAULT_FOLLOWUP.t3Min, 1, 1440);
 
   return {
     followup: {

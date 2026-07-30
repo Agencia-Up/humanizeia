@@ -49,7 +49,10 @@ function main(): void {
     !source.includes("Nao use CTA generico de menu") && !source.includes("Varie conforme a conversa"));
 
   check("[SDR-8] follow-up fica em contrato proprio",
-    source.includes("FOLLOW-UP SISTEMICO") && source.includes("Nao cumprimente"));
+    source.includes("FOLLOW-UP SISTEMICO (LLM-FIRST)")
+    && source.includes("T2 deve ser uma abordagem nova e mais sutil que T1")
+    && source.includes("Nao parafraseie T1")
+    && !source.includes("const FOLLOWUP_PROTOCOL"));
 
 
   if (fail > 0) {

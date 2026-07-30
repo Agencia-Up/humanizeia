@@ -773,8 +773,8 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
     mensagens_sem_emoji: mensagensSemEmoji,
     automation_rules: (() => {
       const t1 = Math.max(1, Math.round(Number(ruT1)) || 5);
-      const t2 = Math.max(t1 + 1, Math.round(Number(ruT2)) || 8);
-      const t3 = Math.max(t2 + 1, Math.round(Number(ruT3)) || 12);
+      const t2 = Math.max(1, Math.round(Number(ruT2)) || 8);
+      const t3 = Math.max(1, Math.round(Number(ruT3)) || 12);
       return {
         response_schedule: {
           enabled: businessHoursOnly,
@@ -971,11 +971,11 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                 </div>
                 {ruFollowupEnabled && <div className="space-y-3">
                   <div className="grid grid-cols-3 gap-3">
-                    <div><Label className="text-xs">1º (min)</Label><Input type="number" min={1} value={ruT1} onChange={e => setRuT1(Number(e.target.value))} /></div>
-                    <div><Label className="text-xs">2º (min)</Label><Input type="number" min={1} value={ruT2} onChange={e => setRuT2(Number(e.target.value))} /></div>
-                    <div><Label className="text-xs">3º (min)</Label><Input type="number" min={1} value={ruT3} onChange={e => setRuT3(Number(e.target.value))} /></div>
+                    <div><Label className="text-xs">Resposta → 1º (min)</Label><Input type="number" min={1} value={ruT1} onChange={e => setRuT1(Number(e.target.value))} /></div>
+                    <div><Label className="text-xs">1º → 2º (min)</Label><Input type="number" min={1} value={ruT2} onChange={e => setRuT2(Number(e.target.value))} /></div>
+                    <div><Label className="text-xs">2º → 3º (min)</Label><Input type="number" min={1} value={ruT3} onChange={e => setRuT3(Number(e.target.value))} /></div>
                   </div>
-                  <p className="text-[11px] text-muted-foreground">Contados desde a última resposta do agente. Devem ser crescentes (1º &lt; 2º &lt; 3º) — ajusto automaticamente se não forem.</p>
+                  <p className="text-[11px] text-muted-foreground">Cada tempo começa após a mensagem anterior. Ex.: 5 / 8 / 12 envia o 1º após 5 min, o 2º após mais 8 min e o 3º após mais 12 min.</p>
                   <div className="flex items-center justify-between pt-1">
                     <Label className="text-sm">No 3º follow-up, transferir para um vendedor</Label>
                     <Switch checked={ruT3Transfers} onCheckedChange={setRuT3Transfers} disabled={!ruTransferEnabled} />

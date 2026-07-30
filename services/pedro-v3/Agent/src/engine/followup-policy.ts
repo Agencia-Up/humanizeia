@@ -40,6 +40,18 @@ function latestOrdinaryAcceptedMessage(records: readonly OutboxRecord[]): Outbox
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0] ?? null;
 }
 
+function latestAcceptedFollowupAt(records: readonly OutboxRecord[], anchorEffectId: string): number | null {
+  const latest = records
+    .filter((record) => record.kind === "send_message"
+      && record.effectId.startsWith(`followup:${anchorEffectId}:`)
+      && record.status === "succeeded"
+      && (record.receiptLevel === "accepted" || record.receiptLevel === "delivered"))
+    .map((record) => Date.parse(record.createdAt))
+    .filter(Number.isFinite)
+    .sort((a, b) => b - a)[0];
+  return latest ?? null;
+}
+
 function isTechnicalFallbackAnchor(record: OutboxRecord): boolean {
   return record.onSuccess.some((mutation) => mutation.op === "append_assistant_turn"
     && mutation.effectId === record.effectId
@@ -113,9 +125,26 @@ export function evaluateFollowup(args: {
   const dueStages: Array<[FollowupStage, number]> = [
     [1, args.rules.t1Min], [2, args.rules.t2Min], [3, args.rules.t3Min],
   ];
-  const due = dueStages.find(([stage, minutes]) => !cycle.sentStages.includes(stage) && nowMs >= anchorMs + minutes * 60_000);
-  return due
-    ? { due: { anchorEffectId: anchor.effectId, anchorAt: anchor.createdAt, stage: due[0], cycle }, reason: "due" }
+  const next = dueStages.find(([stage]) => !cycle.sentStages.includes(stage));
+  if (!next) return { due: null, reason: "not_due" };
+
+  // Cada valor configurado e um intervalo operacional entre mensagens:
+  // resposta comum -> T1, T1 -> T2 e T2 -> T3. Antes, todos os tres tempos
+  // eram somados a mesma ancora; 5/8/9 virava uma sequencia invasiva de
+  // 5 minutos, depois 3 e depois 1. `lastSentAt` e gravado apenas apos o
+  // aceite real do provedor. O outbox e fallback de compatibilidade para
+  // ciclos antigos que ainda nao carregavam esse marcador.
+  let cadenceAnchorMs = anchorMs;
+  if (next[0] !== 1) {
+    const persistedLastSentAt = cycle.lastSentAt ? Date.parse(cycle.lastSentAt) : Number.NaN;
+    cadenceAnchorMs = Number.isFinite(persistedLastSentAt)
+      ? persistedLastSentAt
+      : latestAcceptedFollowupAt(args.outbox, anchor.effectId) ?? Number.NaN;
+    if (!Number.isFinite(cadenceAnchorMs)) return { due: null, reason: "invalid_time" };
+  }
+
+  return nowMs >= cadenceAnchorMs + next[1] * 60_000
+    ? { due: { anchorEffectId: anchor.effectId, anchorAt: anchor.createdAt, stage: next[0], cycle }, reason: "due" }
     : { due: null, reason: "not_due" };
 }
 
