@@ -1,8 +1,4 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-
-// Espelha REQUIRE_EXPLICIT_BULK_SENDER do worker. Enquanto false, master com
-// purpose NULL segue aceito como remetente de campanha (compatibilidade).
-const MODO_ESTRITO_BULK_SENDER = false;
 import { Navigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent } from '@/components/ui/card';
@@ -254,14 +250,15 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
       // vendedor nem a linha da IA. A campanha continua PERTENCENDO ao vendedor
       // (seller_member_id no registro), mas ela e EXECUTADA pela linha oficial da
       // conta. Por isso o seletor mostra so linha oficial, para todo mundo.
-      // ETAPA 1: NUNCA usar .neq('purpose','agent') — no PostgREST isso descarta
-      // tambem as linhas com purpose NULL, que hoje sao a unica compatibilidade.
-      // Enquanto nao houver classificacao completa: NULL ou bulk_sender.
-      // Em modo estrito (REQUIRE_EXPLICIT_BULK_SENDER), somente bulk_sender.
-      instancesQuery = instancesQuery.is('seller_member_id', null);
-      instancesQuery = MODO_ESTRITO_BULK_SENDER
-        ? instancesQuery.eq('purpose', 'bulk_sender')
-        : instancesQuery.or('purpose.is.null,purpose.eq.bulk_sender');
+      // Remetente da campanha: o VENDEDOR dispara do numero dele; o MASTER usa
+      // uma linha da conta. A linha da IA (purpose='agent') nunca aparece — se
+      // levar ban por disparo, o atendimento inteiro da conta para.
+      // Obs.: nunca usar .neq('purpose','agent') aqui — no PostgREST isso
+      // descartaria tambem as linhas com purpose NULL, que sao a maioria hoje.
+      instancesQuery = isolateBySeller
+        ? instancesQuery.eq('seller_member_id', seller!.id)
+        : instancesQuery.is('seller_member_id', null);
+      instancesQuery = instancesQuery.or('purpose.is.null,purpose.eq.bulk_sender');
 
       let campaignsQuery = (supabase as any)
         .from('wa_campaigns')
@@ -367,7 +364,7 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
       // ETAPA 1 (fail-closed): classificar ANTES de salvar. Se a classificação da
       // linha oficial falhar, a campanha NÃO é salva e o erro real aparece — nunca
       // "sucesso" com a instância sem finalidade declarada.
-      if (payload.instance_id) {
+      if (payload.instance_id && !payload.seller_member_id) {
         const { error: errFinalidade } = await (supabase as any).rpc('set_wa_instance_purpose', {
           p_instance_id: payload.instance_id,
           p_purpose: 'bulk_sender',

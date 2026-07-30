@@ -1,27 +1,19 @@
 // ============================================================================
-// ETAPA 1 — Quem pode EXECUTAR um disparo automatico (campanha / massa).
+// REMETENTE DE CAMPANHA / DISPARO EM MASSA — modelo do dono (confirmado 30/07).
 //
-// PRINCIPIO: a campanha continua PERTENCENDO a quem a criou (inclusive vendedor,
-// para atribuicao e relatorio), mas a EXECUCAO automatica sai sempre por uma
-// linha oficial da conta. Dono != remetente.
+// COMO O PRODUTO FUNCIONA:
+//   * campanha de VENDEDOR sai do NUMERO DELE. E assim que deve ser: o cliente
+//     fala com o vendedor. A protecao contra banimento vem do LIMITE (intervalo
+//     entre envios, limite diario, aquecimento de numero novo, rodizio), nao de
+//     trocar o remetente.
+//   * campanha do MASTER sai de uma linha da conta (nunca do numero pessoal de
+//     um vendedor: o cliente do master receberia mensagem do celular de alguem
+//     que nao tem relacao com aquele disparo).
+//   * a LINHA DA IA (purpose='agent') nunca faz disparo em massa. Ela existe para
+//     o atendimento e o follow-up dos leads inativos do CRM do Pedro. Se levar
+//     ban por disparo, o atendimento inteiro da conta para.
 //
-// REGRA DURA (independe de classificacao e de qualquer flag):
-//   instancia com seller_member_id preenchido NUNCA executa disparo automatico.
-// O numero pessoal do vendedor continua: sincronizando entrada/saida, recebendo
-// briefing e transferencia, confirmando "Ok", aparecendo no inbox e sendo usado
-// manualmente por ele no WhatsApp. Nada disso passa por este caminho.
-//
-// purpose='agent' (linha da IA) tambem nunca executa disparo em massa.
-//
-// VALORES DE purpose ACEITOS PELO BANCO (CHECK em wa_instances, conferido em
-// producao 30/07/2026): NULL | 'agent' | 'bulk_sender' | 'manual' | 'test'.
-// 'sync_only' NAO existe no CHECK — nao e usado aqui. Se um dia for preciso,
-// entra por migration aditiva ANTES de aparecer nesta regra.
-//
-// MODO DE COMPATIBILIDADE (transitorio): com REQUIRE_EXPLICIT_BULK_SENDER=false,
-// master com purpose NULL segue elegivel, porque hoje 0 de 25 instancias estao
-// classificadas. purpose=NULL e ESTADO TEMPORARIO, nao finalidade declarada.
-// Depois da classificacao humana, ligar a flag => so 'bulk_sender' executa.
+// FAIL-CLOSED: na duvida sobre quem e o remetente correto, nao envia.
 // ============================================================================
 
 export type CampaignSenderCandidate = {
@@ -45,23 +37,17 @@ export type IneligibleReason =
   | "shadow_ban_suspect"
   | "quarantined"
   | "unhealthy"
-  | "bulk_sender_required";
+  | "bulk_sender_required"
+  | "wrong_owner";
 
 export type SenderOpts = { requireExplicitBulkSender?: boolean; now?: Date };
 
-/** Motivo pelo qual NAO pode executar disparo; null = pode. Fail-closed. */
-export function campaignSenderIneligibility(
+/** Estado operacional: vale para QUALQUER remetente (vendedor ou master). */
+export function senderOperationalIssue(
   inst: CampaignSenderCandidate | null | undefined,
   opts: SenderOpts = {},
 ): IneligibleReason | null {
-  if (!inst) return "seller_instance"; // sem candidato = nao envia
-
-  if (inst.seller_member_id) return "seller_instance";        // barreira absoluta
-
-  const purpose = inst.purpose ?? null;
-  if (purpose === "agent") return "ai_agent_line";
-  if (purpose === "manual" || purpose === "test") return "purpose_not_allowed";
-
+  if (!inst) return "not_connected";
   if (inst.is_active === false) return "not_active";
   if (String(inst.status ?? "").toLowerCase() !== "connected") return "not_connected";
   if (inst.shadow_ban_suspect === true) return "shadow_ban_suspect";
@@ -70,25 +56,51 @@ export function campaignSenderIneligibility(
     if (Number.isFinite(until) && until > (opts.now ?? new Date()).getTime()) return "quarantined";
   }
   if (typeof inst.health_score === "number" && inst.health_score < 20) return "unhealthy";
+  return null;
+}
 
-  if (opts.requireExplicitBulkSender) {
-    return purpose === "bulk_sender" ? null : "bulk_sender_required";
+/**
+ * Pode esta instancia executar a campanha de `ownerSellerMemberId`?
+ * null = pode. Fail-closed.
+ *
+ *  - campanha de VENDEDOR  => somente o numero DAQUELE vendedor;
+ *  - campanha do MASTER    => somente linha da conta (seller_member_id IS NULL);
+ *  - linha da IA (agent)   => NUNCA, em nenhum dos dois casos.
+ */
+export function campaignSenderIneligibility(
+  inst: CampaignSenderCandidate | null | undefined,
+  opts: SenderOpts & { ownerSellerMemberId?: string | null } = {},
+): IneligibleReason | null {
+  if (!inst) return "not_connected";
+
+  const purpose = inst.purpose ?? null;
+  if (purpose === "agent") return "ai_agent_line";   // atendimento nunca dispara em massa
+  if (purpose === "manual" || purpose === "test") return "purpose_not_allowed";
+
+  const dono = opts.ownerSellerMemberId ?? null;
+  if (dono) {
+    // Campanha do vendedor: o remetente e o numero DELE. Nunca de outro vendedor.
+    if (inst.seller_member_id !== dono) return "wrong_owner";
+  } else {
+    // Campanha do master: nunca sai do numero pessoal de um vendedor.
+    if (inst.seller_member_id) return "seller_instance";
+    if (opts.requireExplicitBulkSender && purpose !== "bulk_sender") return "bulk_sender_required";
   }
-  return purpose === null || purpose === undefined || purpose === "bulk_sender"
-    ? null
-    : "purpose_not_allowed";
+
+  return senderOperationalIssue(inst, opts);
 }
 
 export function isEligibleCampaignSender(
   inst: CampaignSenderCandidate | null | undefined,
-  opts: SenderOpts = {},
+  opts: SenderOpts & { ownerSellerMemberId?: string | null } = {},
 ): boolean {
   return campaignSenderIneligibility(inst, opts) === null;
 }
 
+/** Pool valido para a campanha. Nunca mistura vendedores, nunca usa a linha da IA. */
 export function selectCampaignSenderPool<T extends CampaignSenderCandidate>(
   all: T[] | null | undefined,
-  opts: SenderOpts = {},
+  opts: SenderOpts & { ownerSellerMemberId?: string | null } = {},
 ): T[] {
   return (all ?? []).filter((i) => isEligibleCampaignSender(i, opts));
 }
@@ -122,7 +134,10 @@ export function decideCampaignSender<T extends CampaignSenderCandidate>(
   opts: SenderOpts = {},
 ): RoutingDecision<T> {
   const ownedBySeller = !!campaign?.seller_member_id;
-  const pool = selectCampaignSenderPool(tenantInstances, opts);
+  // Campanha de vendedor => pool = numero DELE. Campanha do master => linhas da conta.
+  const pool = selectCampaignSenderPool(tenantInstances, {
+    ...opts, ownerSellerMemberId: campaign?.seller_member_id ?? null,
+  });
   if (pool.length === 0) {
     return { action: "park", reason: "no_eligible_campaign_sender", ownedBySeller };
   }

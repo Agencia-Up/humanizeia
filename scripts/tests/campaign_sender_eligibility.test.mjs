@@ -1,13 +1,15 @@
 // ============================================================================
-// ETAPA 1 — testes determinísticos do roteamento de disparo automático.
+// Remetente de campanha — testes determinísticos do MODELO DO DONO (30/07):
 //
-// Roda de QUALQUER diretório: as paths são resolvidas a partir do próprio
-// arquivo (import.meta.url), nunca do cwd.
+//   * campanha de VENDEDOR sai do NÚMERO DELE (proteção anti-ban = limite,
+//     intervalo, aquecimento e rodízio — não trocar o remetente);
+//   * campanha do MASTER sai de uma linha da conta, NUNCA do número pessoal
+//     de um vendedor;
+//   * a LINHA DA IA (purpose='agent') nunca faz disparo em massa — se levar
+//     ban, o atendimento inteiro da conta para.
+//
+// Roda de QUALQUER diretório (paths por import.meta.url). Sem rede, sem banco.
 //   node scripts/tests/campaign_sender_eligibility.test.mjs
-//   node /caminho/absoluto/campaign_sender_eligibility.test.mjs
-//
-// Sem rede, sem banco, sem aleatoriedade: o módulo TS é bundlado com esbuild e
-// exercitado com casos fixos.
 // ============================================================================
 import { build } from "esbuild";
 import { mkdtempSync } from "node:fs";
@@ -16,7 +18,7 @@ import { join, resolve, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
-const RAIZ = resolve(AQUI, "..", "..");            // scripts/tests -> raiz do repo
+const RAIZ = resolve(AQUI, "..", "..");
 const ENTRY = join(RAIZ, "supabase/functions/_shared/campaign/senderEligibility.ts");
 
 const out = join(mkdtempSync(join(tmpdir(), "sender-")), "mod.mjs");
@@ -32,168 +34,95 @@ const t = (nome, cond, extra = "") => {
 
 const base = { status: "connected", is_active: true, health_score: 90, purpose: null };
 const MASTER = { ...base, id: "master-1", seller_member_id: null };
-const VEND   = { ...base, id: "vend-1",   seller_member_id: "membro-123" };
-const VEND2  = { ...base, id: "vend-2",   seller_member_id: "membro-456" };
-const AGENTE = { ...base, id: "ia-1",     seller_member_id: null, purpose: "agent" };
-const BULK   = { ...base, id: "bulk-1",   seller_member_id: null, purpose: "bulk_sender" };
+const BULK   = { ...base, id: "bulk-1", seller_member_id: null, purpose: "bulk_sender" };
+const AGENTE = { ...base, id: "ia-1", seller_member_id: null, purpose: "agent" };
+const NUM_JOAO  = { ...base, id: "joao-1", seller_member_id: "joao" };
+const NUM_LUIZ  = { ...base, id: "luiz-1", seller_member_id: "luiz" };
 
-const CAMP_MASTER = { id: "c-master", seller_member_id: null, instance_id: null };
-const CAMP_VEND   = { id: "c-vend",   seller_member_id: "membro-123", instance_id: null };
+const CAMP_JOAO   = { id: "c1", seller_member_id: "joao", instance_id: null };
+const CAMP_MASTER = { id: "c2", seller_member_id: null, instance_id: null };
+const doJoao = { ownerSellerMemberId: "joao" };
 
-console.log("\n— Elegibilidade —");
-t("vendedor nunca é elegível", campaignSenderIneligibility(VEND) === "seller_instance");
-t("vendedor bloqueado mesmo marcado bulk_sender", !isEligibleCampaignSender({ ...VEND, purpose: "bulk_sender" }));
-t("vendedor bloqueado no modo estrito", !isEligibleCampaignSender(VEND, { requireExplicitBulkSender: true }));
-t("linha agent nunca é elegível", campaignSenderIneligibility(AGENTE) === "ai_agent_line");
-t("master NULL elegível hoje (compatibilidade)", isEligibleCampaignSender(MASTER));
-t("master NULL inelegível no modo estrito",
-  campaignSenderIneligibility(MASTER, { requireExplicitBulkSender: true }) === "bulk_sender_required");
-t("desconectada bloqueada", campaignSenderIneligibility({ ...MASTER, status: "disconnected" }) === "not_connected");
-t("inativa bloqueada", campaignSenderIneligibility({ ...MASTER, is_active: false }) === "not_active");
-t("shadow_ban bloqueada", campaignSenderIneligibility({ ...MASTER, shadow_ban_suspect: true }) === "shadow_ban_suspect");
-t("quarentena futura bloqueada",
-  campaignSenderIneligibility({ ...MASTER, quarantine_until: "2030-01-01T00:00:00Z" }, { now: new Date("2026-07-30T00:00:00Z") }) === "quarantined");
-t("quarentena vencida não bloqueia",
-  isEligibleCampaignSender({ ...MASTER, quarantine_until: "2026-01-01T00:00:00Z" }, { now: new Date("2026-07-30T00:00:00Z") }));
-t("saúde baixa bloqueada", campaignSenderIneligibility({ ...MASTER, health_score: 10 }) === "unhealthy");
-t("purpose manual/test bloqueados",
-  ["manual", "test"].every((p) => !isEligibleCampaignSender({ ...MASTER, purpose: p })));
-t("'sync_only' NÃO é usado (o CHECK do banco não aceita)",
-  JSON.stringify(campaignSenderIneligibility({ ...MASTER, purpose: "sync_only" })) === '"purpose_not_allowed"');
-t("nulo é fail-closed", !isEligibleCampaignSender(null) && !isEligibleCampaignSender(undefined));
-
-console.log("\n1) Campanha do VENDEDOR é roteada para linha oficial (não bloqueada)");
+console.log("\n1) Campanha do VENDEDOR sai do número DELE");
+t("número do João é válido para a campanha do João", isEligibleCampaignSender(NUM_JOAO, doJoao));
+t("número do Luiz NÃO serve para a campanha do João",
+  campaignSenderIneligibility(NUM_LUIZ, doJoao) === "wrong_owner");
+t("linha do master não substitui o número do vendedor",
+  campaignSenderIneligibility(MASTER, doJoao) === "wrong_owner");
 {
-  const d = decideCampaignSender(CAMP_VEND, [VEND, VEND2, AGENTE, BULK, MASTER]);
-  t("ação = enviar (não bloqueia)", d.action === "send");
-  t("marcada como pertencente ao vendedor", d.ownedBySeller === true);
+  const d = decideCampaignSender(CAMP_JOAO, [NUM_JOAO, NUM_LUIZ, MASTER, AGENTE, BULK]);
+  t("roteia para envio", d.action === "send");
+  t("pool = apenas o número do João", d.pool.length === 1 && d.pool[0].id === "joao-1");
+}
+
+console.log("\n2) Campanha do MASTER nunca sai do número pessoal de um vendedor");
+t("número de vendedor é recusado para campanha do master",
+  campaignSenderIneligibility(NUM_JOAO) === "seller_instance");
+{
+  const d = decideCampaignSender(CAMP_MASTER, [NUM_JOAO, NUM_LUIZ, MASTER, BULK]);
   t("pool não contém nenhum número de vendedor", d.pool.every((i) => !i.seller_member_id));
-  t("pool não contém a linha agent", d.pool.every((i) => i.purpose !== "agent"));
-  t("pool = master + bulk_sender", d.pool.length === 2);
+  t("pool = linhas da conta (master + bulk_sender)", d.pool.length === 2);
+  t("conta só com vendedores => estaciona (sem fallback)",
+    decideCampaignSender(CAMP_MASTER, [NUM_JOAO, NUM_LUIZ]).action === "park");
 }
 
-console.log("\n2) Nenhuma campanha automática usa número de vendedor");
-{
-  const dm = decideCampaignSender(CAMP_MASTER, [VEND, MASTER]);
-  t("campanha master não pega vendedor", dm.action === "send" && dm.pool.every((i) => !i.seller_member_id));
-  const dv = decideCampaignSender(CAMP_VEND, [VEND, MASTER]);
-  t("campanha de vendedor não pega o próprio número", dv.action === "send" && dv.pool.every((i) => i.id !== "vend-1"));
-}
+console.log("\n3) Linha da IA nunca faz disparo em massa");
+t("agent recusado na campanha do master", campaignSenderIneligibility(AGENTE) === "ai_agent_line");
+t("agent recusado na campanha do vendedor", campaignSenderIneligibility(AGENTE, doJoao) === "ai_agent_line");
+t("conta só com a linha da IA => estaciona",
+  decideCampaignSender(CAMP_MASTER, [AGENTE]).action === "park");
 
-console.log("\n3) Linha agent nunca é usada");
-t("conta só com agent => estaciona", decideCampaignSender(CAMP_MASTER, [AGENTE]).action === "park");
+console.log("\n4) Estado operacional protege o número do vendedor");
+for (const [nome, inst, motivo] of [
+  ["desconectado", { ...NUM_JOAO, status: "disconnected" }, "not_connected"],
+  ["inativo", { ...NUM_JOAO, is_active: false }, "not_active"],
+  ["suspeita de shadow ban", { ...NUM_JOAO, shadow_ban_suspect: true }, "shadow_ban_suspect"],
+  ["saúde baixa", { ...NUM_JOAO, health_score: 10 }, "unhealthy"],
+]) t(`${nome} não dispara`, campaignSenderIneligibility(inst, doJoao) === motivo);
+t("quarentena futura bloqueia",
+  campaignSenderIneligibility({ ...NUM_JOAO, quarantine_until: "2030-01-01T00:00:00Z" },
+    { ...doJoao, now: new Date("2026-07-30T00:00:00Z") }) === "quarantined");
+t("quarentena vencida não bloqueia",
+  isEligibleCampaignSender({ ...NUM_JOAO, quarantine_until: "2026-01-01T00:00:00Z" },
+    { ...doJoao, now: new Date("2026-07-30T00:00:00Z") }));
+t("número do vendedor desconectado => estaciona, não falha",
+  decideCampaignSender(CAMP_JOAO, [{ ...NUM_JOAO, status: "disconnected" }]).action === "park");
 
-console.log("\n4) Sem remetente elegível => item recuperável, sem failed");
-{
-  const d = decideCampaignSender(CAMP_VEND, [VEND, VEND2, AGENTE]);
-  t("ação = estacionar", d.action === "park");
-  t("motivo estável", d.reason === "no_eligible_campaign_sender");
-  t("não penaliza: dono continua sendo o vendedor", d.ownedBySeller === true);
-  t("bulk_sender desconectado => estaciona",
-    decideCampaignSender(CAMP_MASTER, [{ ...BULK, status: "disconnected" }]).action === "park");
-  t("bulk_sender sem saúde => estaciona",
-    decideCampaignSender(CAMP_MASTER, [{ ...BULK, health_score: 5 }]).action === "park");
-}
-
-console.log("\n5) instance_id antigo apontando para vendedor é tratado");
-{
-  const d = decideCampaignSender({ ...CAMP_MASTER, instance_id: "vend-1" }, [VEND, BULK]);
-  t("não trava a fila (segue enviando)", d.action === "send");
-  t("pin é ignorado e sinalizado", d.pinIgnored === true);
-  t("usa a linha oficial, não a do vendedor", d.pool.every((i) => i.id === "bulk-1"));
-  const d2 = decideCampaignSender({ ...CAMP_MASTER, instance_id: "bulk-1" }, [VEND, BULK, MASTER]);
-  t("pin válido é respeitado", d2.action === "send" && d2.pool.length === 1 && d2.pool[0].id === "bulk-1" && d2.pinIgnored === false);
-  const d3 = decideCampaignSender({ ...CAMP_MASTER, instance_id: "vend-1" }, [VEND]);
-  t("pin inelegível + sem pool => estaciona", d3.action === "park");
-}
-
-console.log("\n6) Isolamento entre contas (pool já chega por tenant)");
-t("pool de A só tem instância de A",
-  decideCampaignSender(CAMP_MASTER, [{ ...MASTER, id: "a1", user_id: "A" }]).pool.every((i) => i.user_id === "A"));
-t("instância de B não aparece no pool de A",
-  decideCampaignSender(CAMP_MASTER, [{ ...MASTER, id: "a1", user_id: "A" }]).pool.every((i) => i.id !== "b1"));
-
-console.log("\n7) Modo estrito futuro");
-{
-  const d = decideCampaignSender(CAMP_MASTER, [MASTER, BULK], { requireExplicitBulkSender: true });
-  t("só bulk_sender passa", d.action === "send" && d.pool.length === 1 && d.pool[0].id === "bulk-1");
-  t("sem bulk_sender => estaciona",
-    decideCampaignSender(CAMP_MASTER, [MASTER], { requireExplicitBulkSender: true }).action === "park");
-}
-
-console.log("\n— PLANO DE DESPACHO DO ITEM (o que o processador consome) —");
-{
-  const ITEM_CAMP = { id: "q1", campaign_id: "c-vend", instance_id: null };
-  const ITEM_SEM = { id: "q2", campaign_id: null, instance_id: "vend-1" };
-
-  // 1) pin em número de vendedor + linha oficial disponível => envia pela oficial
-  const p1 = planQueueItemDispatch(ITEM_CAMP, { ...CAMP_VEND, instance_id: "vend-1" }, [VEND, BULK]);
-  t("pin de vendedor: envia (não trava)", p1.kind === "send");
-  t("pin de vendedor: effectiveInstanceId vira null", p1.effectiveInstanceId === null);
-  t("pin de vendedor: pool é a linha oficial", p1.pool.length === 1 && p1.pool[0].id === "bulk-1");
-  t("pin de vendedor: sinalizado", p1.pinIgnored === true);
-  t("pin de vendedor: campanha segue do vendedor", p1.ownedBySeller === true);
-
-  const p2 = planQueueItemDispatch(ITEM_CAMP, { ...CAMP_MASTER, instance_id: "bulk-1" }, [VEND, BULK, MASTER]);
-  t("pin válido: repassado ao seletor", p2.kind === "send" && p2.effectiveInstanceId === "bulk-1");
-  t("pin válido: pool restrito a ele", p2.pool.length === 1 && p2.pool[0].id === "bulk-1");
-
-  // 2) lista VAZIA e lista SEM elegível caem no MESMO caminho: park
-  t("lista vazia => park", planQueueItemDispatch(ITEM_CAMP, CAMP_VEND, []).kind === "park");
-  t("lista nula => park", planQueueItemDispatch(ITEM_CAMP, CAMP_VEND, null).kind === "park");
-  t("só vendedor => park", planQueueItemDispatch(ITEM_CAMP, CAMP_VEND, [VEND, VEND2]).kind === "park");
-  t("só agent => park", planQueueItemDispatch(ITEM_CAMP, CAMP_MASTER, [AGENTE]).kind === "park");
-  t("park preserva dono vendedor (não penaliza)",
-    planQueueItemDispatch(ITEM_CAMP, CAMP_VEND, [VEND]).ownedBySeller === true);
-
-  // 3) item SEM campanha: política de campanha NÃO se aplica
-  const p3 = planQueueItemDispatch(ITEM_SEM, null, [VEND, MASTER]);
-  t("sem campanha: fora da política", p3.kind === "no_campaign");
-  t("sem campanha: preserva instance_id do item", p3.pinnedInstanceId === "vend-1");
-  t("sem campanha: pool intacto (regra antiga)", p3.pool.length === 2);
-  t("sem campanha e conta só com vendedor: não estaciona",
-    planQueueItemDispatch(ITEM_SEM, null, [VEND]).kind === "no_campaign");
-  t("campaign_id órfão (campanha não carregada): trata como sem campanha",
-    planQueueItemDispatch({ ...ITEM_SEM, campaign_id: "sumiu" }, null, [MASTER]).kind === "no_campaign");
-
-  // 4) vendedor e agent nunca enviam campanha, em nenhum plano
-  const p4 = planQueueItemDispatch(ITEM_CAMP, CAMP_VEND, [VEND, VEND2, AGENTE, MASTER, BULK]);
-  t("nenhum vendedor no pool final", p4.pool.every((i) => !i.seller_member_id));
-  t("nenhuma linha agent no pool final", p4.pool.every((i) => i.purpose !== "agent"));
-}
-
-console.log("\n— CRIAÇÃO DE CAMPANHA (save-campaign usa a MESMA regra do worker) —");
+console.log("\n5) Modo estrito só afeta a campanha do MASTER");
 {
   const strict = { requireExplicitBulkSender: true };
-  t("vendedor não cria campanha com o próprio número",
-    campaignSenderIneligibility(VEND) === "seller_instance");
-  t("agente não é elegível como remetente",
-    campaignSenderIneligibility(AGENTE) === "ai_agent_line");
-  t("manual não é elegível",
-    campaignSenderIneligibility({ ...MASTER, purpose: "manual" }) === "purpose_not_allowed");
-  t("test não é elegível",
-    campaignSenderIneligibility({ ...MASTER, purpose: "test" }) === "purpose_not_allowed");
-  t("master purpose=NULL só passa no modo compatível",
-    isEligibleCampaignSender(MASTER) && !isEligibleCampaignSender(MASTER, strict));
-  t("bulk_sender passa nos dois modos",
-    isEligibleCampaignSender(BULK) && isEligibleCampaignSender(BULK, strict));
-  t("desconectada/inativa/quarentena/saúde bloqueiam na criação também",
-    [{ ...BULK, status: "disconnected" }, { ...BULK, is_active: false },
-     { ...BULK, shadow_ban_suspect: true }, { ...BULK, health_score: 1 }]
-      .every((i) => !isEligibleCampaignSender(i)));
+  t("master purpose=NULL sai do pool no modo estrito",
+    campaignSenderIneligibility(MASTER, strict) === "bulk_sender_required");
+  t("bulk_sender passa no modo estrito", isEligibleCampaignSender(BULK, strict));
+  t("número do vendedor não é afetado pelo modo estrito",
+    isEligibleCampaignSender(NUM_JOAO, { ...doJoao, ...strict }));
 }
 
-console.log("\n— FLUXOS QUE NÃO PODEM SER AFETADOS —");
+console.log("\n6) Pin da campanha");
 {
-  // Mensagem manual do vendedor, follow-up sem campanha, inbox e realtime não
-  // passam pelo plano de campanha: item sem campaign_id sai por "no_campaign",
-  // preservando a regra antiga e o instance_id do próprio item (o do vendedor).
-  const manual = planQueueItemDispatch({ id: "m1", campaign_id: null, instance_id: "vend-1" }, null, [VEND]);
-  t("mensagem manual do vendedor: fora da política de campanha", manual.kind === "no_campaign");
-  t("mensagem manual do vendedor: mantém o número dele", manual.pinnedInstanceId === "vend-1");
-  t("follow-up sem campanha: pool não é filtrado pela política",
-    planQueueItemDispatch({ id: "f1", campaign_id: null, instance_id: null }, null, [VEND, AGENTE]).pool.length === 2);
+  const p1 = planQueueItemDispatch({ id: "q1", campaign_id: "c1" }, { ...CAMP_JOAO, instance_id: "luiz-1" }, [NUM_JOAO, NUM_LUIZ]);
+  t("pin no número de OUTRO vendedor é ignorado", p1.kind === "send" && p1.pinIgnored === true);
+  t("pin inválido não chega ao seletor", p1.effectiveInstanceId === null);
+  t("usa o número do dono da campanha", p1.pool.length === 1 && p1.pool[0].id === "joao-1");
+  const p2 = planQueueItemDispatch({ id: "q2", campaign_id: "c1" }, { ...CAMP_JOAO, instance_id: "joao-1" }, [NUM_JOAO]);
+  t("pin válido é respeitado e repassado", p2.effectiveInstanceId === "joao-1" && p2.pinIgnored === false);
 }
+
+console.log("\n7) Itens sem campanha e sem remetente");
+{
+  const semCamp = planQueueItemDispatch({ id: "m1", campaign_id: null, instance_id: "joao-1" }, null, [NUM_JOAO]);
+  t("item sem campanha fica fora da política", semCamp.kind === "no_campaign");
+  t("item sem campanha preserva seu instance_id", semCamp.pinnedInstanceId === "joao-1");
+  t("lista vazia => estaciona", planQueueItemDispatch({ id: "q3", campaign_id: "c1" }, CAMP_JOAO, []).kind === "park");
+  t("lista nula => estaciona", planQueueItemDispatch({ id: "q4", campaign_id: "c1" }, CAMP_JOAO, null).kind === "park");
+  t("estacionar preserva a atribuição ao vendedor",
+    planQueueItemDispatch({ id: "q5", campaign_id: "c1" }, CAMP_JOAO, []).ownedBySeller === true);
+}
+
+console.log("\n8) Isolamento entre contas");
+t("pool só contém instância do próprio tenant",
+  selectCampaignSenderPool([{ ...MASTER, id: "a1", user_id: "A" }]).every((i) => i.user_id === "A"));
+t("candidato nulo é fail-closed", !isEligibleCampaignSender(null) && !isEligibleCampaignSender(undefined));
 
 console.log(`\n${ok} passaram, ${fail} falharam`);
 process.exit(fail === 0 ? 0 : 1);

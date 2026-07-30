@@ -582,18 +582,18 @@ Deno.serve(async (req) => {
             .update({
               status: "pending",
               scheduled_for: new Date(Date.now() + PARK_RETRY_MS).toISOString(),
-              error_message: "Aguardando uma linha oficial de campanha conectada nesta conta. Nenhum envio foi feito e nada foi perdido.",
+              error_message: "Aguardando o numero desta campanha ficar conectado e saudavel. Nenhum envio foi feito e nada foi perdido.",
             })
             .eq("id", item.id);
 
           if (item.campaign_id && !campanhasAvisadas.has(item.campaign_id)) {
             campanhasAvisadas.add(item.campaign_id);
             await supabase.from("wa_campaigns")
-              .update({ status: "paused", error_message: "Pausada: nao ha linha oficial de campanha conectada. Conecte um numero de campanha (nao pode ser o numero pessoal de um vendedor nem a linha da IA) e retome." })
+              .update({ status: "paused", error_message: "Pausada: o numero desta campanha nao esta disponivel (desconectado, inativo, em quarentena ou com saude baixa). Reconecte o numero e retome." })
               .eq("id", item.campaign_id).eq("status", "active");
             await notifyCampaignStalled(supabase, {
               user_id: item.user_id, campaign_id: item.campaign_id, campaign_name: campaign?.name,
-              reason: "nao ha uma linha oficial de campanha conectada na conta",
+              reason: "o numero desta campanha nao esta conectado ou esta sem saude para disparar",
             });
           }
           console.warn(`[no_eligible_campaign_sender] tenant=${item.user_id} campaign=${item.campaign_id} item=${item.id} instancias_na_conta=${(allUserInstances || []).length} dono_vendedor=${plano.ownedBySeller}`);
@@ -710,11 +710,19 @@ Deno.serve(async (req) => {
 
         // ===== HUMANIZED SENDING SEQUENCE (kept short to fit edge function timeout) =====
 
-        // ETAPA 1: presenca/digitacao REMOVIDA do disparo automatico em massa.
-        // (conversa manual, atendimento individual, follow-up pedido pelo vendedor e
-        // Pedro V3 nao passam por aqui — a presenca deles permanece intacta.)
-        // O intervalo operacional entre envios continua: e ele que espaca a fila.
-        await sleep(500 + Math.random() * 1100);
+        // ANTI-BAN: a simulacao de presenca/digitacao e PROTECAO, nao enfeite —
+        // o disparo sai do numero do proprio vendedor e precisa parecer humano.
+        // Junto com intervalo, limite diario, aquecimento e rodizio, e o que evita
+        // o banimento do numero dele.
+        await simulateOnlinePresence(instance, item.phone);
+        await sleep(300 + Math.random() * 600);
+
+        const messageLength = finalMessage.length;
+        const typingSpeedCps = 18 + Math.random() * 10;
+        const totalTypingMs = Math.max(800, Math.min((messageLength / typingSpeedCps) * 1000, 4000));
+        await simulateTyping(instance, item.phone, totalTypingMs);
+
+        await sleep(200 + Math.random() * 500);
 
         // Step 5: SEND (re-check pause right before sending)
         if (item.campaign_id) {
@@ -1924,6 +1932,37 @@ async function generateHash(text: string): Promise<string> {
 
 
 
+
+async function simulateTyping(instance: Instance, phone: string, durationMs: number) {
+  if (instance.provider === "meta" || isUazAPIInstance(instance)) return;
+  try {
+    const apiUrl = instance.api_url.replace(/\/+$/, "");
+    const jid = phone.includes("@") ? phone : `${phone}@s.whatsapp.net`;
+    await fetchWithTimeout(`${apiUrl}/chat/presence/${instance.instance_name}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
+      body: JSON.stringify({ id: jid, presence: "composing" }),
+    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
+    await sleep(durationMs);
+    await fetchWithTimeout(`${apiUrl}/chat/presence/${instance.instance_name}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
+      body: JSON.stringify({ id: jid, presence: "paused" }),
+    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
+  } catch (_) { /* nao critico */ }
+}
+
+async function simulateOnlinePresence(instance: Instance, _phone: string) {
+  if (instance.provider === "meta" || isUazAPIInstance(instance)) return;
+  try {
+    const apiUrl = instance.api_url.replace(/\/+$/, "");
+    await fetchWithTimeout(`${apiUrl}/chat/presence/${instance.instance_name}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
+      body: JSON.stringify({ presence: "available" }),
+    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
+  } catch (_) {}
+}
 
 async function simulateReadReceipt(instance: Instance, phone: string) {
   if (instance.provider === "meta" || isUazAPIInstance(instance)) return;

@@ -286,13 +286,20 @@ Deno.serve(async (req) => {
           code: "instance_not_in_tenant",
         }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
-      // ETAPA 1: MESMA regra do worker (fonte unica de verdade).
+      // MESMA regra do worker (fonte unica de verdade). O dono da campanha define
+      // quem pode ser remetente: campanha de vendedor sai do numero DELE; campanha
+      // do master sai de linha da conta. A linha da IA nunca dispara em massa.
+      const donoDaCampanha = isSeller
+        ? (resolvedSellerMemberId || seller_member_id || null)
+        : (seller_member_id || null);
       const motivo = campaignSenderIneligibility(instRow as any, {
+        ownerSellerMemberId: donoDaCampanha,
         requireExplicitBulkSender: (Deno.env.get("REQUIRE_EXPLICIT_BULK_SENDER") || "false").trim().toLowerCase() === "true",
       });
       if (motivo) {
         const mensagens: Record<string, string> = {
-          seller_instance: "Por seguranca, o numero pessoal de um vendedor nao pode ser o remetente de um disparo automatico. A campanha continua sendo do vendedor, mas o envio sai pela linha oficial da conta.",
+          seller_instance: "Campanha do master nao pode sair do numero pessoal de um vendedor. Selecione um numero da conta.",
+          wrong_owner: "Este numero pertence a outro vendedor. A campanha so pode sair do numero de quem a criou.",
           ai_agent_line: "A linha do agente de IA nao pode ser usada para disparo em massa. Selecione uma linha oficial de campanhas.",
           purpose_not_allowed: "Este numero tem finalidade incompativel com disparo automatico.",
           not_active: "Este numero esta inativo.",
