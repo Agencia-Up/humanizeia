@@ -190,9 +190,42 @@ serve(async (req) => {
       if (merr) console.warn('[delete-responsavel] marcos redistrib falhou:', merr.message);
       marcos = mres || null;
 
-      // Desvincula instancias de WhatsApp do membro (numeros de vendedor ativo intocados).
-      await admin.from('wa_instances').update({ seller_member_id: null })
+      // ── DESLIGAMENTO: o numero do ex-vendedor sai de circulacao ───────────────
+      // Antes: so desvinculava (seller_member_id = null). O efeito colateral era
+      // grave: uma instancia sem dono conta como LINHA DA CONTA, entao o WhatsApp
+      // pessoal de um ex-funcionario podia ser escolhido como remetente de campanha
+      // do master. Agora ela sai desativada e marcada como 'manual', que nunca
+      // dispara nada automatico.
+      const { data: instanciasDele } = await admin.from('wa_instances')
+        .select('id').eq('user_id', requesterId).in('seller_member_id', memberIds);
+      const idsInstancias = (instanciasDele || []).map((i: any) => i.id);
+
+      await admin.from('wa_instances')
+        .update({ seller_member_id: null, purpose: 'manual', is_active: false })
         .eq('user_id', requesterId).in('seller_member_id', memberIds);
+
+      // Historico de conversa do numero dele nao fica no sistema apos o desligamento.
+      if (idsInstancias.length > 0) {
+        await admin.from('wa_synced_messages').delete()
+          .eq('tenant_id', requesterId).in('instance_id', idsInstancias);
+        await admin.from('ai_conversation_index').delete()
+          .eq('user_id', requesterId).in('instance_id', idsInstancias);
+        await admin.from('wa_sync_checkpoint').delete()
+          .eq('tenant_id', requesterId).in('instance_id', idsInstancias);
+      }
+
+      // Campanhas do ex-vendedor sao canceladas e a fila delas e limpa — senao
+      // alguem retoma a campanha e dispara em nome de quem nao esta mais na equipe.
+      const { data: campanhasDele } = await admin.from('wa_campaigns')
+        .select('id').eq('user_id', requesterId).in('seller_member_id', memberIds);
+      const idsCampanhas = (campanhasDele || []).map((c: any) => c.id);
+      if (idsCampanhas.length > 0) {
+        await admin.from('wa_queue').delete()
+          .in('campaign_id', idsCampanhas).in('status', ['pending', 'processing']);
+        await admin.from('wa_campaigns')
+          .update({ status: 'cancelled', error_message: 'Cancelada automaticamente: o vendedor dono da campanha foi desligado da equipe.' })
+          .in('id', idsCampanhas);
+      }
 
       // Soft-delete operacional: tira do painel/fila/login preservando FKs/historico.
       // removed_at = marcador de REMOCAO EXPLICITA. E o unico sinal que autoriza a
