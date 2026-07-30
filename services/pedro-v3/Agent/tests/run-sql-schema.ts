@@ -110,6 +110,14 @@ async function main(): Promise<void> {
   await db.exec(schemaSql);
   check("schema executa integralmente em PostgreSQL", true);
 
+  const durableIngressPatchUrl = new URL(
+    "../../../../supabase/migrations/20260730190000_v3_pending_inbox_enrichment.sql",
+    import.meta.url,
+  );
+  const durableIngressPatchSql = await readFile(durableIngressPatchUrl, "utf8");
+  await db.exec(durableIngressPatchSql);
+  check("patch F2.94 (ACK duravel + enriquecimento pending) executa integralmente em PostgreSQL", true);
+
   const outboxPatchUrl = new URL("../../Brain/sql/v3_f2_5_1_outbox_patch.sql", import.meta.url);
   const outboxPatchSql = await readFile(outboxPatchUrl, "utf8");
   await db.exec(outboxPatchSql);
@@ -362,6 +370,17 @@ async function main(): Promise<void> {
     select public.v3_ingest_inbox($1::uuid, 'evt-1', $2, $3::jsonb, $4::timestamptz) as inserted
   `, [TENANT, CONVERSATION, JSON.stringify({ __redacted: true, text: "Oi repetido" }), NOW]);
   check("inbox INSERT e o dedupe atomico", firstIngest.rows[0].inserted && !duplicateIngest.rows[0].inserted);
+  const enrichedPending = await db.query<{ text: string; received_at: string }>(`
+    select raw->>'text' as text, received_at::text as received_at
+      from public.v3_inbox
+     where event_id = 'evt-1'
+  `);
+  check(
+    "duplicata pending enriquece o mesmo evento sem alterar received_at",
+    enrichedPending.rows[0]?.text === "Oi repetido"
+      && new Date(enrichedPending.rows[0]?.received_at).toISOString() === NOW,
+    JSON.stringify(enrichedPending.rows[0]),
+  );
 
   await expectReject("inbox rejeita payload nao redigido", () => db.query(`
     select public.v3_ingest_inbox($1::uuid, 'evt-secret', $2, '{"text":"123"}'::jsonb, $3::timestamptz)
@@ -403,6 +422,25 @@ async function main(): Promise<void> {
     ) as ids
   `, [TENANT, CONVERSATION, NOW, TURN, leaseToken]);
   check("claim atomico respeita lease", claimed.rows[0].ids.length === 1 && claimed.rows[0].ids[0] === "evt-1");
+  const duplicateAfterClaim = await db.query<{ inserted: boolean }>(`
+    select public.v3_ingest_inbox(
+      $1::uuid, 'evt-1', $2,
+      '{"__redacted":true,"text":"NAO PODE MUTAR","mediaContext":{"kind":"image"}}'::jsonb,
+      $3::timestamptz
+    ) as inserted
+  `, [TENANT, CONVERSATION, NOW]);
+  const claimedRaw = await db.query<{ text: string; has_media: boolean }>(`
+    select raw->>'text' as text, raw ? 'mediaContext' as has_media
+      from public.v3_inbox
+     where event_id = 'evt-1'
+  `);
+  check(
+    "duplicata claimed continua no_op e nao altera o snapshot em processamento",
+    duplicateAfterClaim.rows[0]?.inserted === false
+      && claimedRaw.rows[0]?.text === "Oi repetido"
+      && claimedRaw.rows[0]?.has_media === false,
+    JSON.stringify({ duplicateAfterClaim: duplicateAfterClaim.rows[0], raw: claimedRaw.rows[0] }),
+  );
 
   const commit = await db.query<{ version: bigint }>(`
     select public.v3_commit_turn(

@@ -26,7 +26,9 @@ export interface LeaseStore {
 // ── Inbox (ingestão atômica = dedupe; claim com cutoff) ─────────────────────
 export type InboxInsert = { eventId: Id; conversationId: Id; raw: Redacted<{ [k: string]: JsonValue }>; receivedAt: string };
 export interface InboxStore {
-  // INSERT ... ON CONFLICT (eventId) DO NOTHING -> true = primeira vez; false = duplicado (no_op).
+  // true = primeira vez. false = duplicado/no_op; se a linha ainda estiver
+  // pending, o adapter pode mesclar contexto mais rico no mesmo raw sem criar
+  // evento ou alterar receivedAt.
   tryInsert(rec: InboxInsert): Awaitable<boolean>;
   // claim ATÔMICO: pega 'pending' com receivedAt <= cutoff e marca 'claimed'. Retorna os eventIds claimados.
   claimBurst(conversationId: Id, cutoff: string, claimedBy: string, turnId: Id, lease?: Lease): Awaitable<Id[]>;

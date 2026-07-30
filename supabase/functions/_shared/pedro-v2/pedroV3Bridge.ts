@@ -79,10 +79,67 @@ export type PedroV3BridgeCallResult = {
   serviceStatus: string | null;
 };
 
+export type PedroV3BeforeAckResult =
+  | {
+      kind: "accepted";
+      initial: PedroV3BridgeCallResult;
+      enrichment: Promise<PedroV3BridgeCallResult | null> | null;
+    }
+  | {
+      kind: "retry";
+      initial: PedroV3BridgeCallResult;
+      enrichment: null;
+    };
+
 function pickIncoming(payload: any): any {
   if (Array.isArray(payload?.messages) && payload.messages.length > 0) return payload.messages[0];
   if (Array.isArray(payload?.data) && payload.data.length > 0) return payload.data[0];
   return payload?.message || payload?.data || payload;
+}
+
+/**
+ * Produces a zero-I/O media fact for the durable first ingest.
+ *
+ * The webhook must not wait for transcription/vision before persisting the
+ * event in v3_inbox. A media-only message still needs a truthful text block so
+ * it can be accepted immediately; richer context may replace this provisional
+ * fact while the row is still pending.
+ */
+export function provisionalPedroV3MediaContext(payload: any): PedroV3MediaContext | null {
+  const message = pickIncoming(payload);
+  const descriptors = [
+    message?.messageType,
+    message?.type,
+    message?.mediaType,
+    message?.mimetype,
+    message?.mimeType,
+    payload?.messageType,
+    payload?.type,
+    payload?.mediaType,
+    payload?.mimetype,
+    payload?.mimeType,
+  ].map((value) => String(value || "").toLowerCase()).join(" ");
+
+  let kind: PedroV3MediaContext["kind"] | null = null;
+  if (/(audio|ptt|voice)/.test(descriptors) || message?.audioMessage || payload?.audioMessage) kind = "audio";
+  else if (/(image|photo|sticker)/.test(descriptors) || message?.imageMessage || payload?.imageMessage) kind = "image";
+  else if (/video/.test(descriptors) || message?.videoMessage || payload?.videoMessage) kind = "video";
+  else if (/(document|pdf|file)/.test(descriptors) || message?.documentMessage || payload?.documentMessage) kind = "document";
+  else if (
+    message?.mediaUrl || message?.media_url || message?.fileUrl || message?.file_url ||
+    payload?.mediaUrl || payload?.media_url || payload?.fileUrl || payload?.file_url
+  ) kind = "unknown";
+
+  if (!kind) return null;
+  return {
+    kind,
+    text: null,
+    summary: null,
+    vehicleQuery: null,
+    vehicleType: null,
+    confidence: 0,
+    transcriptionAvailable: kind === "audio" ? false : null,
+  };
 }
 
 function firstString(values: unknown[]): string | null {
@@ -519,6 +576,43 @@ function serviceEndpoint(raw: string, path: "/v1/pilot/turn" | "/v1/pilot/receip
   } catch {
     return null;
   }
+}
+
+/**
+ * Establishes the acknowledgement boundary for Uazapi.
+ *
+ * The first bridge call is awaited and must prove `ingested:true` before the
+ * webhook may answer HTTP 200. Optional media/ad enrichment starts only after
+ * that durable boundary and reuses the same event id, so losing the background
+ * task can reduce context quality but can never erase the lead turn.
+ */
+export async function bridgePedroV3BeforeAck(input: {
+  turn: PedroV3BridgeTurn;
+  call: (turn: PedroV3BridgeTurn) => Promise<PedroV3BridgeCallResult>;
+  enrich?: () => Promise<PedroV3BridgeTurn | null>;
+}): Promise<PedroV3BeforeAckResult> {
+  const initial = await input.call(input.turn);
+  if (initial.kind !== "accepted") {
+    return { kind: "retry", initial, enrichment: null };
+  }
+
+  const enrichment = input.enrich
+    ? (async (): Promise<PedroV3BridgeCallResult | null> => {
+        try {
+          const enriched = await input.enrich!();
+          if (!enriched) return null;
+          return await input.call(enriched);
+        } catch {
+          return {
+            kind: "uncertain",
+            httpStatus: null,
+            serviceStatus: "enrichment_failed",
+          };
+        }
+      })()
+    : null;
+
+  return { kind: "accepted", initial, enrichment };
 }
 
 export async function callPedroV3Bridge(input: {

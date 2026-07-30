@@ -143,7 +143,21 @@ export class InMemoryPersistence implements Persistence, ConversationRoutingStor
 
   // ── InboxStore ────────────────────────────────────────────────────────────
   tryInsert(rec: InboxInsert): boolean {
-    if (this.inbox.has(rec.eventId)) return false;             // dedupe = o próprio insert (Codex F2.0 #1)
+    const existing = this.inbox.get(rec.eventId);
+    if (existing) {
+      // A segunda entrega do MESMO evento pode carregar contexto enriquecido
+      // (transcricao/visao do anuncio). Enquanto ainda esta pending, mesclamos
+      // apenas o payload factual; o retorno continua false e nunca nasce um
+      // segundo turno. Depois do claim, o snapshot do turno e imutavel.
+      if (existing.status === "pending" && existing.conversationId === rec.conversationId) {
+        existing.raw = {
+          ...existing.raw,
+          ...rec.raw,
+          __redacted: true,
+        } as InboxRecord["raw"];
+      }
+      return false;
+    }
     this.inbox.set(rec.eventId, {
       eventId: rec.eventId, conversationId: rec.conversationId, raw: rec.raw,
       status: "pending", claimedBy: null, turnId: null, attempts: 0,

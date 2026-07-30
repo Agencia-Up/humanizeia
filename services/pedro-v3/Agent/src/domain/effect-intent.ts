@@ -49,10 +49,11 @@ export type OutboxRecord = EffectIntent & {
   dispatchedAt: string | null;
 };
 
-// ── InboxRecord: linha de `v3_inbox`. dedupe pelo próprio INSERT (Codex #1). ─
+// ── InboxRecord: linha de `v3_inbox`. `eventId` continua sendo o dedupe. Uma
+// duplicata ainda pending pode enriquecer `raw`, mas nunca cria outro evento.
 export type InboxStatus = "pending" | "claimed" | "done" | "error";
 export type InboxRecord = {
-  eventId: Id;             // UNIQUE -> ON CONFLICT DO NOTHING é o dedupe
+  eventId: Id;             // UNIQUE -> uma linha/turno por evento do provedor
   conversationId: Id;
   raw: Redacted<{ [k: string]: JsonValue }>;
   status: InboxStatus;

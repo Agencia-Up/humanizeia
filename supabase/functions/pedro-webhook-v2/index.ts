@@ -10,7 +10,7 @@ import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_ph
 import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { agentUsesInstance, agentLooksLikePedro, selectActiveAgent, shouldNamespaceConversationByInstance } from "../_shared/pedro-v2/webhookRouting.ts";
 import { evaluatePedroV3PilotAgent, parsePedroV3ActiveScopes, PEDRO_V3_ONLY } from "../_shared/pedro-v2/pedroV3PilotGate.ts";
-import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, callPedroV3Bridge, callPedroV3ReceiptBridge, enrichAdReferralWithSemanticContext, shouldFallbackToPedroV2, conversationHasV3Routing, conversationHasV3State, incomingRemoteJid, shouldIgnorePedroInternalIdentity, type PedroV3MediaContext, type PedroV3AdReferral } from "../_shared/pedro-v2/pedroV3Bridge.ts";
+import { bridgePedroV3BeforeAck, buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, callPedroV3Bridge, callPedroV3ReceiptBridge, enrichAdReferralWithSemanticContext, incomingRemoteJid, provisionalPedroV3MediaContext, shouldIgnorePedroInternalIdentity, type PedroV3MediaContext, type PedroV3AdReferral } from "../_shared/pedro-v2/pedroV3Bridge.ts";
 import { identifyPedroContact } from "../_shared/pedro-v2/contactIdentity.ts";
 import { resolveUazapiPhone, resolveUazapiText } from "../_shared/pedro-v2/phone.ts";
 import { handleSellerInbound } from "../_shared/pedro-v2/transferRouter.ts";
@@ -50,17 +50,7 @@ function isReactionMessage(payload: any): boolean {
 }
 
 function mayContainLeadMedia(payload: any): boolean {
-  const message = pickIncomingMessage(payload);
-  const kinds = [
-    message?.messageType, message?.type, message?.mediaType, message?.mimetype, message?.mimeType,
-    payload?.messageType, payload?.type, payload?.mediaType, payload?.mimetype, payload?.mimeType,
-  ].map((value) => String(value || "").toLowerCase()).join(" ");
-  if (/(audio|ptt|image|video|document|sticker)/.test(kinds)) return true;
-  return Boolean(
-    message?.imageMessage || message?.audioMessage || message?.videoMessage || message?.documentMessage ||
-    message?.mediaUrl || message?.media_url || message?.fileUrl || message?.file_url ||
-    payload?.imageMessage || payload?.audioMessage || payload?.videoMessage || payload?.documentMessage,
-  );
+  return provisionalPedroV3MediaContext(payload) != null;
 }
 
 async function resolvePedroV3InboundMediaContext(input: {
@@ -796,21 +786,14 @@ Deno.serve(async (req) => {
     console.error("[pedro-webhook-v2] turn_uncaught_error", turnErr);
   };
 
-  // ⚠️ ANTI-DROP DE MENSAGEM (lead Gilda 99175-5700 + ~20% dos leads não respondidos): o webhook AWAITAVA
-  // o turno inteiro (incl. debounce de ATÉ 45s + LLM). Se o uazapi (caller) dava TIMEOUT e desconectava
-  // nesse meio-tempo, o Supabase MATAVA a function -> msg salva mas turno NÃO completava, lead SEM resposta
-  // (a function MORTA não dispara o safety-net acima, que só pega exceção JS). FIX=responder 200 RÁPIDO e
-  // processar em EdgeRuntime.waitUntil (o Supabase mantém a function viva após o 200) -> sem timeout do
-  // uazapi, sem desconexão, o turno SEMPRE completa. Dry-run segue awaited (o teste precisa do resultado).
-  // PEDRO V3 ACTIVE PILOT: only the exact tenant+agent gate may leave v2.
-  // The bridge runs in waitUntil and returns 200 to Uazapi immediately. A v2
-  // fallback is allowed ONLY when the service explicitly proves the failure
-  // happened before inbox ingestion. Timeout/network/unknown never invoke both.
+  // ANTI-DROP: o webhook não espera debounce/LLM. Também não confia a primeira
+  // persistência a waitUntil, pois a tarefa pode morrer depois do HTTP 200.
+  // ACK DURAVEL DO V3: debounce/LLM continuam assincronos, mas o webhook so
+  // responde HTTP 200 depois que o bridge prova que o evento entrou no
+  // v3_inbox. EdgeRuntime.waitUntil fica reservado a enriquecimento: perde-lo
+  // pode reduzir contexto, nunca apagar o turno. Falha/timeout antes da prova
+  // retorna 503; o retry usa o mesmo eventId e e idempotente.
   const _waitUntil = (globalThis as any).EdgeRuntime?.waitUntil?.bind((globalThis as any).EdgeRuntime);
-  if (!_dryRun && v3ExclusiveScope && typeof _waitUntil !== "function") {
-    console.error("[pedro-v3-only] active_scope_without_wait_until");
-    return jsonResponse({ ok: false, accepted: false, reason: "v3_runtime_unavailable", build: PEDRO_V2_BUILD }, 503);
-  }
   let _pilotSellerInbound = false;
   let _pilotInternalInbound = false;
   let _postTransferPlan = null;
@@ -908,71 +891,118 @@ Deno.serve(async (req) => {
     }
   }
 
-  if (!_dryRun && !_pilotSellerInbound && pedroV3Pilot.enabled && pedroV3Pilot.mode === "active" && typeof _waitUntil === "function") {
+  if (!_dryRun && !_pilotSellerInbound && pedroV3Pilot.enabled && pedroV3Pilot.mode === "active") {
     const serviceUrl = Deno.env.get("PEDRO_V3_SERVICE_URL") || "";
     const bridgeSecret = Deno.env.get("PEDRO_V3_BRIDGE_SECRET") || "";
-    _waitUntil((async () => {
-      // Keep the webhook acknowledgement fast. Media extraction is context for
-      // the v3 brain, never an edge-authored reply, and runs after the 200.
-      const mediaContext = await resolvePedroV3InboundMediaContext({
-        payload,
-        instance: waInstance,
-        userId: (agent as any)?.user_id,
-        supabase,
-      });
-      const bridgeTurn = await buildPedroV3BridgeTurn({
-        payload,
-        tenantId: (agent as any)?.user_id,
-        agentId: (agent as any)?.id,
-        instanceId: waInstance.id,
-        separateConversationByInstance: shouldNamespaceConversationByInstance(agent, waInstance.id),
+    const provisionalMedia = provisionalPedroV3MediaContext(payload);
+    const bridgeTurn = await buildPedroV3BridgeTurn({
+      payload,
+      tenantId: (agent as any)?.user_id,
+      agentId: (agent as any)?.id,
+      instanceId: waInstance.id,
+      separateConversationByInstance: shouldNamespaceConversationByInstance(agent, waInstance.id),
+      build: PEDRO_V2_BUILD,
+      mediaContext: provisionalMedia,
+      activeScopes: pedroV3Scopes,
+    });
+    if (!bridgeTurn.ok) {
+      console.error(`[pedro-v3-only] durable_ingest_build_failed reason=${bridgeTurn.reason}`);
+      return jsonResponse({
+        ok: false,
+        accepted: false,
+        reason: `v3_${bridgeTurn.reason}`,
         build: PEDRO_V2_BUILD,
-        mediaContext,
-        activeScopes: pedroV3Scopes,
+      }, 503);
+    }
+
+    const callBridge = (turn: typeof bridgeTurn.turn) => callPedroV3Bridge({
+      serviceUrl,
+      secret: bridgeSecret,
+      turn,
+      // /turn apenas grava routing + inbox. Sem prova rápida de ingestão, o
+      // provedor deve repetir em vez de receber um HTTP 200 falso.
+      timeoutMs: 8_000,
+    });
+    const needsEnrichment = provisionalMedia != null || bridgeTurn.turn.adReferral != null;
+    const durable = await bridgePedroV3BeforeAck({
+      turn: bridgeTurn.turn,
+      call: callBridge,
+      ...(needsEnrichment ? {
+        enrich: async () => {
+          const resolvedMedia = provisionalMedia
+            ? await resolvePedroV3InboundMediaContext({
+                payload,
+                instance: waInstance,
+                userId: (agent as any)?.user_id,
+                supabase,
+              })
+            : null;
+          const rebuilt = await buildPedroV3BridgeTurn({
+            payload,
+            tenantId: (agent as any)?.user_id,
+            agentId: (agent as any)?.id,
+            instanceId: waInstance.id,
+            separateConversationByInstance: shouldNamespaceConversationByInstance(agent, waInstance.id),
+            build: PEDRO_V2_BUILD,
+            mediaContext: resolvedMedia ?? provisionalMedia,
+            activeScopes: pedroV3Scopes,
+          });
+          if (!rebuilt.ok) return null;
+          const enrichedTurn = rebuilt.turn.adReferral
+            ? {
+                ...rebuilt.turn,
+                adReferral: await resolvePedroV3AdSemanticContext({
+                  referral: rebuilt.turn.adReferral,
+                  userId: (agent as any)?.user_id,
+                  supabase,
+                }),
+              }
+            : rebuilt.turn;
+          return JSON.stringify(enrichedTurn) === JSON.stringify(bridgeTurn.turn)
+            ? null
+            : enrichedTurn;
+        },
+      } : {}),
+    });
+
+    if (durable.kind !== "accepted") {
+      console.error(
+        `[pedro-v3-only] durable_ingest_not_proven result=${durable.initial.kind} `
+        + `status=${durable.initial.serviceStatus ?? durable.initial.httpStatus ?? "none"}`,
+      );
+      return jsonResponse({
+        ok: false,
+        accepted: false,
+        reason: "v3_ingest_not_proven",
+        bridge: durable.initial.kind,
+        build: PEDRO_V2_BUILD,
+      }, 503);
+    }
+
+    if (durable.enrichment) {
+      const observeEnrichment = durable.enrichment.then((result) => {
+        if (!result) return;
+        const level = result.kind === "accepted" ? "log" : "warn";
+        console[level](
+          `[pedro-v3-bridge] enrichment_result=${result.kind} `
+          + `status=${result.serviceStatus ?? result.httpStatus ?? "none"}`,
+        );
+      }).catch((error) => {
+        console.warn("[pedro-v3-bridge] enrichment_unexpected", String((error as any)?.message || error).slice(0, 200));
       });
-      if (!bridgeTurn.ok) {
-        // Active v3 scopes are exclusive. Unsupported events remain visible,
-        // but never hand the lead to a second conversational agent.
-        console.error(`[pedro-v3-bridge] v3_exclusive_scope_unsupported reason=${bridgeTurn.reason}; fallback=blocked`);
-        return;
+      if (typeof _waitUntil === "function") {
+        _waitUntil(observeEnrichment);
+      } else {
+        // Sem waitUntil, o turno já está seguro; aguardar aqui preserva apenas
+        // qualidade de contexto, não a durabilidade.
+        await observeEnrichment;
       }
-      const enrichedTurn = bridgeTurn.turn.adReferral
-        ? {
-            ...bridgeTurn.turn,
-            adReferral: await resolvePedroV3AdSemanticContext({
-              referral: bridgeTurn.turn.adReferral,
-              userId: (agent as any)?.user_id,
-              supabase,
-            }),
-          }
-        : bridgeTurn.turn;
-      const bridgeResult = await callPedroV3Bridge({
-        serviceUrl,
-        secret: bridgeSecret,
-        turn: enrichedTurn,
-      });
-      if (bridgeResult.kind === "pre_ingest_failure") {
-          // INC1 (P0 STICKY ROUTING): uma conversa JÁ ASSUMIDA pelo v3 (routing/state presente) NUNCA cai pro v2 no meio.
-          // O fallback pro v2 só ocorre ANTES do v3 assumir a conversa (sem routing) — senão o v2 responde por cima do v3
-          // (saudação "Oi! Aqui é o Aloan" no meio). Duplicado/no_op/accepted/superseded já não entram aqui (não são
-          // pre_ingest_failure). Observabilidade: reason + conversationId + hasV3Routing.
-        const hasV3Routing = await conversationHasV3Routing(supabase, enrichedTurn.tenantId, enrichedTurn.conversationId);
-        const hasV3State = await conversationHasV3State(supabase, enrichedTurn.tenantId, enrichedTurn.conversationId);
-        const decision = shouldFallbackToPedroV2({
-          classification: bridgeResult.kind,
-          hasV3Routing,
-          hasV3State,
-          exclusiveOwnership: true,
-        });
-        console.error(`[pedro-v3-only] ${decision.reason} conversationId=${bridgeTurn.turn.conversationId} status=${bridgeResult.serviceStatus ?? bridgeResult.httpStatus ?? "none"} hasV3Routing=${hasV3Routing} hasV3State=${hasV3State} ingested=false; fallback=blocked`);
-        return;
-      }
-      console.log(`[pedro-v3-bridge] result=${bridgeResult.kind} status=${bridgeResult.httpStatus ?? "none"}`);
-    })().catch((error) => {
-      // Unexpected bridge exceptions are uncertain: never risk a double reply.
-      console.error("[pedro-v3-bridge] unexpected_uncertain", String((error as any)?.message || error).slice(0, 300));
-    }));
-    return jsonResponse({ ok: true, accepted: true, routed: "pedro_v3", build: PEDRO_V2_BUILD });
+    }
+
+    console.log(
+      `[pedro-v3-bridge] durable_ingest=accepted status=${durable.initial.serviceStatus ?? durable.initial.httpStatus ?? "none"}`,
+    );
+    return jsonResponse({ ok: true, accepted: true, routed: "pedro_v3_durable", build: PEDRO_V2_BUILD });
   }
   if (!_dryRun && typeof _waitUntil === "function") {
     if (PEDRO_V3_ONLY) {

@@ -527,7 +527,23 @@ begin
   ) on conflict (event_id) do nothing;
 
   get diagnostics v_count = row_count;
-  return v_count = 1;
+  if v_count = 1 then
+    return true;
+  end if;
+
+  -- O mesmo evento pode chegar uma segunda vez com contexto enriquecido
+  -- (transcricao/visao do anuncio). Enquanto ele ainda esta pending, atualize
+  -- somente o payload factual da mesma conversa. O retorno permanece false:
+  -- continua existindo uma unica linha e um unico turno. Depois do claim o raw
+  -- e imutavel para nao alterar o snapshot que um worker ja esta processando.
+  update public.v3_inbox as inbox
+     set raw = inbox.raw || p_raw
+   where inbox.event_id = p_event_id
+     and inbox.tenant_id = p_tenant_id
+     and inbox.conversation_id = p_conversation_id
+     and inbox.status = 'pending';
+
+  return false;
 end;
 $$;
 
