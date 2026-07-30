@@ -105,6 +105,7 @@ import { invalidBrazilGreeting } from "./channel-time.ts";
 import { responseAuthorityProfile, type ResponseAuthorityMode } from "./response-authority.ts";
 import { groundProposedMediaEffects } from "./media-effect-grounding.ts";
 import { applyAcceptedPhotoActionOutcome, reconcileAcceptedPhotoOutcomes } from "./photo-outcome.ts";
+import { sanitizeOutgoingText } from "./outgoing-text-sanitizer.ts";
 import {
   aggregateLeadMessage,
   adContextFromInbox,
@@ -116,6 +117,7 @@ import {
 } from "./central-turn-io.ts";
 import { buildRememberedIdentities, canonicalVehicleLabel, groundNamedVehicles, parseLabel } from "./vehicle-label.ts";
 export { applyAcceptedPhotoActionOutcome, reconcileAcceptedPhotoOutcomes } from "./photo-outcome.ts";
+export { sanitizeOutgoingText } from "./outgoing-text-sanitizer.ts";
 
 // ── Flag de modo ─────────────────────────────────────────────────────────────────────────────────────────────
 export type BrainMode = "off" | "central_shadow" | "central_active";
@@ -319,38 +321,6 @@ function classifyDegradation(args: {
   if (denyCats.includes("grounding")) return "grounding_rejected";
   if (args.policyFeedbackLog.length > 0) return "response_rejected";
   return "retry_exhausted";
-}
-
-// T1 (audit Codex smoke): o LLM às vezes emite BYTES DE CONTROLE no texto (ex.: U+001F). Remove C0 (mantém \t \n \r), DEL
-// e o replacement char U+FFFD — nunca vão pro WhatsApp/CRM. NÃO mexe em espaços/quebras (preserva a formatação da lista).
-function stripControlChars(text: string): string {
-  let out = "";
-  for (const ch of text) {
-    const c = ch.codePointAt(0) ?? 0;
-    if ((c < 0x20 && c !== 0x09 && c !== 0x0a && c !== 0x0d) || c === 0x7f || c === 0xfffd) continue;
-    out += ch;
-  }
-  return out;
-}
-function repairVisibleLatin1Escapes(text: string): string {
-  if (!/(?:ðŸ|Voceaa|Taubate9|\bje1\b|\p{L}(?:eaa|e7|e9|e1|e0|e2|e3|f3|f4|f5)\b)/u.test(text)) return text;
-  return text
-    .replace(/ðŸ.{0,2}/g, "")
-    .replace(/eaa/g, "ê")
-    .replace(/e7/g, "ç")
-    .replace(/e9/g, "é")
-    .replace(/e1/g, "á")
-    .replace(/e0/g, "à")
-    .replace(/e2/g, "â")
-    .replace(/e3/g, "ã")
-    .replace(/f3/g, "ó")
-    .replace(/f4/g, "ô")
-    .replace(/f5/g, "õ");
-}
-export function sanitizeOutgoingText(text: string): string {
-  return repairVisibleLatin1Escapes(stripControlChars(text))
-    .replace(/(\p{Extended_Pictographic})(?=\p{L})/gu, "$1 ")
-    .normalize("NFC");
 }
 
 // moreOptionsSearch chega gateado pela necessidade factual declarada pela LLM. O ato conversacional permanece

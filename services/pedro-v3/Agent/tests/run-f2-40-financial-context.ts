@@ -25,6 +25,7 @@ import type { AgentBrainStep, AgentBrainDecision, TurnUnderstanding, PrimaryInte
 import type { ProposedEffectPlan, QueryCall, QueryResult, ResponsePart, ResponseDraft, TurnRelation, EffectReceipt, EffectResult } from "../src/domain/decision.ts";
 import type { VehicleFact } from "../src/domain/types.ts";
 import type { ConversationState } from "../src/domain/conversation-state.ts";
+import { repairOverlongUnicodeEscapeFragments, sanitizeOutgoingText } from "../src/engine/outgoing-text-sanitizer.ts";
 
 let ok = 0, fail = 0; const fails: string[] = [];
 function check(name: string, pass: boolean, detail = ""): void {
@@ -376,17 +377,77 @@ async function runEngine(): Promise<void> {
     check("[G1k] LLM recebe o fato e reconhece R$ 2.000 sem retry lexical", t.src === "brain_final" && has(t.outbox, "2.000"), `src=${t.src} outbox=${JSON.stringify(t.outbox)}`);
   }
 
-  // CASO ENCODING (incidente real): a gpt-4.1-mini emite a resposta com CARACTERES DE CONTROLE embutidos (corrompida) ->
-  //  o engine REJEITA -> a LLM REAUTORA limpo (brain_retry) -> o texto final NAO tem caracteres de controle.
+  // CASO ENCODING (incidente real): o provider devolveu escapes Unicode longos. O parser JSON consumiu os quatro
+  // primeiros hexadecimais como um controle invisível e deixou o restante visível ("60A", "D", "ea").
+  // A normalização deve reconstituir o caractere antes de remover controles, sem consumir retry da LLM.
   {
+    const parsedBrokenText = JSON.parse(
+      '"Bom dia! Olá, eu sou a Duda, consultora aqui da Wa Veículos \\u001f60A\\nQual ve\\u000EDculo voc\\u0000ea procura?"',
+    ) as string;
+    check(
+      "[G-enc-parser] fixture reproduz o resultado real do parser JSON",
+      parsedBrokenText.includes(String.fromCharCode(0x1f))
+        && parsedBrokenText.includes(String.fromCharCode(0x0e))
+        && parsedBrokenText.includes(String.fromCharCode(0x00)),
+      JSON.stringify(parsedBrokenText),
+    );
+    check(
+      "[G-enc-pure] reparo estrutural recompõe emoji e acentos",
+      repairOverlongUnicodeEscapeFragments(parsedBrokenText)
+        === "Bom dia! Olá, eu sou a Duda, consultora aqui da Wa Veículos 😊\nQual veículo você procura?",
+      JSON.stringify(repairOverlongUnicodeEscapeFragments(parsedBrokenText)),
+    );
+    const malformedEscapeCases: ReadonlyArray<readonly [string, string]> = [
+      [JSON.parse('"caf\\u0000e9"') as string, "café"],
+      [JSON.parse('"pre\\u0000e7o"') as string, "preço"],
+      [JSON.parse('"voc\\u0000ea"') as string, "você"],
+      [JSON.parse('"ve\\u000EDculo"') as string, "veículo"],
+      [JSON.parse('"aprova\\u0000e7\\u0000e3o"') as string, "aprovação"],
+      [JSON.parse('"legal \\u001f44D"') as string, "legal 👍"],
+      // O contrato pré-existente da saída separa pictograma de palavra adjacente.
+      [JSON.parse('"ótimo \\u001f60AAgora"') as string, "ótimo 😊 Agora"],
+    ];
+    malformedEscapeCases.forEach(([input, expected], index) => {
+      check(
+        `[G-enc-matrix-${index + 1}] escape longo recomposto`,
+        sanitizeOutgoingText(input) === expected,
+        `${JSON.stringify(input)} -> ${JSON.stringify(sanitizeOutgoingText(input))}`,
+      );
+    });
+
     const c = conv();
-    const corruptThenClean: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.tool === "response" && !o.ok)
-      ? finU([txt("Ola! Eu sou o Carvalho, consultor da Icom. Voce e de Taubate mesmo? Qual modelo, tipo de carro ou faixa de preco voce procura?")], "reply", U("other"))   // retry: limpo e abertura SDR valida
-      : finU([txt("Ola! Eu sou o Carvalho " + String.fromCharCode(0x1f,0x1f) + "Voc" + String.fromCharCode(0) + "ê é de Taubaté?")], "reply", U("other"));   // 1a: corrompido (controle)
-    const t = await c.t("Boa tarde", corruptThenClean);
+    const corruptedTransportDraft: BrainResponder = () =>
+      finU([txt(parsedBrokenText)], "reply", U("other"));
+    const t = await c.t("Bom dia", corruptedTransportDraft);
     const hasCtrl = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\uFFFD]/.test(t.outbox);
-    check("[G-enc] resposta válida com controle é normalizada sem retry", t.src === "brain_final", `src=${t.src}`);
-    check("[G-enc-b] texto final LIMPO (sem caracteres de controle)", t.committed && !hasCtrl && has(t.outbox, "Taubate"), `outbox=${JSON.stringify(t.outbox)}`);
+    check("[G-enc] resposta válida é normalizada sem retry", t.src === "brain_final", `src=${t.src}`);
+    check(
+      "[G-enc-b] outbox recompõe exatamente os caracteres do print",
+      t.committed
+        && !hasCtrl
+        && t.outbox.includes("Wa Veículos 😊")
+        && t.outbox.includes("Qual veículo você procura?")
+        && !t.outbox.includes("60A")
+        && !t.outbox.includes("vedculo")
+        && !t.outbox.includes("vocea"),
+      `outbox=${JSON.stringify(t.outbox)}`,
+    );
+  }
+
+  // Limites de segurança: texto normal é idempotente; controles reais sem um sufixo Unicode plausível são apenas
+  // removidos; tabs e quebras de linha continuam preservados.
+  {
+    const normal = "Preço: R$ 59.900\nVeículo automático 😊";
+    check("[G-enc-safe-1] texto UTF-8 válido não muda", sanitizeOutgoingText(normal) === normal);
+    check("[G-enc-safe-2] normalização é idempotente", sanitizeOutgoingText(sanitizeOutgoingText(normal)) === normal);
+    check(
+      "[G-enc-safe-3] controle sem fragmento reparável não contamina a saída",
+      sanitizeOutgoingText(`ABC${String.fromCharCode(0x01)}xyz`) === "ABCxyz",
+    );
+    check(
+      "[G-enc-safe-4] whitespace editorial é preservado",
+      sanitizeOutgoingText("A\tB\nC\r\nD") === "A\tB\nC\r\nD",
+    );
   }
 
   // CASO ENCODING B (incidente real do WhatsApp): mojibake visível ("Voceaa e9... Taubate9... je1") é reparado no
