@@ -330,6 +330,8 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
   const [previewText, setPreviewText] = useState('');
   const [previewMode, setPreviewMode] = useState<'ai' | 'fallback' | 'published'>('ai');
   const [previewWarning, setPreviewWarning] = useState('');
+  const [previewCanonicalFingerprint, setPreviewCanonicalFingerprint] = useState('');
+  const [previewAgentId, setPreviewAgentId] = useState('');
 
   // Validação: blocos críticos pra IA funcionar bem (não bloqueiam, só avisam)
   const validation = useMemo(() => {
@@ -348,6 +350,13 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
   // ── Carrega config existente + status do agente ───────────────────────────
   useEffect(() => {
     if (!agentId) return;
+    // Uma prévia pertence a um agente e a uma versão canônica específicos.
+    // Nunca carregue o artefato aprovado de um agente para outro.
+    setPreviewOpen(false);
+    setPreviewText('');
+    setPreviewWarning('');
+    setPreviewCanonicalFingerprint('');
+    setPreviewAgentId('');
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -438,6 +447,8 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
       setPreviewText(data?.prompt || '(A IA não retornou um prompt.)');
       setPreviewMode(data?.generation_mode === 'ai' ? 'ai' : 'fallback');
       setPreviewWarning(data?.generation_warning || '');
+      setPreviewCanonicalFingerprint(data?.canonical_fingerprint || '');
+      setPreviewAgentId(agentId);
       toast({
         title: data?.generation_mode === 'ai' ? '✨ Prompt gerado com IA' : 'Prompt v3 gerado com segurança',
         description: data?.generation_warning || 'A prévia usa exatamente os dados preenchidos. Nada foi publicado ainda.',
@@ -445,6 +456,8 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
     } catch (err: any) {
       setPreviewText('');
       setPreviewWarning('');
+      setPreviewCanonicalFingerprint('');
+      setPreviewAgentId('');
       toast({
         title: 'Erro ao gerar com IA',
         description: isMissingTenantPoliciesColumn(err) ? funnelSchemaMigrationMessage() : err.message,
@@ -476,9 +489,24 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
         }, { onConflict: 'agent_id' });
       if (upErr) throw upErr;
 
-      // Chama edge function pra gerar e sobrescrever o system_prompt
+      // Publica exatamente a prévia aprovada. A Edge valida o fingerprint da
+      // configuração salva e recusa se o formulário mudou; ela não chama a IA
+      // uma segunda vez silenciosamente. Sem prévia, o botão ainda gera uma
+      // única vez e publica esse mesmo resultado.
+      const canPublishApprovedPreview = previewMode !== 'published'
+        && previewText.trim().length > 0
+        && previewCanonicalFingerprint.length > 0
+        && previewAgentId === agentId;
       const { data, error } = await supabase.functions.invoke('generate-agent-funnel-prompt', {
-        body: { action: 'generate', agent_id: agentId },
+        body: {
+          action: 'generate',
+          agent_id: agentId,
+          ...(canPublishApprovedPreview ? {
+            approved_prompt: previewText,
+            canonical_fingerprint: previewCanonicalFingerprint,
+            approved_generation_mode: previewMode,
+          } : {}),
+        },
       });
       if (error) throw new Error(error.message);
       if (data?.error) throw new Error(data.error);
@@ -488,6 +516,8 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
       setPreviewText(data?.prompt || '');
       setPreviewMode('published');
       setPreviewWarning(data?.generation_warning || '');
+      setPreviewCanonicalFingerprint(data?.canonical_fingerprint || '');
+      setPreviewAgentId(agentId);
       setPreviewOpen(true);
 
       toast({

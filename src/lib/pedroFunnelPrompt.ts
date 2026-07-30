@@ -506,6 +506,46 @@ export function validateAiGeneratedFunnelPrompt(
   return { valid: reasons.length === 0, reasons };
 }
 
+export type ApprovedFunnelPromptPublicationResult =
+  | { readonly ok: true; readonly prompt: string }
+  | { readonly ok: false; readonly error: string };
+
+/**
+ * Confere uma prévia aprovada antes da publicação. O fingerprint vincula o
+ * texto à configuração canônica que o originou; o retorno preserva os mesmos
+ * bytes da prévia, sem uma segunda geração silenciosa.
+ */
+export function validateApprovedFunnelPromptForPublication(input: {
+  readonly approvedPrompt: unknown;
+  readonly suppliedCanonicalFingerprint: unknown;
+  readonly currentCanonicalFingerprint: string;
+  readonly canonicalPrompt: string;
+  readonly config: unknown;
+}): ApprovedFunnelPromptPublicationResult {
+  if (typeof input.approvedPrompt !== "string" || input.approvedPrompt.length === 0) {
+    return { ok: false, error: "A prévia aprovada está vazia." };
+  }
+  if (input.approvedPrompt !== input.approvedPrompt.trim()) {
+    return { ok: false, error: "A prévia aprovada foi alterada depois da geração." };
+  }
+  if (typeof input.suppliedCanonicalFingerprint !== "string"
+    || input.suppliedCanonicalFingerprint !== input.currentCanonicalFingerprint) {
+    return { ok: false, error: "Os dados do Funil mudaram após a prévia. Gere uma nova prévia antes de publicar." };
+  }
+
+  // Uma prévia produzida pela própria edge já contém as seções recompostas.
+  // Se recompô-las novamente mudar qualquer byte, o texto enviado pelo browser
+  // não é mais o artefato que foi aprovado e deve ser recusado, não reparado.
+  if (enforceCanonicalV3Sections(input.approvedPrompt, input.canonicalPrompt) !== input.approvedPrompt) {
+    return { ok: false, error: "A prévia aprovada não preserva o contrato canônico do Pedro v3." };
+  }
+  const validation = validateAiGeneratedFunnelPrompt(input.approvedPrompt, input.canonicalPrompt, input.config);
+  if (!validation.valid) {
+    return { ok: false, error: `A prévia aprovada não passou na validação do contrato v3: ${validation.reasons.slice(0, 3).join("; ")}` };
+  }
+  return { ok: true, prompt: input.approvedPrompt };
+}
+
 export function buildFunnelPromptEditorRequest(config: unknown, canonicalPrompt: string): string {
   const safeConfig = sanitizeTenantFunnelPromptConfig(config);
   return `Você é a arquiteta sênior de prompts de SDR do Pedro v3. Responda em JSON válido, com um único campo string chamado "prompt".
@@ -640,6 +680,9 @@ export function buildTenantSdrSystemPrompt(input: unknown): string {
   const firstQuestion = text(b3, "first_question", "(não definida; responda primeiro ao bloco atual do lead)");
   const disqualificationCriteria = conversationalDisqualificationCriteria(b6.disqualified_when);
   const closingMessage = safeClosingMessage(b6);
+  const firstContactOperationalContinuation = isGeneralSdr
+    ? "Depois da apresentação, responda ao assunto que trouxe o lead no mesmo turno. Se a resposta depender da Base configurada pelo cliente, consulte `knowledge_search` antes de responder; não invente fatos e não prometa verificar ou retornar depois quando a consulta estiver disponível. Se o lead mudar de assunto, acompanhe a mudança naturalmente."
+    : "Depois da apresentação, se houver anúncio, trate o veículo do anúncio como assunto inicial. A apresentação e o atendimento ao pedido do anúncio pertencem ao mesmo turno, em balões separados: não espere outra mensagem do lead para continuar. Se o bloco atual pedir disponibilidade, consulte o veículo anunciado com `stock_search` antes de responder. Se pedir fotos, conclua no mesmo turno lógico a cadeia `stock_search` quando necessária → `vehicle_photos_resolve` → efeito `send_media`. Mencione apenas fatos aterrados, não prometa verificar ou enviar depois quando a ferramenta estiver disponível e não envie uma lista ampla nesse primeiro contato. Se o lead pedir outro modelo, siga a mudança sem ficar preso ao anúncio.";
 
   return `# PEDRO V3 — PROMPT COMERCIAL DO PORTAL
 
@@ -677,13 +720,18 @@ Na mesma mensagem, não repita o mesmo fato: se um veículo ou resultado de tool
 
 Na primeira resposta, reproduza exatamente o texto entre as tags abaixo, alterando somente o marcador **[PERIODO]** para o período atual do Brasil:
 
+- De 06:00 a 11:59, **[PERIODO]** significa exatamente **Bom dia**.
+- De 12:00 a 17:59, **[PERIODO]** significa exatamente **Boa tarde**.
+- De 18:00 a 05:59, **[PERIODO]** significa exatamente **Boa noite**.
+- Nunca substitua o marcador apenas por “Manhã”, “Tarde” ou “Noite”.
+
 <APRESENTACAO_LITERAL>
 ${presentation}
 </APRESENTACAO_LITERAL>
 
 Se a apresentação contiver uma pergunta, ela já é a pergunta deste primeiro balão. Não a parafraseie, não troque a identidade e não acrescente outra pergunta no mesmo balão.
 
-Depois da apresentação, se houver anúncio, trate o veículo do anúncio como assunto inicial. Consulte o que o bloco atual exigir, mencione apenas fatos aterrados e ofereça fotos ou detalhes sem inventar disponibilidade. Não envie uma lista ampla nesse primeiro contato. Se o lead pedir outro modelo, siga a mudança sem ficar preso ao anúncio.
+${firstContactOperationalContinuation}
 
 Preferência de conexão após a abertura: "${firstQuestion}".
 
@@ -734,6 +782,8 @@ Dados preferenciais:
 ${list(b7.required_data, "- ")}
 
 Use a transferência quando a conversa e este funil indicarem que o humano deve assumir, ou quando o lead pedir um humano. Pedido explícito de humano não deve ser bloqueado por coleta desnecessária. A decisão de transferência pertence a você, a LLM; a infraestrutura apenas valida se o efeito é executável e o registra.
+
+Nome informado, resposta isolada a uma pergunta de qualificação, curiosidade, pedido de foto ou interesse inicial são contexto para continuar o atendimento — não significam, sozinhos, que um humano já deve assumir. Antes de transferir, responda ao pedido atual e execute as tools factuais necessárias. Transfira quando o lead pedir uma pessoa ou quando o avanço real da conversa tornar a continuidade humana o próximo passo natural.
 
 Mensagem ao cliente:
 "${text(b7, "customer_message", "Vou te conectar agora com um de nossos consultores.")}"

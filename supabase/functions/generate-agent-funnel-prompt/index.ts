@@ -9,7 +9,11 @@
 //   3) sincroniza wa_ai_agents.system_prompt, a fonte efetiva única do runtime
 //   4) marca wa_ai_agents.use_funnel_config = true
 //
-// Body: { action: 'preview' | 'generate' | 'restore', agent_id: uuid, config?: object }
+// Body: {
+//   action: 'preview' | 'generate' | 'restore', agent_id: uuid, config?: object,
+//   approved_prompt?: string, canonical_fingerprint?: string,
+//   approved_generation_mode?: 'ai' | 'fallback'
+// }
 //   - 'generate' → faz o fluxo acima
 //   - 'preview'  → compila a configuração enviada pelo formulário e devolve
 //                  o prompt, sem alterar o prompt ativo nem o banco
@@ -29,6 +33,7 @@ import {
   buildTenantSdrSystemPrompt,
   enforceCanonicalV3Sections,
   sanitizeTenantFunnelPromptConfig,
+  validateApprovedFunnelPromptForPublication,
   validateAiGeneratedFunnelPrompt,
 } from '../../../src/lib/pedroFunnelPrompt.ts';
 import { resolveAiKey } from '../_shared/aiKeys.ts';
@@ -50,6 +55,13 @@ type PromptGenerationResult = {
   mode: 'ai' | 'deterministic_fallback';
   warning?: string;
 };
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
 
 /**
  * A IA só edita o texto comercial. O prompt canônico continua sendo a
@@ -408,7 +420,26 @@ serve(async (req) => {
       agent_type: agent.agent_type || 'generic',
     });
     const canonicalPrompt = buildTenantSdrSystemPrompt(promptConfig);
-    const generated = await improvePromptWithAi(effectiveOwnerId, promptConfig, canonicalPrompt);
+    const canonicalFingerprint = await sha256Hex(canonicalPrompt);
+    const approvedPromptSupplied = action === 'generate' && typeof body?.approved_prompt === 'string';
+    let generated: PromptGenerationResult;
+
+    if (approvedPromptSupplied) {
+      const approved = validateApprovedFunnelPromptForPublication({
+        approvedPrompt: body.approved_prompt,
+        suppliedCanonicalFingerprint: body?.canonical_fingerprint,
+        currentCanonicalFingerprint: canonicalFingerprint,
+        canonicalPrompt,
+        config: promptConfig,
+      });
+      if (!approved.ok) throw new Error(approved.error);
+      generated = {
+        prompt: approved.prompt,
+        mode: body?.approved_generation_mode === 'fallback' ? 'deterministic_fallback' : 'ai',
+      };
+    } else {
+      generated = await improvePromptWithAi(effectiveOwnerId, promptConfig, canonicalPrompt);
+    }
     const newPrompt = generated.prompt;
 
     if (action === 'preview') {
@@ -418,6 +449,7 @@ serve(async (req) => {
         generated: true,
         prompt: newPrompt,
         prompt_length: newPrompt.length,
+        canonical_fingerprint: canonicalFingerprint,
         generation_mode: generated.mode,
         generation_warning: generated.warning || null,
         funnel_warnings: funnelIssues.filter((issue) => issue.severity === 'warning'),
@@ -458,8 +490,10 @@ serve(async (req) => {
       generated: true,
       prompt: newPrompt,
       prompt_length: newPrompt.length,
+      canonical_fingerprint: canonicalFingerprint,
       generation_mode: generated.mode,
       generation_warning: generated.warning || null,
+      published_from_preview: approvedPromptSupplied,
       funnel_warnings: funnelIssues.filter((issue) => issue.severity === 'warning'),
       policy_warnings: policyIssues.filter((issue) => issue.severity === 'warning'),
       backup_created: !agent.system_prompt_backup && !!agent.system_prompt,

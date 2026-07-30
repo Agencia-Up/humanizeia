@@ -10,6 +10,7 @@ import {
   buildTenantSdrSystemPrompt,
   enforceCanonicalV3Sections,
   sanitizeTenantFunnelPromptConfig,
+  validateApprovedFunnelPromptForPublication,
   validateAiGeneratedFunnelPrompt,
 } from './pedroFunnelPrompt';
 import {
@@ -842,5 +843,52 @@ Identifique o horário atual e cumprimente conforme o momento. Em seguida, apres
       'qualificação baseada em julgamento financeiro subjetivo sem critério objetivo',
       'qualificação condicionada a dados obrigatórios não definidos objetivamente',
     ]));
+  });
+
+  it('publishes the approved preview byte-for-byte and rejects stale or altered artifacts', () => {
+    const config = {
+      agent_type: 'sdr',
+      bloco1_identidade: { agent_name: 'Aline', company: 'Monaco Automoveis' },
+      bloco3_abordagem: { presentation: '[PERIODO]! Sou Aline, da Monaco Automoveis' },
+      bloco9_empresa: { name: 'Monaco Automoveis' },
+    };
+    const canonical = buildTenantSdrSystemPrompt(config);
+    const approvedPreview = enforceCanonicalV3Sections(canonical, canonical);
+    const normalizedCanonical = canonical.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+    expect(canonical).toContain('06:00');
+    expect(canonical).toContain('Bom dia');
+    expect(canonical).toContain('12:00');
+    expect(canonical).toContain('Boa tarde');
+    expect(canonical).toContain('18:00');
+    expect(canonical).toContain('Boa noite');
+    expect(canonical).toMatch(/stock_search[\s\S]*vehicle_photos_resolve[\s\S]*send_media/);
+    expect(normalizedCanonical).toContain('nome informado');
+    expect(normalizedCanonical).toContain('nao significam, sozinhos');
+    const accepted = validateApprovedFunnelPromptForPublication({
+      approvedPrompt: approvedPreview,
+      suppliedCanonicalFingerprint: 'same-fingerprint',
+      currentCanonicalFingerprint: 'same-fingerprint',
+      canonicalPrompt: canonical,
+      config,
+    });
+
+    expect(accepted).toEqual({ ok: true, prompt: approvedPreview });
+    if (accepted.ok) expect(accepted.prompt).toBe(approvedPreview);
+
+    expect(validateApprovedFunnelPromptForPublication({
+      approvedPrompt: approvedPreview,
+      suppliedCanonicalFingerprint: 'old-fingerprint',
+      currentCanonicalFingerprint: 'new-fingerprint',
+      canonicalPrompt: canonical,
+      config,
+    }).ok).toBe(false);
+
+    expect(validateApprovedFunnelPromptForPublication({
+      approvedPrompt: approvedPreview.replace('## REGRA FINAL', '## REGRA FINAL ALTERADA'),
+      suppliedCanonicalFingerprint: 'same-fingerprint',
+      currentCanonicalFingerprint: 'same-fingerprint',
+      canonicalPrompt: canonical,
+      config,
+    }).ok).toBe(false);
   });
 });
