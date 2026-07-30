@@ -865,12 +865,30 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
     if (error) {
       toast({ title: 'Erro ao salvar', description: descricaoErro(error), variant: 'destructive' });
     } else {
-      toast({ title: agent?.id ? 'Agente atualizado!' : 'Agente criado! 🤖' });
-      // ISOLAMENTO: marca os números escolhidos como finalidade 'agent', pra eles
-      // ficarem fora do disparo em massa e o webhook tratá-los como números de IA.
-      if (selectedInstanceIds.length > 0) {
-        await (supabase as any).from('wa_instances').update({ purpose: 'agent' }).in('id', selectedInstanceIds);
+      // ETAPA 1 (fail-closed): vincular número a um agente é ato classificatório.
+      // A finalidade não é mais escrita direto da tela — vai pela RPC auditada
+      // set_wa_instance_purpose, que valida permissão, recusa número de vendedor
+      // e registra quem mudou. Se qualquer vínculo falhar, NÃO mostramos sucesso.
+      const falhas: string[] = [];
+      for (const instId of selectedInstanceIds) {
+        const { error: errFinalidade } = await (supabase as any).rpc('set_wa_instance_purpose', {
+          p_instance_id: instId,
+          p_purpose: 'agent',
+          p_motivo: 'Numero vinculado a um agente de IA',
+        });
+        if (errFinalidade) falhas.push(errFinalidade.message);
       }
+      if (falhas.length > 0) {
+        // Vínculo incompleto: avisa com o erro real em vez de fingir que deu certo.
+        toast({
+          title: 'Agente salvo, mas um número não pôde ser vinculado',
+          description: `${falhas[0]} — revise os números selecionados (não pode ser o WhatsApp pessoal de um vendedor nem uma linha já usada para campanhas).`,
+          variant: 'destructive',
+        });
+        setSaving(false);
+        return;
+      }
+      toast({ title: agent?.id ? 'Agente atualizado!' : 'Agente criado! 🤖' });
       // Sync to n8n after successful save
       await syncToN8n(payload);
       onSaved();

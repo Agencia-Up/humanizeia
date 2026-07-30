@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { planQueueItemDispatch } from "../_shared/campaign/senderEligibility.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -38,6 +39,30 @@ const DEFAULT_DELAY_MAX_SECONDS = 1620; // padrao quando a campanha nao define: 
 // AVISO (#3): cria notificacao no portal (sino) quando um disparo TRAVA por numero
 // desconectado. Dedupe: no maximo 1 aviso por campanha a cada 30min (nao spamma o
 // sino a cada ciclo de 1min do cron). Nao bloqueante.
+// ============================================================================
+// ETAPA 1 — DISPARO AUTOMATICO NUNCA SAI DE NUMERO DE VENDEDOR
+//
+// Regra dura (nao depende de classificacao): instancia com seller_member_id
+// preenchido NUNCA envia campanha/disparo em massa. O numero pessoal do vendedor
+// continua sincronizando, recebendo transferencia, confirmando "Ok" e sendo usado
+// manualmente por ele no WhatsApp — nada disso passa por esta funcao.
+//
+// purpose='agent' (linha da IA) tambem nunca dispara campanha.
+//
+// MODO DE COMPATIBILIDADE (transitorio): hoje NENHUMA instancia em producao esta
+// classificada como 'bulk_sender' (0 de 25). Exigir a classificacao agora pararia
+// as 7 campanhas e os 1.174 itens da fila. Entao, com a flag DESLIGADA, master com
+// purpose NULL segue elegivel. purpose=NULL e ESTADO TEMPORARIO DE COMPATIBILIDADE,
+// nao finalidade declarada. Quando a classificacao humana terminar, ligue
+// REQUIRE_EXPLICIT_BULK_SENDER=true e so 'bulk_sender' passa.
+// ============================================================================
+// Espera do item estacionado por falta de remetente oficial (nao conta tentativa).
+const PARK_RETRY_MS = 15 * 60_000;
+
+const REQUIRE_EXPLICIT_BULK_SENDER =
+  (Deno.env.get("REQUIRE_EXPLICIT_BULK_SENDER") || "false").trim().toLowerCase() === "true";
+
+
 async function notifyCampaignStalled(supabase: any, opts: { user_id?: string | null; campaign_id?: string | null; campaign_name?: string | null; reason: string }) {
   if (!opts.user_id || !opts.campaign_id) return;
   try {
@@ -321,11 +346,26 @@ Deno.serve(async (req) => {
     const campaignIds = [...new Set(items.map((i) => i.campaign_id).filter(Boolean))];
     const campaignMap = new Map<string, Campaign>();
 
+    let campaignsLoadError: string | null = null;
     if (campaignIds.length > 0) {
-      const { data: campaigns } = await supabase
+      const { data: campaigns, error: campaignsErr } = await supabase
         .from("wa_campaigns")
         .select("id, name, prompt_base, message_template, media_url, media_type, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at, variation_level, sent_count, instance_id, include_optout_buttons, seller_member_id")
         .in("id", campaignIds);
+      if (campaignsErr) {
+        // ETAPA 1: sem as campanhas nao ha decisao segura possivel. Libera os
+        // claims desta rodada (itens voltam a pending) e sai com erro observavel —
+        // nada fica preso em "processing".
+        campaignsLoadError = campaignsErr.message || "falha ao carregar campanhas";
+        console.error(`[campaigns_load_failed] ${campaignsLoadError} itens=${items.length}`);
+        await supabase
+          .from("wa_queue")
+          .update({ status: "pending", error_message: "Fila liberada: falha temporaria ao carregar as campanhas." })
+          .in("id", items.map((i: any) => i.id));
+        return new Response(JSON.stringify({
+          ok: false, error: "campaigns_load_failed", detail: campaignsLoadError, claims_liberados: items.length,
+        }), { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
       if (campaigns) {
         for (const c of campaigns as unknown as Campaign[]) {
           campaignMap.set(c.id, c);
@@ -439,6 +479,8 @@ Deno.serve(async (req) => {
 
     let processed = 0, succeeded = 0, failed = 0;
     const skipReasons: Array<{ item_id: string; reason: string; details?: unknown }> = [];
+    // Campanhas ja avisadas/pausadas neste lote (nao repetir aviso por item).
+    const campanhasAvisadas = new Set<string>();
 
     // Track recent message hashes to prevent duplicate messages
     const recentMessageHashes = new Set<string>();
@@ -487,7 +529,10 @@ Deno.serve(async (req) => {
         const campaign = item.campaign_id ? campaignMap.get(item.campaign_id) : null;
         const allUserInstances = instanceMap.get(item.user_id);
 
-        if (!allUserInstances || allUserInstances.length === 0) {
+        // Conta sem instancia conectada: caminho ANTIGO vale apenas para item SEM
+        // campanha (continuidade do handle-instance-ban). Item de campanha nunca
+        // consome tentativa por politica — ele estaciona logo abaixo.
+        if ((!allUserInstances || allUserInstances.length === 0) && !item.campaign_id) {
           // No instance connected — incrementa retry_count. Após MAX_RETRIES, marca FAILED.
           // Antes ficava em loop infinito de "defer +60s" e travava a fila inteira (item órfão
           // de master sem instância bloqueava todos os outros porque BATCH_SIZE=1).
@@ -509,50 +554,66 @@ Deno.serve(async (req) => {
           processed++; continue;
         }
 
-        // ===== ISOLAMENTO POR VENDEDOR =====
-        // Se a campanha foi criada por um vendedor (seller_member_id NOT NULL),
-        // o disparo DEVE usar a instância DELE (número WhatsApp do vendedor).
-        // Master fica de fora — o cliente final precisa ver o número do vendedor.
-        // Se a campanha é do master (seller_member_id IS NULL), usa pool master
-        // (instâncias com seller_member_id IS NULL).
-        let userInstances: Instance[];
-        if (campaign?.seller_member_id) {
-          userInstances = allUserInstances.filter(
-            (i) => i.seller_member_id === campaign.seller_member_id,
-          );
-          if (userInstances.length === 0) {
-            // Vendedor sem instância — incrementa retry_count. Após MAX_RETRIES, marca FAILED.
-            // (Mesmo motivo do bug anterior: defer infinito travava a fila inteira.)
-            if (item.retry_count >= MAX_RETRIES) {
-              await markFailed(supabase, item.id, "Vendedor sem instância WhatsApp conectada após várias tentativas. Conecte um número na conta do vendedor.");
-              await notifyCampaignStalled(supabase, { user_id: item.user_id, campaign_id: item.campaign_id, campaign_name: campaign?.name, reason: "o número do vendedor ficou desconectado" });
-              skipReasons.push({ item_id: item.id, reason: "seller_no_instance_max_retries", details: { seller_member_id: campaign.seller_member_id, retry_count: item.retry_count } });
-              failed++; processed++; continue;
-            }
-            console.warn(`[seller-isolation] Vendedor ${campaign.seller_member_id} sem instância conectada — adiando 5 min (tentativa ${item.retry_count + 1}/${MAX_RETRIES})`);
-            // AVISO #3: a partir da 2a tentativa (~5-10min travado), avisa o dono no portal.
-            if (item.retry_count >= 1) {
-              await notifyCampaignStalled(supabase, { user_id: item.user_id, campaign_id: item.campaign_id, campaign_name: campaign?.name, reason: "o número do vendedor está desconectado" });
-            }
-            await supabase
-              .from("wa_queue")
-              .update({
-                status: "pending",
-                retry_count: item.retry_count + 1,
-                scheduled_for: new Date(Date.now() + 300_000).toISOString(),
-                error_message: `Vendedor sem instância WhatsApp — tentativa ${item.retry_count + 1}/${MAX_RETRIES}. Conecte um número na conta do vendedor.`,
-              })
-              .eq("id", item.id);
-            skipReasons.push({ item_id: item.id, reason: "seller_no_instance", details: { seller_member_id: campaign.seller_member_id, retry_count: item.retry_count + 1 } });
-            processed++; continue;
+        // ===== ETAPA 1: DISPARO AUTOMATICO NUNCA SAI DE NUMERO DE VENDEDOR =====
+        // A campanha continua PERTENCENDO a quem a criou (inclusive vendedor), mas a
+        // EXECUCAO sai por linha oficial. Item SEM campanha (continuidade do
+        // handle-instance-ban) fica FORA desta politica e mantem sua regra antiga.
+        // ETAPA 1: campaign_id preenchido mas campanha inexistente => nunca tratar
+        // como "sem campanha" em silencio. Marca explicitamente e sai do caminho.
+        if (item.campaign_id && !campaign) {
+          await markFailed(supabase, item.id, "Campanha nao encontrada (removida ou inacessivel). Item nao foi enviado.");
+          console.error(`[campaign_not_found] item=${item.id} campaign=${item.campaign_id} tenant=${item.user_id}`);
+          skipReasons.push({ item_id: item.id, reason: "campaign_not_found", details: { campaign_id: item.campaign_id } });
+          failed++; processed++; continue;
+        }
+
+        const plano = planQueueItemDispatch(
+          { id: item.id, campaign_id: item.campaign_id ?? null, instance_id: (item as any).instance_id ?? null },
+          campaign ? { id: campaign.id, seller_member_id: campaign.seller_member_id, instance_id: (campaign as any).instance_id ?? null } : null,
+          (allUserInstances || []) as any[],
+          { requireExplicitBulkSender: REQUIRE_EXPLICIT_BULK_SENDER },
+        );
+
+        if (plano.kind === "park") {
+          // Estaciona SEM contar tentativa: politica nova nao queima retry_count,
+          // nao marca failed, nao consome o item e nao penaliza o vendedor.
+          await supabase
+            .from("wa_queue")
+            .update({
+              status: "pending",
+              scheduled_for: new Date(Date.now() + PARK_RETRY_MS).toISOString(),
+              error_message: "Aguardando uma linha oficial de campanha conectada nesta conta. Nenhum envio foi feito e nada foi perdido.",
+            })
+            .eq("id", item.id);
+
+          if (item.campaign_id && !campanhasAvisadas.has(item.campaign_id)) {
+            campanhasAvisadas.add(item.campaign_id);
+            await supabase.from("wa_campaigns")
+              .update({ status: "paused", error_message: "Pausada: nao ha linha oficial de campanha conectada. Conecte um numero de campanha (nao pode ser o numero pessoal de um vendedor nem a linha da IA) e retome." })
+              .eq("id", item.campaign_id).eq("status", "active");
+            await notifyCampaignStalled(supabase, {
+              user_id: item.user_id, campaign_id: item.campaign_id, campaign_name: campaign?.name,
+              reason: "nao ha uma linha oficial de campanha conectada na conta",
+            });
           }
-        } else {
-          // Campanha do master: usa apenas instâncias do pool master (sem dono específico)
-          userInstances = allUserInstances.filter((i) => !i.seller_member_id);
-          if (userInstances.length === 0) {
-            // Sem instância do master — tenta qualquer ativa como último recurso
-            userInstances = allUserInstances;
-          }
+          console.warn(`[no_eligible_campaign_sender] tenant=${item.user_id} campaign=${item.campaign_id} item=${item.id} instancias_na_conta=${(allUserInstances || []).length} dono_vendedor=${plano.ownedBySeller}`);
+          skipReasons.push({
+            item_id: item.id, reason: "no_eligible_campaign_sender",
+            details: { user_id: item.user_id, campaign_id: item.campaign_id, owned_by_seller: plano.ownedBySeller, instancias_na_conta: (allUserInstances || []).length },
+          });
+          processed++; continue;
+        }
+
+        // Pin EFETIVO: quando o pin original era inelegivel (ex.: numero de
+        // vendedor herdado), ele vira null e NAO chega ao seletor — senao o
+        // seletor filtraria o pool ate zero e travaria a fila.
+        const userInstances: Instance[] = plano.pool as Instance[];
+        const pinEfetivo: string | null =
+          plano.kind === "send" ? plano.effectiveInstanceId : plano.pinnedInstanceId;
+
+        if (plano.kind === "send" && plano.pinIgnored) {
+          console.warn(`[campaign_pin_ignored] campaign=${item.campaign_id} tenant=${item.user_id} motivo=instancia_fixada_inelegivel`);
+          skipReasons.push({ item_id: item.id, reason: "campaign_pin_ignored", details: { campaign_id: item.campaign_id } });
         }
 
         // --- Smart Switcher: Instance Selection ---
@@ -560,7 +621,8 @@ Deno.serve(async (req) => {
           supabase,
           userInstances,
           item,
-          campaign,
+          // campanha EFETIVA: instance_id ja validado (null se o pin era inelegivel)
+          campaign ? { ...campaign, instance_id: pinEfetivo } : campaign,
           instanceFailures,
           todaySentByInstance,
         );
@@ -648,18 +710,11 @@ Deno.serve(async (req) => {
 
         // ===== HUMANIZED SENDING SEQUENCE (kept short to fit edge function timeout) =====
 
-        // Step 1: Go online (simulate opening WhatsApp)
-        await simulateOnlinePresence(instance, item.phone);
-        await sleep(300 + Math.random() * 600); // keep fast to stay inside edge timeout
-
-        // Step 2: Type with realistic speed (bounded)
-        const messageLength = finalMessage.length;
-        const typingSpeedCps = 18 + Math.random() * 10;
-        const totalTypingMs = Math.max(800, Math.min((messageLength / typingSpeedCps) * 1000, 4000));
-        await simulateTyping(instance, item.phone, totalTypingMs);
-
-        // Step 3: Brief review before hitting send
-        await sleep(200 + Math.random() * 500);
+        // ETAPA 1: presenca/digitacao REMOVIDA do disparo automatico em massa.
+        // (conversa manual, atendimento individual, follow-up pedido pelo vendedor e
+        // Pedro V3 nao passam por aqui — a presenca deles permanece intacta.)
+        // O intervalo operacional entre envios continua: e ele que espaca a fila.
+        await sleep(500 + Math.random() * 1100);
 
         // Step 5: SEND (re-check pause right before sending)
         if (item.campaign_id) {
@@ -1041,7 +1096,10 @@ async function selectSmartInstance(
     : userInstances;
 
   // Fallback: se a instância específica não estiver ativa, usa todas
-  const finalInstances = scopedInstances.length > 0 ? scopedInstances : userInstances;
+  // ETAPA 1: sem fallback. Se a campanha fixou uma instancia e ela nao esta no pool
+  // elegivel, NAO caimos para "qualquer instancia" — o chamador trata como
+  // no_eligible_campaign_sender e o item fica recuperavel.
+  const finalInstances = scopedInstances;
 
   if (finalInstances.length === 0) {
     return null;
@@ -1864,54 +1922,8 @@ async function generateHash(text: string): Promise<string> {
 
 // ====================== ANTI-BAN: HUMAN BEHAVIOR SIMULATION ======================
 
-async function simulateTyping(instance: Instance, phone: string, durationMs: number) {
-  if (instance.provider === "meta" || isUazAPIInstance(instance)) return;
 
-  try {
-    const apiUrl = instance.api_url.replace(/\/+$/, "");
-    const jid = phone.includes("@") ? phone : `${phone}@s.whatsapp.net`;
 
-    await fetchWithTimeout(`${apiUrl}/chat/presence/${instance.instance_name}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
-      body: JSON.stringify({ id: jid, presence: "composing" }),
-    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
-
-    await sleep(durationMs);
-
-    await fetchWithTimeout(`${apiUrl}/chat/presence/${instance.instance_name}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
-      body: JSON.stringify({ id: jid, presence: "paused" }),
-    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
-  } catch (_) {
-    // Non-critical
-  }
-}
-
-async function simulateOnlinePresence(instance: Instance, _phone: string) {
-  if (instance.provider === "meta" || isUazAPIInstance(instance)) return;
-  try {
-    const apiUrl = instance.api_url.replace(/\/+$/, "");
-    await fetchWithTimeout(`${apiUrl}/chat/presence/${instance.instance_name}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
-      body: JSON.stringify({ presence: "available" }),
-    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
-  } catch (_) {}
-}
-
-async function simulateOfflinePresence(instance: Instance) {
-  if (instance.provider === "meta" || isUazAPIInstance(instance)) return;
-  try {
-    const apiUrl = instance.api_url.replace(/\/+$/, "");
-    await fetchWithTimeout(`${apiUrl}/chat/presence/${instance.instance_name}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
-      body: JSON.stringify({ presence: "unavailable" }),
-    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
-  } catch (_) {}
-}
 
 async function simulateReadReceipt(instance: Instance, phone: string) {
   if (instance.provider === "meta" || isUazAPIInstance(instance)) return;

@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { campaignSenderIneligibility } from "../_shared/campaign/senderEligibility.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -267,6 +268,48 @@ Deno.serve(async (req) => {
     const safeRodizio = regras_rodizio || { mensagens_por_instancia: 10, pausa_entre_instancias: 300 };
     const safeAquecimento = regras_aquecimento || { enabled: false, initial_messages: 20 };
 
+    // ── ETAPA 1: remetente automatico validado NO SERVIDOR (nunca so no front) ──
+    // A campanha pode PERTENCER a um vendedor (seller_member_id preservado para
+    // atribuicao), mas o numero que EXECUTA o disparo nunca pode ser o WhatsApp
+    // pessoal dele nem a linha da IA. Tambem impede fixar instancia de OUTRO tenant.
+    let remetenteValidado: string | null = null;
+    if (instance_id) {
+      const { data: instRow } = await supabase
+        .from("wa_instances")
+        .select("id, user_id, seller_member_id, purpose, is_active, status, health_score, shadow_ban_suspect")
+        .eq("id", instance_id)
+        .maybeSingle();
+
+      if (!instRow || instRow.user_id !== effectiveUserId) {
+        return new Response(JSON.stringify({
+          error: "Numero invalido para esta conta.",
+          code: "instance_not_in_tenant",
+        }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      // ETAPA 1: MESMA regra do worker (fonte unica de verdade).
+      const motivo = campaignSenderIneligibility(instRow as any, {
+        requireExplicitBulkSender: (Deno.env.get("REQUIRE_EXPLICIT_BULK_SENDER") || "false").trim().toLowerCase() === "true",
+      });
+      if (motivo) {
+        const mensagens: Record<string, string> = {
+          seller_instance: "Por seguranca, o numero pessoal de um vendedor nao pode ser o remetente de um disparo automatico. A campanha continua sendo do vendedor, mas o envio sai pela linha oficial da conta.",
+          ai_agent_line: "A linha do agente de IA nao pode ser usada para disparo em massa. Selecione uma linha oficial de campanhas.",
+          purpose_not_allowed: "Este numero tem finalidade incompativel com disparo automatico.",
+          not_active: "Este numero esta inativo.",
+          not_connected: "Este numero nao esta conectado.",
+          shadow_ban_suspect: "Este numero esta sob suspeita de bloqueio pelo WhatsApp.",
+          quarantined: "Este numero esta em quarentena.",
+          unhealthy: "Este numero esta com a saude abaixo do minimo operacional.",
+          bulk_sender_required: "Selecione uma linha classificada como linha oficial de campanhas.",
+        };
+        return new Response(JSON.stringify({
+          error: mensagens[motivo] ?? "Numero nao pode ser usado como remetente automatico.",
+          code: motivo,
+        }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      remetenteValidado = instRow.id as string;
+    }
+
     const payload: Record<string, unknown> = {
       name: safeName,
       message_template: safeTemplate,
@@ -284,7 +327,7 @@ Deno.serve(async (req) => {
       start_time: start_time || null,
       end_time: end_time || null,
       scheduled_at: start_time || null,
-      instance_id: instance_id || null,
+      instance_id: remetenteValidado,
       media_url: media_url || null,
       media_type: media_type || null,
       tags: Array.isArray(tags) && tags.length > 0 ? tags : null,

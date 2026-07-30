@@ -1,4 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+
+// Espelha REQUIRE_EXPLICIT_BULK_SENDER do worker. Enquanto false, master com
+// purpose NULL segue aceito como remetente de campanha (compatibilidade).
+const MODO_ESTRITO_BULK_SENDER = false;
 import { Navigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent } from '@/components/ui/card';
@@ -246,11 +250,18 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
         .eq('user_id', effectiveUserId)
         .eq('is_active', true)
         .eq('status', 'connected'); // só números REALMENTE conectados podem disparar
-      if (isolateBySeller) {
-        instancesQuery = instancesQuery.eq('seller_member_id', seller!.id);
-      } else {
-        instancesQuery = instancesQuery.is('seller_member_id', null);
-      }
+      // ETAPA 1: o remetente de disparo AUTOMATICO nunca e o WhatsApp pessoal do
+      // vendedor nem a linha da IA. A campanha continua PERTENCENDO ao vendedor
+      // (seller_member_id no registro), mas ela e EXECUTADA pela linha oficial da
+      // conta. Por isso o seletor mostra so linha oficial, para todo mundo.
+      // ETAPA 1: NUNCA usar .neq('purpose','agent') — no PostgREST isso descarta
+      // tambem as linhas com purpose NULL, que hoje sao a unica compatibilidade.
+      // Enquanto nao houver classificacao completa: NULL ou bulk_sender.
+      // Em modo estrito (REQUIRE_EXPLICIT_BULK_SENDER), somente bulk_sender.
+      instancesQuery = instancesQuery.is('seller_member_id', null);
+      instancesQuery = MODO_ESTRITO_BULK_SENDER
+        ? instancesQuery.eq('purpose', 'bulk_sender')
+        : instancesQuery.or('purpose.is.null,purpose.eq.bulk_sender');
 
       let campaignsQuery = (supabase as any)
         .from('wa_campaigns')
@@ -353,6 +364,26 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
         seller_member_id: (isSeller && seller?.id) ? seller.id : null,
       };
 
+      // ETAPA 1 (fail-closed): classificar ANTES de salvar. Se a classificação da
+      // linha oficial falhar, a campanha NÃO é salva e o erro real aparece — nunca
+      // "sucesso" com a instância sem finalidade declarada.
+      if (payload.instance_id) {
+        const { error: errFinalidade } = await (supabase as any).rpc('set_wa_instance_purpose', {
+          p_instance_id: payload.instance_id,
+          p_purpose: 'bulk_sender',
+          p_motivo: 'Selecionada como remetente de campanha na tela de Disparos',
+        });
+        if (errFinalidade) {
+          toast({
+            title: 'Não foi possível usar este número como linha de campanha',
+            description: errFinalidade.message,
+            variant: 'destructive',
+          });
+          setSaving(false);
+          return;
+        }
+      }
+
       const { data: result, error } = await supabase.functions.invoke('save-campaign', {
         body: payload,
       });
@@ -363,16 +394,6 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
         toast({ title: result.error, description: details, variant: 'destructive' });
         setSaving(false);
         return;
-      }
-
-      // ISOLAMENTO: número escolhido pra disparo vira 'bulk_sender' (sai de vez da
-      // elegibilidade de agente de IA). Só marca se ainda não tem finalidade.
-      if (payload.instance_id) {
-        await (supabase as any)
-          .from('wa_instances')
-          .update({ purpose: 'bulk_sender' })
-          .eq('id', payload.instance_id)
-          .is('purpose', null);
       }
 
       toast({ title: editingCampaign ? '✅ Campanha atualizada!' : '✅ Campanha criada!' });

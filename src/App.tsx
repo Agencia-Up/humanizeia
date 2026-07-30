@@ -407,7 +407,10 @@ const App = () => (
                 <Route path="/painel-ao-vivo"       element={<ProtectedRoute><Lazy><PainelAoVivo /></Lazy></ProtectedRoute>} />
                 {/* Painel Geral — master vê todos (ranking); vendedor vê só os próprios leads (liberado via sidebar_painel_geral) */}
                 <Route path="/painel-geral"         element={<ProtectedRoute><Lazy><PainelGeral /></Lazy></ProtectedRoute>} />
-                <Route path="/whatsapp/campaigns"   element={<ProtectedRoute><Lazy><WhatsAppCampaigns /></Lazy></ProtectedRoute>} />
+                {/* ETAPA 1: interface CANONICA de campanhas. A tela antiga permitia ao vendedor
+                    disparar do proprio numero; a rota agora monta a tela unica com a politica
+                    segura (remetente = linha oficial). */}
+                <Route path="/whatsapp/campaigns"   element={<ProtectedRoute><Lazy><WhatsAppBroadcast /></Lazy></ProtectedRoute>} />
                 <Route path="/whatsapp/groups"      element={<ProtectedRoute><Lazy><WhatsAppGroups /></Lazy></ProtectedRoute>} />
                 <Route path="/whatsapp/capi"        element={<ProtectedRoute><Lazy><WhatsAppCAPI /></Lazy></ProtectedRoute>} />
 
