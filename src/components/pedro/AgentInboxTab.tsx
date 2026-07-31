@@ -464,7 +464,10 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
         remote_jid: r.phone || '',
         lead_name: r.contact_name || null,
         status: '',
-        ai_paused: r.crm_source === 'marcos' ? true : !!r.ia_pausada,
+        // atendimento_manual inclui tanto pausa individual quanto agente
+        // inativo. Em ambos os casos a conversa deve aceitar operação humana;
+        // a ausência de IA não pode deixar o inbox somente-leitura.
+        ai_paused: r.crm_source === 'marcos' ? true : !!r.atendimento_manual,
         instance_id: r.instance_id || null,
         agent_id: r.agent_id || '',
         message_count: r.message_count || 0,

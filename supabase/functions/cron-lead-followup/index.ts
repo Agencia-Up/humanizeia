@@ -953,9 +953,10 @@ Deno.serve(async (req) => {
     // ════════════════════════════════════════════════════════════════
     const { data: leads, error } = await supabase
       .from('ai_crm_leads')
-      .select('*, wa_ai_agents!ai_crm_leads_agent_id_fkey(id, name, company_name, system_prompt, instance_id, instance_ids)')
+      .select('*, wa_ai_agents!ai_crm_leads_agent_id_fkey(id, name, company_name, system_prompt, instance_id, instance_ids, is_active)')
       .in('status', ['novo', 'interessado'])
       .is('assigned_to_id', null)
+      .eq('ai_paused', false)
       .not('last_agent_reply_at', 'is', null)
       .not('last_user_reply_at', 'is', null)
       .lte('last_agent_reply_at', fiveMinsAgo);
@@ -973,6 +974,12 @@ Deno.serve(async (req) => {
     let processed10Min = 0;
 
     for (const lead of leads) {
+      const agentData = lead.wa_ai_agents;
+      // Defesa em profundidade para o modo humano. Mesmo que um lead antigo
+      // tenha timestamps de IA, agente desligado ou conversa pausada nunca
+      // recebe T1/T2/T3 nem transferência automática deste cron.
+      if (lead.ai_paused === true || agentData?.is_active !== true) continue;
+
       // Ignorar se o usuario falou depois do agente
       if (new Date(lead.last_user_reply_at) >= new Date(lead.last_agent_reply_at)) continue;
 
@@ -993,7 +1000,6 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const agentData = lead.wa_ai_agents;
       let targetInstanceId = agentData?.instance_id;
       if (!targetInstanceId && agentData?.instance_ids?.length > 0) targetInstanceId = agentData.instance_ids[0];
 

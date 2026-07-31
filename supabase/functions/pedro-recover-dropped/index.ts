@@ -103,6 +103,10 @@ Deno.serve(async (req) => {
         const { data: agent } = await supabase
           .from("wa_ai_agents").select("*").eq("id", c.agent_id).maybeSingle();
         if (!agent) { result.skipped.push("no_agent"); continue; }
+        // Recovery is an AI execution path. An inactive agent still receives
+        // inbox/CRM projection through the webhook, but must never be revived
+        // here to answer or start automated follow-up.
+        if (agent.is_active !== true) { result.skipped.push("agent_inactive"); continue; }
         if (isPedroV3ExclusiveScope({
           tenantId: agent.user_id,
           agentId: agent.id,

@@ -16,6 +16,7 @@ import { resolveUazapiPhone, resolveUazapiText } from "../_shared/pedro-v2/phone
 import { handleSellerInbound } from "../_shared/pedro-v2/transferRouter.ts";
 import { classifyUazapiInboundAudience } from "../_shared/pedro-v2/inboundAudience.ts";
 import { persistPrivateInboundMessage } from "../_shared/pedro-v2/persistPrivateInbound.ts";
+import { ensureInactiveAgentHumanMode } from "../_shared/pedro-v2/humanOnlyInbound.ts";
 import { executePostTransferPlan, resolvePostTransferPlan } from "../_shared/pedro-v2/postTransferOwnership.ts";
 import { sendPedroText } from "../_shared/pedro-v2/uazapiSender_20260524.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
@@ -23,7 +24,7 @@ import { resolvePedroMediaContext } from "../_shared/pedro-v2/mediaContext_20260
 import { resolvePedroV3AdSemantic } from "../_shared/pedro-v2/pedroV3AdSemantic.ts";
 import { isAccountGrandfathered, resolveAiKey } from "../_shared/aiKeys.ts";
 
-const PEDRO_V2_BUILD = "2026-07-17-transfer-routing-v224";
+const PEDRO_V2_BUILD = "2026-07-30-inactive-human-mode-v225";
 
 function pickIncomingMessage(payload: any): any {
   if (Array.isArray(payload?.messages) && payload.messages.length > 0) return payload.messages[0];
@@ -552,6 +553,15 @@ Deno.serve(async (req) => {
     .eq("user_id", waInstance.user_id);
 
   const agentsList = Array.isArray(allAgents) ? allAgents : [];
+  // Binding operacional da linha, independentemente de is_active. Um agente
+  // inativo não responde, mas sua linha continua alimentando inbox/CRM humano.
+  //
+  // Nunca escolha silenciosamente entre dois agentes ligados à mesma instância:
+  // isso poderia criar o lead no CRM errado. A mensagem será persistida abaixo e
+  // o webhook responderá 5xx para tornar a inconsistência observável/repetível.
+  const linkedAgents = agentsList.filter((a: any) => agentUsesInstance(a, waInstance.id));
+  const linkedAgentBindingAmbiguous = linkedAgents.length > 1;
+  const linkedAgent = linkedAgents.length === 1 ? linkedAgents[0] : null;
 
   // ── FASE 2: RASTREAMENTO GARANTIDO (a automação pode parar, o rastreamento não) ─
   // Persiste a mensagem privada real da linha de IA em wa_inbox, chamado UMA vez
@@ -598,7 +608,6 @@ Deno.serve(async (req) => {
   {
     // Agente vinculado a ESTA instancia, ATIVO OU NAO — so para priorizar entre
     // linhas-irmas do mesmo vendedor. A inatividade nunca bloqueia a confirmacao.
-    const linkedAgent = agentsList.find((a: any) => agentUsesInstance(a, waInstance.id)) || null;
     const sellerDecision = await handleSellerInbound(supabase, {
       user_id: waInstance.user_id,
       agent_id: linkedAgent?.id || null,
@@ -649,16 +658,61 @@ Deno.serve(async (req) => {
   // Inbound do cliente é sagrado: erro real de banco -> 5xx pra uazapi RE-tentar
   // (idempotente, e ANTES de qualquer despacho -> sem risco de resposta dupla). fromMe
   // é best-effort (nunca derruba). Não dispara IA, resposta nem follow-up.
+  let persistResult: Awaited<ReturnType<typeof persistPrivateInboundMessage>> = {
+    status: "skipped",
+    reason: "not_run",
+  };
   {
-    const _pr = await persistTrack("pre_dispatch");
-    if (_pr.status === "error" && _pr.direction === "incoming") {
+    persistResult = await persistTrack("pre_dispatch");
+    if (persistResult.status === "error" && persistResult.direction === "incoming") {
       return jsonResponse({ ok: false, error: "inbox_persist_failed", build: PEDRO_V2_BUILD }, 500);
     }
   }
 
+  // Não transforme falha de lookup ou configuração ambígua em HTTP 200. O
+  // inbound já está seguro e idempotente no wa_inbox; o 5xx permite convergir
+  // depois que banco/configuração voltar, sem responder por um agente errado.
+  if (agentError) {
+    console.error(
+      `[pedro-webhook-v2] agent_lookup_failed tenant=${waInstance.user_id} instance=${waInstance.id} error=${agentError.message}`,
+    );
+    return jsonResponse({ ok: false, error: "agent_lookup_failed", build: PEDRO_V2_BUILD }, 500);
+  }
+  if (linkedAgentBindingAmbiguous) {
+    console.error(
+      `[pedro-webhook-v2] ambiguous_agent_binding tenant=${waInstance.user_id} instance=${waInstance.id} agents=${linkedAgents.map((a: any) => a.id).join(",")}`,
+    );
+    return jsonResponse({ ok: false, error: "ambiguous_agent_binding", build: PEDRO_V2_BUILD }, 500);
+  }
+
+  // Agente desligado = atendimento humano, não desaparecimento operacional.
+  // Depois da persistência durável, garante um lead CRM pausado e vinculado à
+  // conversa. A RPC é idempotente e revalida tenant/instância/agente no banco.
+  // Nenhuma IA, resposta, transferência ou follow-up nasce deste caminho.
+  const humanMode = await ensureInactiveAgentHumanMode(supabase, {
+    persistResult,
+    linkedAgent,
+    instanceId: waInstance.id,
+    phone: resolveUazapiPhone(payload),
+  });
+  if (!humanMode.ok) {
+    console.error(
+      `[pedro-webhook-v2] inactive_human_mode_failed tenant=${waInstance.user_id} instance=${waInstance.id} reason=${humanMode.reason} err=${humanMode.error}`,
+    );
+    // Não reconhecer como sucesso algo que entrou no inbox, mas ainda não
+    // ganhou o CRM humano solicitado. A deduplicação da entrada torna o retry
+    // seguro e convergente.
+    return jsonResponse({ ok: false, error: "inactive_human_mode_failed", build: PEDRO_V2_BUILD }, 500);
+  }
+  if (humanMode.status === "ensured") {
+    console.log(
+      `[pedro-webhook-v2] inactive_human_mode_ensured tenant=${waInstance.user_id} agent=${linkedAgent?.id ?? "-"} instance=${waInstance.id} lead=${humanMode.leadId ?? "-"} created=${humanMode.created}`,
+    );
+  }
+
   const agent = selectActiveAgent(agentsList, waInstance.id);
 
-  if (agentError || !agent) {
+  if (!agent) {
     // FASE 2: a mensagem JÁ foi persistida acima (rastreamento garantido). Aqui só
     // encerramos sem V2/V3 — agente inativo/ausente não responde.
     console.log(`[Webhook] Nenhum agente ativo encontrado para a instância ${waInstance.id} (Carvalho copia)`);
