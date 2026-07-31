@@ -141,6 +141,7 @@ function repeatsLastAgentQuestion(text: string, previous: string | null): boolea
     "ainda", "mais", "ja", "agora", "aqui", "ai", "pode", "posso", "poderia",
     "quer", "quero", "gosta", "gostaria", "continuar", "continuarmos", "saber",
     "informar", "ajudar", "melhor", "favor", "qual", "quais", "quanto", "quantos",
+    "achou", "falei", "ficou", "alguma", "duvida", "sobre",
   ]);
   const tokens = (question: string): Set<string> => new Set(
     normalizeFollowupText(question)
@@ -215,7 +216,7 @@ export async function authorFollowupMessageDetailed(args: {
     const previousLead = lastLeadMessage(args.state);
     const agentQuestions = recentAgentQuestions(args.state);
     const advertisedVehicle = adVehicleLabel(args.state);
-    const block = `[EVENTO SISTEMICO FOLLOW-UP T${args.stage}] O cliente esta inativo. Reabra a conversa com autoria propria, usando apenas o historico factual deste frame. Nao repita uma mensagem, ficha, proposta ou CTA ja enviados. Nao afirme que algo foi enviado se nao aparece nas falas anteriores ou na oferta visivel.${feedback}`;
+    const block = `[EVENTO SISTEMICO FOLLOW-UP T${args.stage}] O cliente esta inativo. Reabra a conversa com autoria propria, usando apenas o historico factual deste frame. Nao repita uma mensagem, ficha, proposta ou CTA ja enviados. Nao afirme que algo foi enviado se nao aparece nas falas anteriores ou na oferta visivel. Em T1/T2, escolha uma proxima acao concreta, util e facil de responder com base no que ja esta comprovado (por exemplo, oferecer material disponivel, esclarecer outro detalhe ou comparar alternativas); nao use apenas uma cobranca generica como "o que achou?" ou "ficou alguma duvida?". T2 deve mudar o objetivo da retomada, nao apenas parafrasear T1. Nunca invente conservacao, qualidade, disponibilidade ou outro atributo que nao esteja nos fatos.${feedback}`;
     const conversationContext = buildConversationContext({ state: args.state, workingMemory: memory });
     const frame: TurnFrame = {
       turnId: args.turnId,
@@ -300,7 +301,7 @@ export async function authorFollowupMessageDetailed(args: {
             : repeatedMessage
               ? " FEEDBACK: esta mensagem repete uma mensagem ja enviada ao cliente. Nao parafraseie a mesma ficha, proposta ou CTA. Escreva uma retomada nova, curta e de baixa friccao, ligada ao historico; a escolha das palavras continua sendo sua."
             : repeatedQuestion || repeatedPendingSlot
-              ? " FEEDBACK: voce repetiu uma pergunta de qualificacao que o cliente ainda nao respondeu. Nao a reformule. Faca uma retomada diferente e ligada ao contexto; a escolha do texto continua sendo sua."
+              ? " FEEDBACK: voce repetiu a mesma pergunta, objetivo ou pergunta de qualificacao que o cliente ainda nao respondeu. Nao a reformule. Escolha uma proxima acao concreta e diferente, apoiada no contexto verificado; a escolha do texto continua sendo sua."
               : invalidStyle
                 ? " FEEDBACK: follow-up nao pode ter saudacao, reapresentacao, 'Prefiro ser honesto' ou linguagem de desistencia. Retome o historico com naturalidade."
                 : " FEEDBACK: escreva uma mensagem curta com no maximo uma pergunta.";

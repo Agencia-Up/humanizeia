@@ -61,6 +61,7 @@ import type {
 } from "./automation-execution-gate.ts";
 import { sanitizeAutomationReason } from "./automation-execution-gate.ts";
 import { resolveConversationWhatsAppInstance } from "../domain/whatsapp-instance-binding.ts";
+import { buildFollowupBaseDecision } from "./followup-plan.ts";
 
 // R13-D/4: modo do cérebro. central_active é o caminho canônico de produção e
 // usa autoria única/LLM-first. central_shadow mantém o handler legado como
@@ -662,25 +663,22 @@ export class PilotActiveRoot {
         maxAttempts: 3,
       });
       const text = authored.text;
-      if (!text) {
+      // T1/T2 sao mensagens e continuam dependendo da autoria. No T3, porem,
+      // a transferencia configurada no portal e uma obrigacao operacional
+      // independente: falhar ao redigir a despedida nao pode fazer o lead sumir.
+      // Nao ha fallback textual da engine; apenas a cadeia tipada de handoff.
+      if (!text && !t3HandoffAvailable) {
         commitFailureReason = `author_${authored.reason}`;
         return;
       }
 
-      const messagePlanId = "followup-message";
-      const messageEffectId = `${turnId}:${messagePlanId}`;
-      let decision: TurnDecision = {
-        turnId, action: input.due.stage === 3 ? "close" : "reply",
-        reasonCode: `followup_t${input.due.stage}`, reasonSummary: "system_followup_due", confidence: 1,
-        decisionMutations: [], responsePlan: { guidance: "llm_authored_followup" }, policyChecks: [],
-        effectPlan: [{
-          kind: "send_message", planId: messagePlanId, effectId: messageEffectId, order: 1, dependsOn: [],
-          onSuccess: [
-            { op: "mark_followup_sent", effectId: messageEffectId, anchorEffectId: input.due.anchorEffectId, stage: input.due.stage, sentAt: now },
-            { op: "append_assistant_turn", effectId: messageEffectId, turn: { role: "agent", text, at: now } },
-          ],
-        }],
-      };
+      let decision = buildFollowupBaseDecision({
+        turnId,
+        stage: input.due.stage,
+        anchorEffectId: input.due.anchorEffectId,
+        now,
+        text,
+      });
 
       let handoffPlanned = false;
       if (input.due.stage === 3 && input.rules.followup.t3Transfers && input.rules.transfer.enabled && this.handoffEnabled && this.transferStore && followupLeadId) {
@@ -707,9 +705,15 @@ export class PilotActiveRoot {
           handoffPlanned = true;
         }
       }
+      if (!text && !handoffPlanned) {
+        commitFailureReason = `author_${authored.reason}`;
+        return;
+      }
       const graph = validateEffectPlans(decision.effectPlan);
       if (graph.length > 0) return;
-      const rendered: RenderedResponse = { draft: { parts: [{ type: "text", content: text }] }, text };
+      const rendered: RenderedResponse = text == null
+        ? { draft: { parts: [] }, text: "" }
+        : { draft: { parts: [{ type: "text", content: text }] }, text };
       const outbox = materializeEffectPlans(decision, rendered, {
         conversationId: input.conversationId, createdAt: now,
         providerCapability: { send_message: "none", handoff: "none", notify_seller: "none" },

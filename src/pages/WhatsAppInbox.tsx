@@ -12,6 +12,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
 import { descricaoErro } from '@/lib/erroAmigavel';
+import { mergeConversationMessages } from '@/lib/conversationMessageMerge';
 import {
   Search, Send, Loader2, CheckCheck, Check,
   Sparkles, ArrowLeft, MessageCircle, Bot, Phone,
@@ -53,6 +54,7 @@ interface InboxMessage {
   created_at: string;
   // Quem falou (da RPC): 'cliente' | 'ia' | 'vendedor'. Cobre o Pedro V3.
   actor?: string | null;
+  source?: string | null;
 }
 
 interface Conversation {
@@ -447,6 +449,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
             is_read: true,
             created_at: r.created_at,
             actor: r.actor || null,
+            source: 'chat',
           });
         } else {
           inboxRows.push({
@@ -466,33 +469,14 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
             is_read: true,
             created_at: r.created_at,
             actor: r.actor || null,
+            source: r.source || r.ingestion_source || 'inbox',
           });
         }
       }
 
-      const sameMessage = (a: InboxMessage, b: InboxMessage) => {
-        if (a.direction !== b.direction) return false;
-        if (Math.abs(new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) > 120000) return false;
-        const aMedia = mediaKind(a.message_type) !== null;
-        const bMedia = mediaKind(b.message_type) !== null;
-        if (aMedia && bMedia) return mediaKind(a.message_type) === mediaKind(b.message_type);
-        return (a.content || '').trim() === (b.content || '').trim();
-      };
-
-      const merged: InboxMessage[] = [...inboxRows];
-      for (const h of historyRows) {
-        const idx = merged.findIndex((row) => sameMessage(row, h));
-        if (idx === -1) {
-          merged.push(h);
-          continue;
-        }
-        if (msgHasRenderableMedia(h) && !msgHasRenderableMedia(merged[idx])) {
-          merged[idx] = { ...h, id: merged[idx].id };
-        }
-      }
-
-      setMessages(merged.sort(
-        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      setMessages(mergeConversationMessages(
+        [...inboxRows, ...historyRows],
+        { hasRenderableMedia: msgHasRenderableMedia },
       ));
 
       // Marcar como lidas (write operacional — mantido; policy de UPDATE preservada).

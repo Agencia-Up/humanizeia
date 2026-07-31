@@ -8,6 +8,7 @@ import { authorFollowupMessage, authorFollowupMessageDetailed } from "../src/eng
 import { readFileSync } from "node:fs";
 import { sanitizeOutgoingText } from "../src/engine/central-engine.ts";
 import { buildHandoffChain, forcedSilentDisengagementReason } from "../src/engine/handoff-plan.ts";
+import { buildFollowupBaseDecision } from "../src/engine/followup-plan.ts";
 import { validateEffectPlans } from "../src/engine/finalizer.ts";
 import { applyEffectOutcome } from "../src/engine/state-reducer.ts";
 import { requiredReceiptFor } from "../src/domain/effect-policy.ts";
@@ -170,6 +171,49 @@ check("[H6] stage so no notify", handoff?.onSuccess.length === 0 && notify?.onSu
 check("[H7] grafo valido", validateEffectPlans(chain.effectPlan).length === 0);
 const handoffReply = chain.effectPlan.find((p) => p.kind === "send_message");
 check("[H8] reply do handoff nao inventa delivery gate", handoffReply?.onSuccess.every((o) => o.op !== "mark_message_delivered") === true);
+
+// O T3 tem dois eixos independentes: texto autorado e transferencia
+// operacional configurada no portal. Se a LLM nao conseguir redigir depois
+// dos retries, a engine nao inventa uma despedida; ainda assim, ela nao pode
+// apagar o handoff devido. T1/T2 continuam sem efeito quando nao ha autoria.
+const authorlessT3Base = buildFollowupBaseDecision({
+  turnId: "followup:anchor:3-no-text",
+  stage: 3,
+  anchorEffectId: anchor.effectId,
+  now: NOW,
+  text: null,
+});
+check("[H8a] T3 sem autoria nao cria texto deterministico", authorlessT3Base.effectPlan.every((p) => p.kind !== "send_message"));
+const authorlessT3 = buildHandoffChain({
+  decision: authorlessT3Base,
+  turnId: authorlessT3Base.turnId,
+  leadId: LEAD,
+  stateAfter: state(),
+  adContext: null,
+  adVehicleLabel: null,
+  lastPhotoAction: null,
+  agentName: "Pedro",
+  leadPhone: "5512999999999",
+  leadDisplayName: "Douglas",
+  nowLocal: "11/07/2026 09:15",
+  plannable: true,
+  forcedReason: "followup_timeout_handoff",
+});
+const authorlessHandoff = authorlessT3.effectPlan.find((p) => p.kind === "handoff");
+const authorlessNotify = authorlessT3.effectPlan.find((p) => p.kind === "notify_seller");
+check("[H8b] falha de redacao nao cancela o handoff T3", authorlessT3.planned
+  && authorlessHandoff?.kind === "handoff"
+  && authorlessNotify?.kind === "notify_seller");
+check("[H8c] handoff sem mensagem nao depende de efeito fantasma", authorlessHandoff?.dependsOn?.length === 0);
+check("[H8d] cadeia operacional sem texto continua valida", validateEffectPlans(authorlessT3.effectPlan).length === 0);
+const authorlessT1 = buildFollowupBaseDecision({
+  turnId: "followup:anchor:1-no-text",
+  stage: 1,
+  anchorEffectId: anchor.effectId,
+  now: NOW,
+  text: null,
+});
+check("[H8e] T1 sem autoria nao envia nem transfere", authorlessT1.effectPlan.length === 0);
 
 // Encerramento/desinteresse é uma transferência OPERACIONAL silenciosa: a LLM
 // já escreveu a despedida e o plan apenas acopla CRM -> handoff -> vendedor.

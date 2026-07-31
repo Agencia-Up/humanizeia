@@ -25,6 +25,7 @@ import { Input } from '@/components/ui/input';
 import { format, isToday, isYesterday } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { deriveSellerContactMetric, sellerMemberScope } from '@/lib/sellerContactMetric';
+import { mergeConversationMessages } from '@/lib/conversationMessageMerge';
 
 /* ── Tipos ──────────────────────────────────────────────────────────── */
 interface Agent {
@@ -76,6 +77,7 @@ interface Message {
   actor?: string | null;
   actor_source?: string | null;   // cliente | ia_v3 | humano_manual | desconhecido (por evidencia)
   ingestion_source?: string | null; // webhook | v3 | painel | sincronizacao_uazapi
+  source?: string | null; // inbox | v3 | chat | synced
 }
 
 interface TransferSeller {
@@ -785,6 +787,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
             actor: r.actor || null,
             actor_source: r.actor_source || null,
             ingestion_source: r.ingestion_source || null,
+            source: 'chat',
           });
         } else {
           inboxRows.push({
@@ -806,39 +809,14 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
             actor: r.actor || null,
             actor_source: r.actor_source || null,
             ingestion_source: r.ingestion_source || null,
+            source: r.source || r.ingestion_source || 'inbox',
           });
         }
       }
 
-      // Funde as duas fontes evitando balao duplicado. Considera "mesma mensagem"
-      // quando: mesma direcao + janela de ~2min + (mesmo texto OU ambas sao midia
-      // do mesmo tipo). Ao deduplicar, MANTEM a linha com midia RENDERIZAVEL — a
-      // entrada do lead via wa_inbox grava a URL .enc (nao abre), enquanto o Pedro
-      // V2 as vezes guarda o base64 tocavel em wa_chat_history. Sem isto, audio/
-      // imagem do lead somem do inbox.
-      const sameMessage = (a: Message, b: Message) => {
-        if (a.direction !== b.direction) return false;
-        if (Math.abs(new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) > 120000) return false;
-        const aMedia = a.message_type !== 'text';
-        const bMedia = b.message_type !== 'text';
-        // #5 — audio/ptt/voice contam como o MESMO tipo: assim o audio TOCAVEL do Pedro
-        // V2 substitui o .enc do inbox (que nao abre) mesmo com rotulo diferente.
-        const normType = (t: string) => (t === 'ptt' || t === 'voice') ? 'audio' : t;
-        if (aMedia && bMedia) return normType(a.message_type) === normType(b.message_type);
-        return (a.content || '').trim() === (b.content || '').trim();
-      };
-      const merged: Message[] = [...inboxRows];
-      for (const h of historyRows) {
-        const idx = merged.findIndex(r => sameMessage(r, h));
-        if (idx === -1) { merged.push(h); continue; }
-        // Troca pela linha do history só quando ela tem midia boa e a atual nao.
-        if (msgHasRenderableMedia(h) && !msgHasRenderableMedia(merged[idx])) {
-          merged[idx] = { ...h, id: merged[idx].id };
-        }
-      }
-
-      const rows: Message[] = merged.sort(
-        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      const rows: Message[] = mergeConversationMessages(
+        [...inboxRows, ...historyRows],
+        { hasRenderableMedia: msgHasRenderableMedia },
       );
     // Preserva mensagens otimistas (id "opt-") que ainda nao apareceram no banco.
     // Sem isso o polling de 7s (e o refetch pos-envio) substitui a lista pelas

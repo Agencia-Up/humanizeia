@@ -114,6 +114,33 @@ const paraphrase = await authorFollowupMessageDetailed({
 check("T2 rejeita a mesma pergunta reformulada sem bloquear assunto novo", paraphrase.attempts === 2
   && paraphrase.text === "Quer que eu envie as fotos do Equinox?");
 
+// Incidente real Icom (31/07): T1 "o que achou?" e T2 "ficou alguma
+// duvida?" cobravam a mesma reacao com palavras diferentes. O validador so
+// identifica a repeticao; a proxima acao e o texto continuam sendo da LLM.
+const screenshotFollowupState = state();
+screenshotFollowupState.recentTurns = [
+  { role: "lead", text: "Qual a quilometragem?", at: "2026-07-31T18:49:00.000Z" },
+  { role: "agent", text: "O Nissan Kicks Exclusive 2022 esta com 104 mil km rodados e e branco.", at: "2026-07-31T18:50:00.000Z" },
+  { role: "agent", text: "O que achou do Nissan Kicks 2022 que te falei?", at: "2026-07-31T18:55:00.000Z" },
+];
+const screenshotFollowupBrain = new QueueBrain([
+  final("Ficou alguma duvida sobre o Nissan Kicks 2022 que te falei?"),
+  final("Quer que eu te mostre as fotos disponiveis desse Nissan Kicks?"),
+]);
+const screenshotFollowup = await authorFollowupMessageDetailed({
+  brain: screenshotFollowupBrain,
+  state: screenshotFollowupState,
+  stage: 2,
+  turnId: "fu60-screenshot-regression",
+  now: NOW,
+  portalPromptSha256: "sha",
+});
+check("T2 troca o objetivo da retomada em vez de parafrasear o T1", screenshotFollowup.attempts === 2
+  && screenshotFollowup.text === "Quer que eu te mostre as fotos disponiveis desse Nissan Kicks?");
+check("retry orienta por criterio sem escrever a resposta comercial", screenshotFollowupBrain.frames[1]?.block.includes("proxima acao concreta") === true
+  && screenshotFollowupBrain.frames[1]?.block.includes("Quer que eu te mostre as fotos") === false);
+check("frame proibe inventar conservacao para criar gancho", screenshotFollowupBrain.frames[0]?.block.includes("Nunca invente conservacao") === true);
+
 const distinctQuestionBrain = new QueueBrain([final("Qual a quilometragem que voce procura no Equinox?")]);
 const distinctQuestion = await authorFollowupMessageDetailed({
   brain: distinctQuestionBrain, state: paraphraseState, stage: 2, turnId: "fu60-distinct", now: NOW, portalPromptSha256: "sha",
