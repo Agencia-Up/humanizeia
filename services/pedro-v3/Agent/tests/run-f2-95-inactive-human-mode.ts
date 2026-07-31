@@ -180,6 +180,10 @@ const migration = readFileSync(migrationPath, "utf8");
   check("[D4] cron legado filtra conversa pausada", cron.includes(".eq('ai_paused', false)"));
   check("[D5] cron legado exige agente ativo", cron.includes("agentData?.is_active !== true"));
   check("[D6] UI usa atendimento_manual como autoridade", inbox.includes("!!r.atendimento_manual"));
+  check(
+    "[D7] cron v3-only nÃ£o escreve em acumulador inexistente",
+    !cron.includes('result.skipped.push("pedro_v2_followup_disabled_v3_only")'),
+  );
 }
 
 // E. Database contract: AI blocked, manual allowed, dedupe and CRM are idempotent.

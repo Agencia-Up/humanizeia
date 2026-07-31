@@ -986,7 +986,7 @@ Deno.serve(async (req) => {
       // O cron abaixo é legado (v2). O follow-up do v3 deve nascer do estado
       // e do outbox v3; nunca deixar esta rotina falar com um lead.
       if (PEDRO_V3_ONLY) {
-        result.skipped.push("pedro_v2_followup_disabled_v3_only");
+        console.log(`[Cron] pedro_v2_followup_disabled_v3_only lead=${lead.id}`);
         continue;
       }
 
