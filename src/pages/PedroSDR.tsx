@@ -7120,7 +7120,13 @@ export default function PedroSDR() {
                   userId={inboxOwnerId}
                   isSeller={isSeller}
                   sellerMemberIds={memberIds}
-                  readOnly={isSeller}
+                  // Somente leitura vale para VENDEDOR COMUM. Gerente opera a
+                  // conversa (pausar/reativar a IA, transferir) igual ao dono da
+                  // conta — antes `readOnly={isSeller}` derrubava o gerente junto,
+                  // e ele ficava sem o botao de pausar mesmo com acesso total ao
+                  // Pedro. O backend ja permitia: os RPCs de pausa aceitam
+                  // qualquer membro ativo do tenant; quem negava era so a tela.
+                  readOnly={isSeller && !isManager}
                   focusLeadId={leadIdParam}
                 />
               )}
