@@ -10,6 +10,10 @@
 
 import { handleSellerInbound } from "./transferRouter.ts";
 import { isSellerAckText, phonesMatch, resolveUazapiPhone, resolveUazapiText } from "./phone.ts";
+import {
+  POST_TRANSFER_LEAD_RECEIPT_TEXT,
+  sendLeadTransferConfirmationReceipt,
+} from "./postTransferOwnership.ts";
 
 let ok = 0;
 let failed = 0;
@@ -20,7 +24,13 @@ function check(name: string, pass: boolean): void {
 
 // ── Mock supabase em memoria (fiel as chains de confirmSellerAck) ─────────────
 type Row = Record<string, any>;
-type DB = { ai_team_members: Row[]; ai_lead_transfers: Row[]; ai_crm_leads: Row[] };
+type DB = {
+  ai_team_members: Row[];
+  ai_lead_transfers: Row[];
+  ai_crm_leads: Row[];
+  pedro_conversation_state?: Row[];
+  wa_instances?: Row[];
+};
 
 function makeSupabase(db: DB) {
   const applyFilters = (rows: Row[], filters: any[]) => {
@@ -36,7 +46,7 @@ function makeSupabase(db: DB) {
   class Q {
     table: string;
     filters: any[] = [];
-    op: "select" | "update" | "insert" = "select";
+    op: "select" | "update" | "insert" | "upsert" = "select";
     data: Row | null = null;
     orderBy: { k: string; asc: boolean } | null = null;
     lim: number | null = null;
@@ -44,6 +54,7 @@ function makeSupabase(db: DB) {
     select(_c?: string) { return this; }
     update(d: Row) { this.op = "update"; this.data = d; return this; }
     insert(d: Row) { this.op = "insert"; this.data = d; return this; }
+    upsert(d: Row, _options?: Row) { this.op = "upsert"; this.data = d; return this; }
     eq(k: string, v: any) { this.filters.push({ type: "eq", k, v }); return this; }
     in(k: string, v: any[]) { this.filters.push({ type: "in", k, v }); return this; }
     neq(k: string, v: any) { this.filters.push({ type: "neq", k, v }); return this; }
@@ -65,6 +76,15 @@ function makeSupabase(db: DB) {
         base.push(this.data as Row);
         return { data: this.data, error: null };
       }
+      if (this.op === "upsert") {
+        const incoming = this.data as Row;
+        const existing = base.find((row) =>
+          row.lead_id === incoming.lead_id && row.agent_id === incoming.agent_id
+        );
+        if (existing) Object.assign(existing, incoming);
+        else base.push(incoming);
+        return { data: incoming, error: null };
+      }
       if (this.lim != null) rows = rows.slice(0, this.lim);
       return { data: single ? (rows[0] ?? null) : rows, error: null };
     }
@@ -82,7 +102,18 @@ function seedTransfer(sellerId: string, over: Partial<Row> = {}): Row {
   return { id: crypto.randomUUID(), lead_id: crypto.randomUUID(), to_member_id: sellerId, transfer_status: "pending", is_confirmed: false, confirmed_at: null, created_at: nowIso(), user_id: "TENANT_A", ...over };
 }
 function seedLead(id: string, over: Partial<Row> = {}): Row {
-  return { id, user_id: "TENANT_A", assigned_to_id: null, origem: null, status: null, last_interaction_at: null, ...over };
+  return {
+    id,
+    user_id: "TENANT_A",
+    agent_id: "AGENT_A",
+    remote_jid: "5512988887777@s.whatsapp.net",
+    assigned_to_id: null,
+    instance_id: null,
+    origem: null,
+    status: null,
+    last_interaction_at: null,
+    ...over,
+  };
 }
 
 console.log("Hotfix: confirmacao do vendedor no webhook (Unidade 1)");
@@ -210,6 +241,193 @@ await (async () => {
   const db: DB = { ai_team_members: [s], ai_lead_transfers: [t], ai_crm_leads: [seedLead(t.lead_id)] };
   const r = await handleSellerInbound(makeSupabase(db), { user_id: "TENANT_A", agent_id: null, seller_phone: "12997710749", seller_text: "Olá", dry_run: false });
   check("ACK: mensagem comum ('Ola') -> NAO envia ACK", shouldSendAck(r.route) === false);
+})();
+
+// ── RECIBO AO CLIENTE: somente depois do OK + atribuicao no CRM ──────────────
+await (async () => {
+  const s = seedSeller();
+  const t = seedTransfer(s.id);
+  const lead = seedLead(t.lead_id, { instance_id: "CLIENT_INSTANCE" });
+  const db: DB = {
+    ai_team_members: [s],
+    ai_lead_transfers: [t],
+    ai_crm_leads: [lead],
+    pedro_conversation_state: [],
+    wa_instances: [{ id: "CLIENT_INSTANCE", user_id: "TENANT_A", instance_name: "client-line" }],
+  };
+  const sb = makeSupabase(db);
+  const decision = await handleSellerInbound(sb, {
+    user_id: "TENANT_A",
+    agent_id: null,
+    seller_phone: "12997710749",
+    seller_text: "Ok",
+    dry_run: false,
+  });
+  let sends = 0;
+  let sentAfterAssignment = false;
+  let sentText = "";
+  let sentInstanceId = "";
+  const receipt = await sendLeadTransferConfirmationReceipt({
+    supabase: sb,
+    instance: { id: "SELLER_INSTANCE" },
+    tenantId: "TENANT_A",
+    transferId: decision.transfer_id!,
+    sellerId: decision.seller_id,
+    nowIso: "2026-07-31T15:00:00.000Z",
+    sendText: async (instance, message) => {
+      sends += 1;
+      sentAfterAssignment = db.ai_crm_leads[0].assigned_to_id === s.id && db.ai_lead_transfers[0].is_confirmed === true;
+      sentText = message.text;
+      sentInstanceId = instance.id;
+      return { ok: true };
+    },
+  });
+  check("RECIBO: so envia depois de atribuir no CRM", receipt.status === "sent" && sentAfterAssignment);
+  check("RECIBO: usa exatamente o texto aprovado", sentText === POST_TRANSFER_LEAD_RECEIPT_TEXT);
+  check("RECIBO: sai pela instancia original do lead, nao pela linha do vendedor", sentInstanceId === "CLIENT_INSTANCE");
+  const atendimento = db.pedro_conversation_state?.[0]?.state?.atendimento;
+  check("RECIBO: marker guarda o transfer_id exato", atendimento?.transfer_notice_transfer_id === t.id);
+
+  const repeated = await sendLeadTransferConfirmationReceipt({
+    supabase: sb,
+    instance: { id: "INSTANCE_A" },
+    tenantId: "TENANT_A",
+    transferId: t.id,
+    sellerId: s.id,
+    sendText: async () => {
+      sends += 1;
+      return { ok: true };
+    },
+  });
+  check("RECIBO: mesma transferencia nao duplica", repeated.status === "already_sent" && sends === 1);
+})();
+
+// ── Transfer confirmada sem atribuicao correspondente nunca afirma posse ─────
+await (async () => {
+  const s = seedSeller();
+  const t = seedTransfer(s.id, {
+    transfer_status: "confirmed",
+    is_confirmed: true,
+    confirmed_at: "2026-07-31T14:59:00.000Z",
+  });
+  const db: DB = {
+    ai_team_members: [s],
+    ai_lead_transfers: [t],
+    ai_crm_leads: [seedLead(t.lead_id, { assigned_to_id: null })],
+    pedro_conversation_state: [],
+  };
+  let sends = 0;
+  const result = await sendLeadTransferConfirmationReceipt({
+    supabase: makeSupabase(db),
+    instance: { id: "INSTANCE_A" },
+    tenantId: "TENANT_A",
+    transferId: t.id,
+    sellerId: s.id,
+    sendText: async () => {
+      sends += 1;
+      return { ok: true };
+    },
+  });
+  check("RECIBO: transferencia confirmada sem atribuicao no CRM nao envia", result.status === "lead_not_assigned" && sends === 0);
+})();
+
+// ── Nunca troca silenciosamente para uma instancia de outro tenant ───────────
+await (async () => {
+  const s = seedSeller();
+  const t = seedTransfer(s.id, {
+    transfer_status: "confirmed",
+    is_confirmed: true,
+    confirmed_at: "2026-07-31T14:59:00.000Z",
+  });
+  const db: DB = {
+    ai_team_members: [s],
+    ai_lead_transfers: [t],
+    ai_crm_leads: [seedLead(t.lead_id, { assigned_to_id: s.id, instance_id: "FOREIGN_INSTANCE" })],
+    pedro_conversation_state: [],
+    wa_instances: [{ id: "FOREIGN_INSTANCE", user_id: "TENANT_B" }],
+  };
+  let sends = 0;
+  const result = await sendLeadTransferConfirmationReceipt({
+    supabase: makeSupabase(db),
+    instance: { id: "SELLER_INSTANCE" },
+    tenantId: "TENANT_A",
+    transferId: t.id,
+    sellerId: s.id,
+    sendText: async () => {
+      sends += 1;
+      return { ok: true };
+    },
+  });
+  check("RECIBO: instancia original ausente no tenant falha sem usar outra linha", result.status === "lead_instance_not_found" && sends === 0);
+})();
+
+// ── Transferencia pendente nunca autoriza dizer que ja existe vendedor ───────
+await (async () => {
+  const s = seedSeller();
+  const t = seedTransfer(s.id);
+  const db: DB = {
+    ai_team_members: [s],
+    ai_lead_transfers: [t],
+    ai_crm_leads: [seedLead(t.lead_id)],
+    pedro_conversation_state: [],
+  };
+  let sends = 0;
+  const result = await sendLeadTransferConfirmationReceipt({
+    supabase: makeSupabase(db),
+    instance: { id: "INSTANCE_A" },
+    tenantId: "TENANT_A",
+    transferId: t.id,
+    sellerId: s.id,
+    sendText: async () => {
+      sends += 1;
+      return { ok: true };
+    },
+  });
+  check("RECIBO: pendente nao envia", result.status === "not_confirmed" && sends === 0);
+})();
+
+// ── Falha do provedor nao marca; tentativa posterior pode entregar ───────────
+await (async () => {
+  const s = seedSeller();
+  const t = seedTransfer(s.id, {
+    transfer_status: "confirmed",
+    is_confirmed: true,
+    confirmed_at: "2026-07-31T14:59:00.000Z",
+  });
+  const db: DB = {
+    ai_team_members: [s],
+    ai_lead_transfers: [t],
+    ai_crm_leads: [seedLead(t.lead_id, { assigned_to_id: s.id })],
+    pedro_conversation_state: [],
+  };
+  const sb = makeSupabase(db);
+  let sends = 0;
+  const first = await sendLeadTransferConfirmationReceipt({
+    supabase: sb,
+    instance: { id: "INSTANCE_A" },
+    tenantId: "TENANT_A",
+    transferId: t.id,
+    sellerId: s.id,
+    sendText: async () => {
+      sends += 1;
+      return { ok: false };
+    },
+  });
+  check("RECIBO: falha de envio nao cria marker", first.status === "send_failed" && (db.pedro_conversation_state?.length || 0) === 0);
+
+  const retry = await sendLeadTransferConfirmationReceipt({
+    supabase: sb,
+    instance: { id: "INSTANCE_A" },
+    tenantId: "TENANT_A",
+    transferId: t.id,
+    sellerId: s.id,
+    nowIso: "2026-07-31T15:01:00.000Z",
+    sendText: async () => {
+      sends += 1;
+      return { ok: true };
+    },
+  });
+  check("RECIBO: nova tentativa entrega e marca", retry.status === "sent" && sends === 2 && db.pedro_conversation_state?.[0]?.state?.atendimento?.transfer_notice_transfer_id === t.id);
 })();
 
 console.log(`\nRESULT ok=${ok} failed=${failed}`);

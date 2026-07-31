@@ -306,33 +306,94 @@ test("PT-1: first 30 minutes are silent", () => {
   assert(!result.notifyLead && !result.notifySeller, "silence must notify nobody");
 });
 
-test("PT-2: after 30 minutes both notices are due once", () => {
+test("PT-2: pending transfer remains held after 30 minutes and never claims ownership", () => {
   const nowMs = Date.parse("2026-07-15T13:00:00.000Z");
   const result = evaluatePostTransferAction({
     transferCreatedAt: new Date(nowMs - POST_TRANSFER_SILENCE_MS).toISOString(),
+    transferStatus: "pending",
+    nowMs,
+  });
+  assert(result.action === "hold", `expected hold, got ${result.action}`);
+  assert(!result.notifyLead && !result.notifySeller, "pending transfer must notify nobody");
+});
+
+test("PT-3: seller OK makes the client receipt due immediately, without early seller re-notification", () => {
+  const nowMs = Date.parse("2026-07-15T12:10:00.000Z");
+  const result = evaluatePostTransferAction({
+    transferId: "TR-1",
+    transferCreatedAt: new Date(nowMs - 60_000).toISOString(),
     transferStatus: "confirmed",
+    transferConfirmed: true,
     nowMs,
   });
   assert(result.action === "notice_once", `expected notice_once, got ${result.action}`);
-  assert(result.notifyLead && result.notifySeller, "lead and seller notices must both be due");
+  assert(result.notifyLead && !result.notifySeller, "only the client receipt is due immediately after OK");
 });
 
-test("PT-3: notices already recorded keep the conversation held without duplicates", () => {
+test("PT-4: receipt marker for this exact transfer prevents duplicates", () => {
+  const nowMs = Date.parse("2026-07-15T12:10:00.000Z");
+  const result = evaluatePostTransferAction({
+    transferId: "TR-1",
+    transferCreatedAt: new Date(nowMs - 60_000).toISOString(),
+    transferStatus: "confirmed",
+    leadNoticeAt: new Date(nowMs - 30_000).toISOString(),
+    leadNoticeTransferId: "TR-1",
+    nowMs,
+  });
+  assert(result.action === "silence", `expected silence, got ${result.action}`);
+  assert(!result.notifyLead && !result.notifySeller, "receipt for the same transfer must not repeat");
+});
+
+test("PT-5: after 30 minutes seller re-notification remains independent from the client receipt", () => {
+  const nowMs = Date.parse("2026-07-15T14:00:00.000Z");
+  const transferCreatedAt = new Date(nowMs - POST_TRANSFER_SILENCE_MS).toISOString();
+  const result = evaluatePostTransferAction({
+    transferId: "TR-1",
+    transferCreatedAt,
+    transferStatus: "confirmed",
+    leadNoticeAt: new Date(nowMs - 20 * 60_000).toISOString(),
+    leadNoticeTransferId: "TR-1",
+    nowMs,
+  });
+  assert(result.action === "notice_once", `expected notice_once, got ${result.action}`);
+  assert(!result.notifyLead && result.notifySeller, "only the seller reminder must be due");
+});
+
+test("PT-6: markers from another transfer never suppress the current transfer", () => {
+  const nowMs = Date.parse("2026-07-15T12:10:00.000Z");
+  const result = evaluatePostTransferAction({
+    transferId: "TR-NEW",
+    transferCreatedAt: new Date(nowMs - 60_000).toISOString(),
+    transferStatus: "confirmed",
+    leadNoticeAt: new Date(nowMs - 30_000).toISOString(),
+    leadNoticeTransferId: "TR-OLD",
+    sellerNoticeAt: new Date(nowMs - 30_000).toISOString(),
+    sellerNoticeTransferId: "TR-OLD",
+    nowMs,
+  });
+  assert(result.action === "notice_once", `expected notice_once, got ${result.action}`);
+  assert(result.notifyLead && !result.notifySeller, "new transfer needs its own client receipt; seller reminder is not due yet");
+});
+
+test("PT-7: both markers for the exact transfer keep the conversation held", () => {
   const nowMs = Date.parse("2026-07-15T14:00:00.000Z");
   const transferCreatedAt = new Date(nowMs - 60 * 60_000).toISOString();
   const noticedAt = new Date(nowMs - 10 * 60_000).toISOString();
   const result = evaluatePostTransferAction({
+    transferId: "TR-1",
     transferCreatedAt,
     transferStatus: "confirmed",
     leadNoticeAt: noticedAt,
+    leadNoticeTransferId: "TR-1",
     sellerNoticeAt: noticedAt,
+    sellerNoticeTransferId: "TR-1",
     nowMs,
   });
   assert(result.action === "hold", `expected hold, got ${result.action}`);
   assert(!result.notifyLead && !result.notifySeller, "recorded notices must not repeat");
 });
 
-test("PT-4: after 24 hours the LLM may serve the lead again", () => {
+test("PT-8: after 24 hours the LLM may serve the lead again", () => {
   const nowMs = Date.parse("2026-07-15T14:00:00.000Z");
   const result = evaluatePostTransferAction({
     transferCreatedAt: new Date(nowMs - POST_TRANSFER_HOLD_MS).toISOString(),
@@ -342,7 +403,7 @@ test("PT-4: after 24 hours the LLM may serve the lead again", () => {
   assert(result.action === "continue", `expected continue, got ${result.action}`);
 });
 
-test("PT-5: failed transfer never captures the conversation", () => {
+test("PT-9: failed transfer never captures the conversation", () => {
   const nowMs = Date.parse("2026-07-15T14:00:00.000Z");
   const result = evaluatePostTransferAction({
     transferCreatedAt: new Date(nowMs - 60_000).toISOString(),

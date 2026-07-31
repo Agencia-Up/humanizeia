@@ -17,7 +17,11 @@ import { handleSellerInbound } from "../_shared/pedro-v2/transferRouter.ts";
 import { classifyUazapiInboundAudience } from "../_shared/pedro-v2/inboundAudience.ts";
 import { persistPrivateInboundMessage } from "../_shared/pedro-v2/persistPrivateInbound.ts";
 import { ensureInactiveAgentHumanMode } from "../_shared/pedro-v2/humanOnlyInbound.ts";
-import { executePostTransferPlan, resolvePostTransferPlan } from "../_shared/pedro-v2/postTransferOwnership.ts";
+import {
+  executePostTransferPlan,
+  resolvePostTransferPlan,
+  sendLeadTransferConfirmationReceipt,
+} from "../_shared/pedro-v2/postTransferOwnership.ts";
 import { sendPedroText } from "../_shared/pedro-v2/uazapiSender_20260524.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 import { resolvePedroMediaContext } from "../_shared/pedro-v2/mediaContext_20260524.ts";
@@ -640,6 +644,28 @@ Deno.serve(async (req) => {
         } catch (_ackErr) {
           console.error(`[Webhook] seller_ack_send_error transfer=${sellerDecision.transfer_id} seller=${sellerDecision.seller_id} instance=${waInstance.id} err=${String((_ackErr as any)?.message || _ackErr).slice(0, 200)}`);
         }
+
+        // RECIBO OPERACIONAL AO CLIENTE — nasce somente depois que a mesma saga
+        // confirmou o vendedor e o fixou no CRM. Não é autoria do agente nem regra
+        // de conversa. O marker usa o transfer_id: "Ok" repetido e transferências
+        // antigas não duplicam a mensagem. Se o WhatsApp falhar, não marcamos e o
+        // próximo inbound do lead pode tentar novamente pelo post-transfer hold.
+        if (sellerDecision.transfer_id) {
+          try {
+            const receipt = await sendLeadTransferConfirmationReceipt({
+              supabase,
+              instance: waInstance,
+              tenantId: waInstance.user_id,
+              transferId: sellerDecision.transfer_id,
+              sellerId: sellerDecision.seller_id,
+              sendText: sendPedroText,
+            });
+            const receiptLevel = receipt.ok || receipt.status === "already_sent" ? "log" : "error";
+            console[receiptLevel](`[Webhook] lead_transfer_receipt status=${receipt.status} transfer=${sellerDecision.transfer_id} seller=${sellerDecision.seller_id ?? "?"} instance=${waInstance.id}`);
+          } catch (_receiptErr) {
+            console.error(`[Webhook] lead_transfer_receipt_error transfer=${sellerDecision.transfer_id} seller=${sellerDecision.seller_id ?? "?"} instance=${waInstance.id} err=${String((_receiptErr as any)?.message || _receiptErr).slice(0, 200)}`);
+          }
+        }
       }
 
       return jsonResponse({
@@ -884,10 +910,20 @@ Deno.serve(async (req) => {
   if (!_dryRun && _pilotInternalInbound) {
     return jsonResponse({ ok: true, accepted: true, routed: "internal_identity_ignored", build: PEDRO_V2_BUILD });
   }
-  if (!_dryRun && _postTransferPlan && typeof _waitUntil === "function") {
-    _waitUntil(executePostTransferPlan({ supabase, instance: waInstance, plan: _postTransferPlan, sendText: sendPedroText }).catch((error) => {
+  if (!_dryRun && _postTransferPlan) {
+    const executeHold = executePostTransferPlan({
+      supabase,
+      instance: waInstance,
+      plan: _postTransferPlan,
+      sendText: sendPedroText,
+    }).catch((error) => {
       console.error("[pedro-v3-post-transfer] execution_failed", String((error as any)?.message || error).slice(0, 180));
-    }));
+    });
+    // Supabase oferece waitUntil, mas a regra de silencio nao pode depender da
+    // presenca dessa API. Sem ela, concluimos o efeito antes do ACK e ainda
+    // encerramos aqui; em nenhum ambiente o turno escapa para a IA apos handoff.
+    if (typeof _waitUntil === "function") _waitUntil(executeHold);
+    else await executeHold;
     return jsonResponse({ ok: true, accepted: true, routed: "pedro_v3_post_transfer_hold", action: _postTransferPlan.action, build: PEDRO_V2_BUILD });
   }
 

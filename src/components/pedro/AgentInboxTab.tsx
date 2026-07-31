@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/select';
 import {
   Bot, Send, Loader2, Search, ArrowLeft, ArrowRight, Pause, Play,
-  MessageCircle, User, Phone, Clock, CheckCheck, Wifi,
+  MessageCircle, Phone, Clock, CheckCheck, Wifi,
   Paperclip, Mic, FileText, Download, Trash2, X, Square, Eye,
   Tag, Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut,
   UserCheck,
@@ -86,6 +86,13 @@ interface TransferSeller {
   last_lead_received_at: string | null;
   total_leads_received?: number | null;
   is_manager?: boolean | null;
+}
+
+interface TransferInfo {
+  status: 'pending' | 'confirmed';
+  createdAt: string;
+  confirmedAt: string | null;
+  toMemberId: string | null;
 }
 
 interface AgentInboxTabProps {
@@ -324,9 +331,10 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   const [messages, setMessages] = useState<Message[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [resolvingMediaIds, setResolvingMediaIds] = useState<Set<string>>(new Set());
-  // FASE 1: momento da transferencia IA->vendedor (ai_lead_transfers.confirmed_at) do lead aberto,
-  // pra marcar "Atendimento IA" antes e o divisor de transferencia. So no modo Conversas e no Pedro.
-  const [transferInfo, setTransferInfo] = useState<{ at: string; toMemberId: string | null } | null>(null);
+  // Estado mais recente da transferencia do lead aberto. "pending" significa que
+  // o vendedor ainda precisa confirmar; somente "confirmed" representa posse no CRM.
+  const [transferInfo, setTransferInfo] = useState<TransferInfo | null>(null);
+  const [transferRefreshKey, setTransferRefreshKey] = useState(0);
   // Modelo B: numero (instancia conectada) do PROPRIO vendedor atribuido, pra o follow-up do lead
   // do Pedro sair do numero dele (nao do numero da empresa). null = vendedor sem numero conectado.
   const [sellerSendInstanceId, setSellerSendInstanceId] = useState<string | null>(null);
@@ -520,6 +528,26 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   useEffect(() => {
     fetchLeads();
   }, [fetchLeads]);
+
+  // O objeto aberto precisa acompanhar a lista reconsultada. Sem isso, um "OK"
+  // confirmado no webhook atualizava o CRM, mas o cabecalho seguia exibindo o
+  // snapshot anterior ate o usuario trocar de conversa.
+  useEffect(() => {
+    if (!selectedLead?.id) return;
+    const fresh = leads.find(lead => lead.id === selectedLead.id);
+    if (!fresh) return;
+    setSelectedLead(prev => {
+      if (!prev || prev.id !== fresh.id) return prev;
+      if (
+        prev.assigned_to_id === fresh.assigned_to_id
+        && prev.ai_paused === fresh.ai_paused
+        && prev.status === fresh.status
+        && prev.summary === fresh.summary
+        && prev.last_interaction_at === fresh.last_interaction_at
+      ) return prev;
+      return { ...prev, ...fresh };
+    });
+  }, [leads, selectedLead?.id]);
 
   useEffect(() => {
     if (!userId || leads.length === 0) return;
@@ -842,26 +870,39 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
     fetchMessages();
   }, [fetchMessages]);
 
-  // FASE 1: busca a transferencia confirmada do lead aberto (so no modo Conversas e leads do Pedro).
-  // Marcos nao passa pela IA -> sem transferencia -> sem marcacao.
+  // Busca a transferencia ativa mais recente do lead aberto. Pendente e confirmado
+  // nao sao equivalentes: antes do OK mostramos espera; depois do OK mostramos posse.
   useEffect(() => {
-    if (!unified || !selectedLead || selectedLead.origem === 'marcos') { setTransferInfo(null); return; }
+    if (!selectedLead || selectedLead.origem === 'marcos' || selectedLead.semCrm || selectedLead.id.startsWith('conv:')) {
+      setTransferInfo(null);
+      return;
+    }
     let cancelled = false;
     (async () => {
       const { data } = await (supabase as any)
         .from('ai_lead_transfers')
-        .select('confirmed_at, to_member_id')
+        .select('created_at, confirmed_at, to_member_id, transfer_status, is_confirmed')
+        .eq('user_id', userId)
         .eq('lead_id', selectedLead.id)
-        .eq('is_confirmed', true)
-        .not('confirmed_at', 'is', null)
-        .order('confirmed_at', { ascending: true })
+        .in('transfer_status', ['pending', 'confirmed'])
+        .order('created_at', { ascending: false })
         .limit(1);
       if (cancelled) return;
       const row = (data || [])[0];
-      setTransferInfo(row ? { at: row.confirmed_at as string, toMemberId: (row.to_member_id as string) || null } : null);
+      if (!row?.created_at) {
+        setTransferInfo(null);
+        return;
+      }
+      const confirmed = row.is_confirmed === true || row.transfer_status === 'confirmed';
+      setTransferInfo({
+        status: confirmed ? 'confirmed' : 'pending',
+        createdAt: row.created_at as string,
+        confirmedAt: confirmed && row.confirmed_at ? row.confirmed_at as string : null,
+        toMemberId: (row.to_member_id as string) || null,
+      });
     })();
     return () => { cancelled = true; };
-  }, [unified, selectedLead?.id, selectedLead?.origem]);
+  }, [userId, selectedLead?.id, selectedLead?.origem, selectedLead?.semCrm, transferRefreshKey]);
 
   // Modelo B: resolve o numero (instancia conectada) do vendedor atribuido ao lead aberto,
   // pra o envio manual sair do numero dele. So no modo Conversas.
@@ -952,6 +993,10 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
         fetchMessagesSignalRef.current(true); // no-op se nenhum lead aberto
       }, 1200);
     };
+    const transferSignal = () => {
+      setTransferRefreshKey(key => key + 1);
+      signal();
+    };
     const ch = supabase
       .channel(`pedro-conv-rt-${userId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wa_inbox', filter: `user_id=eq.${userId}` }, signal)
@@ -960,6 +1005,8 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'v3_conversation_state', filter: `tenant_id=eq.${userId}` }, signal)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_conversation_index', filter: `user_id=eq.${userId}` }, signal)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wa_synced_messages', filter: `tenant_id=eq.${userId}` }, signal)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_crm_leads', filter: `user_id=eq.${userId}` }, signal)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_lead_transfers', filter: `user_id=eq.${userId}` }, transferSignal)
       .subscribe();
     return () => {
       if (rtDebounceRef.current) clearTimeout(rtDebounceRef.current);
@@ -1560,15 +1607,25 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   // Mapa member_id -> nome do vendedor, pra mostrar quem atende cada lead no card (so master).
   const sellerNameById = new Map<string, string>();
   for (const s of sellers) for (const id of s.memberIds) sellerNameById.set(id, s.name);
-  // FASE 1: limite temporal da transferencia e nome do vendedor que recebeu, pro divisor da timeline.
-  const transferAtMs = transferInfo ? new Date(transferInfo.at).getTime() : null;
+  // O divisor historico so nasce depois do OK. Uma transferencia pendente nao
+  // encerra a fase da IA nem afirma que o vendedor ja assumiu.
+  const transferConfirmedAt = transferInfo?.status === 'confirmed' ? transferInfo.confirmedAt : null;
+  const transferAtMs = transferConfirmedAt ? new Date(transferConfirmedAt).getTime() : null;
   const transferSellerName = transferInfo?.toMemberId ? (sellerNameById.get(transferInfo.toMemberId) || null) : null;
   const selectedAssignedSeller = selectedLead?.assigned_to_id ? (sellerNameById.get(selectedLead.assigned_to_id) || null) : null;
+  const pendingTransferSeller = transferInfo?.status === 'pending' ? transferSellerName : null;
   // #3 — ultima atualizacao = mensagem mais recente (vendedor OU IA); lista ja ordenada asc.
   const lastActivityIso = messages.length ? messages[messages.length - 1].created_at : null;
   // Metrica de tempo ate o 1o contato: do OK (confirmed_at) ate a 1a mensagem ENVIADA depois dele.
   const firstPostIdx = transferAtMs != null ? messages.findIndex(m => new Date(m.created_at).getTime() >= transferAtMs) : -1;
-  const firstContactMsg = transferAtMs != null ? messages.find(m => m.direction === 'outgoing' && new Date(m.created_at).getTime() >= transferAtMs) : null;
+  // O recibo operacional enviado logo apos o OK tambem e uma mensagem outgoing,
+  // mas nao e contato do vendedor. A metrica so pode nascer de autoria humana
+  // comprovada pela RPC; saida da IA/sistema/desconhecida nunca conta.
+  const firstContactMsg = transferAtMs != null ? messages.find(m => (
+    m.direction === 'outgoing'
+    && new Date(m.created_at).getTime() >= transferAtMs
+    && (m.actor_source === 'humano_manual' || m.actor === 'vendedor')
+  )) : null;
   const firstContactMs = firstContactMsg ? new Date(firstContactMsg.created_at).getTime() : null;
   const handoffDelayMs = transferAtMs == null ? null : (firstContactMs != null ? firstContactMs - transferAtMs : Date.now() - transferAtMs);
   const handoffColor = handoffDelayMs == null ? '' : handoffDelayMs <= 15 * 60000 ? 'text-emerald-300' : handoffDelayMs <= 60 * 60000 ? 'text-amber-300' : 'text-red-300';
@@ -1590,14 +1647,14 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
     : unified
       ? 'flex h-full min-h-0 flex-col overflow-hidden bg-[#0b141a] sm:border-y sm:border-[#1f2c34]'
       : 'flex flex-col h-[calc(100vh-210px)] bg-card rounded-xl border border-border/50 overflow-hidden';
-  const handoffCard = (transferAtMs != null && transferInfo) ? (
+  const handoffCard = (transferAtMs != null && transferInfo?.status === 'confirmed' && transferConfirmedAt) ? (
     <div className="flex justify-center my-3">
       <div className="max-w-[88%] text-center bg-[#182229] rounded-xl px-4 py-2.5 shadow-sm border border-white/5">
         <p className="text-[11px] text-[#8696a0] flex items-center justify-center gap-1.5">
           <ArrowRight className="h-3 w-3" /> Transferido{transferSellerName ? ` para ${transferSellerName}` : ''}
         </p>
         <p className="text-[11px] text-emerald-300/90 mt-1 flex items-center justify-center gap-1">
-          <CheckCheck className="h-3 w-3" /> Vendedor confirmou (OK) · {format(new Date(transferInfo.at), "dd/MM 'às' HH:mm", { locale: ptBR })}
+          <CheckCheck className="h-3 w-3" /> Vendedor confirmou (OK) · {format(new Date(transferConfirmedAt), "dd/MM 'às' HH:mm", { locale: ptBR })}
         </p>
         {firstContactMs != null ? (
           <p className={`text-[11px] mt-0.5 font-semibold ${handoffColor}`}>
@@ -1612,6 +1669,18 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
             Aguardando 1º contato · {fmtDur(handoffDelayMs as number)} desde o OK
           </p>
         )}
+      </div>
+    </div>
+  ) : null;
+  const pendingTransferCard = transferInfo?.status === 'pending' ? (
+    <div className="flex justify-center my-3">
+      <div className="max-w-[88%] rounded-xl border border-amber-400/20 bg-amber-500/10 px-4 py-2.5 text-center shadow-sm">
+        <p className="flex items-center justify-center gap-1.5 text-[11px] font-semibold text-amber-200">
+          <Clock className="h-3 w-3" /> Aguardando confirmação{pendingTransferSeller ? ` de ${pendingTransferSeller}` : ' do vendedor'}
+        </p>
+        <p className="mt-1 text-[10px] text-amber-100/65">
+          O lead ainda não foi atribuído ao vendedor no CRM.
+        </p>
       </div>
     </div>
   ) : null;
@@ -1877,7 +1946,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                             {lead.agenteInativo && (
                               <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-zinc-500/15 text-zinc-400">Inativo</span>
                             )}
-                            {lead.ai_paused ? (
+                            {lead.assigned_to_id ? null : lead.ai_paused ? (
                             <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 flex items-center gap-0.5">
                               <Pause className="h-2.5 w-2.5" /> Manual
                             </span>
@@ -1888,9 +1957,9 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                           )}
                             </span>
                           )}
-                          {unified && !isSeller && lead.assigned_to_id && sellerNameById.get(lead.assigned_to_id) && (
-                            <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-primary/10 text-primary flex items-center gap-0.5">
-                              <User className="h-2.5 w-2.5" /> {sellerNameById.get(lead.assigned_to_id)}
+                          {lead.assigned_to_id && (
+                            <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 flex items-center gap-0.5" title="Vendedor confirmado e atribuído no CRM">
+                              <UserCheck className="h-2.5 w-2.5" /> Com vendedor · {sellerNameById.get(lead.assigned_to_id) || 'Atribuído'}
                             </span>
                           )}
                           {tags.slice(0, 1).map(tag => (
@@ -1985,8 +2054,23 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                       </>
                     )}
                     <span className="mx-1 hidden text-[#3a4650] sm:inline">|</span>
-                    <span className="truncate">{selectedAssignedSeller ? `Vendedor: ${selectedAssignedSeller}` : `${selectedLead.message_count ?? 0} msgs`}</span>
+                    <span className="truncate">{selectedLead.message_count ?? 0} msgs</span>
                   </p>
+                  {(transferInfo?.status === 'pending' || selectedLead.assigned_to_id) && (
+                    <div className="mt-1 flex min-w-0">
+                      {transferInfo?.status === 'pending' ? (
+                        <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-amber-400/25 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-300" title="O vendedor ainda precisa responder OK">
+                          <Clock className="h-3 w-3 shrink-0" />
+                          <span className="truncate">Aguardando confirmação · {pendingTransferSeller || 'vendedor da fila'}</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-emerald-400/25 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-300" title="Vendedor confirmado e atribuído no CRM">
+                          <UserCheck className="h-3 w-3 shrink-0" />
+                          <span className="truncate">Com vendedor · {selectedAssignedSeller || 'Atribuído'}</span>
+                        </span>
+                      )}
+                    </div>
+                  )}
                   {lastActivityIso && (
                     <p className={`${unified ? 'text-[11px] text-[#8696a0]' : 'text-[11px] text-muted-foreground'} truncate`}>
                       Última atualização {fmtTime(lastActivityIso)}
@@ -2222,6 +2306,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                       );
                     })}
                     {transferAtMs != null && firstPostIdx === -1 && handoffCard}
+                    {pendingTransferCard}
                     <div ref={messagesEndRef} />
                   </div>
                 )}
