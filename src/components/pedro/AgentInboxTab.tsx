@@ -24,6 +24,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { format, isToday, isYesterday } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { deriveSellerContactMetric, sellerMemberScope } from '@/lib/sellerContactMetric';
 
 /* ── Tipos ──────────────────────────────────────────────────────────── */
 interface Agent {
@@ -86,6 +87,7 @@ interface TransferSeller {
   last_lead_received_at: string | null;
   total_leads_received?: number | null;
   is_manager?: boolean | null;
+  auth_user_id?: string | null;
 }
 
 interface TransferInfo {
@@ -93,6 +95,25 @@ interface TransferInfo {
   createdAt: string;
   confirmedAt: string | null;
   toMemberId: string | null;
+  sellerName: string | null;
+  sellerHasInstance: boolean;
+  sellerConnected: boolean | null;
+  connectedInstanceId: string | null;
+  firstContactAt: string | null;
+  firstContactSource: string | null;
+}
+
+interface SellerContactStatusRow {
+  transfer_status: string | null;
+  transfer_created_at: string | null;
+  confirmed_at: string | null;
+  to_member_id: string | null;
+  seller_name: string | null;
+  seller_has_instance: boolean | null;
+  seller_connected: boolean | null;
+  connected_instance_id: string | null;
+  first_contact_at: string | null;
+  first_contact_source: string | null;
 }
 
 interface AgentInboxTabProps {
@@ -338,8 +359,6 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   // Modelo B: numero (instancia conectada) do PROPRIO vendedor atribuido, pra o follow-up do lead
   // do Pedro sair do numero dele (nao do numero da empresa). null = vendedor sem numero conectado.
   const [sellerSendInstanceId, setSellerSendInstanceId] = useState<string | null>(null);
-  // Se ja terminamos de checar a instancia do vendedor (pra nao mostrar "nao conectado" antes de saber).
-  const [sellerInstanceLoaded, setSellerInstanceLoaded] = useState(false);
 
   // Reply
   const [replyText, setReplyText] = useState('');
@@ -416,14 +435,16 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
     (async () => {
       const { data } = await (supabase as any)
         .from('ai_team_members')
-        .select('id, name, whatsapp_number, is_active, active_in_system, last_lead_received_at, total_leads_received, is_manager')
+        .select('id, name, whatsapp_number, is_active, active_in_system, last_lead_received_at, total_leads_received, is_manager, auth_user_id')
         .eq('user_id', userId)
         .neq('active_in_system', false);
       if (cancelled) return;
       // Agrupa por whatsapp: 1 vendedor pode ter 1 row por agente (member ids vários).
       const byKey = new Map<string, { key: string; name: string; memberIds: string[] }>();
       for (const s of ((data || []) as any[])) {
-        const key = s.whatsapp_number || s.id;
+        const key = s.auth_user_id
+          ? `auth:${s.auth_user_id}`
+          : (phoneCanonical(s.whatsapp_number) || s.id);
         if (!byKey.has(key)) byKey.set(key, { key, name: s.name || 'Vendedor', memberIds: [] });
         byKey.get(key)!.memberIds.push(s.id);
       }
@@ -870,8 +891,10 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
     fetchMessages();
   }, [fetchMessages]);
 
-  // Busca a transferencia ativa mais recente do lead aberto. Pendente e confirmado
-  // nao sao equivalentes: antes do OK mostramos espera; depois do OK mostramos posse.
+  // Busca a transferencia e o primeiro contato factual do vendedor na mesma
+  // autoridade do banco. A timeline renderizada nao e fonte dessa metrica: um
+  // vendedor pode ter uma linha ai_team_members por agente e a instancia estar
+  // ligada a uma linha irma da usada na atribuicao do CRM.
   useEffect(() => {
     if (!selectedLead || selectedLead.origem === 'marcos' || selectedLead.semCrm || selectedLead.id.startsWith('conv:')) {
       setTransferInfo(null);
@@ -879,26 +902,31 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
     }
     let cancelled = false;
     (async () => {
-      const { data } = await (supabase as any)
-        .from('ai_lead_transfers')
-        .select('created_at, confirmed_at, to_member_id, transfer_status, is_confirmed')
-        .eq('user_id', userId)
-        .eq('lead_id', selectedLead.id)
-        .in('transfer_status', ['pending', 'confirmed'])
-        .order('created_at', { ascending: false })
-        .limit(1);
+      const { data, error } = await (supabase as any).rpc('get_lead_seller_contact_status', {
+        p_lead_id: selectedLead.id,
+      });
       if (cancelled) return;
-      const row = (data || [])[0];
-      if (!row?.created_at) {
+      if (error) {
+        console.error('[AgentInbox] seller contact metric failed', error);
         setTransferInfo(null);
         return;
       }
-      const confirmed = row.is_confirmed === true || row.transfer_status === 'confirmed';
+      const row = ((data || []) as SellerContactStatusRow[])[0];
+      if (!row?.transfer_created_at) {
+        setTransferInfo(null);
+        return;
+      }
       setTransferInfo({
-        status: confirmed ? 'confirmed' : 'pending',
-        createdAt: row.created_at as string,
-        confirmedAt: confirmed && row.confirmed_at ? row.confirmed_at as string : null,
+        status: row.transfer_status === 'confirmed' ? 'confirmed' : 'pending',
+        createdAt: row.transfer_created_at as string,
+        confirmedAt: row.confirmed_at ? row.confirmed_at as string : null,
         toMemberId: (row.to_member_id as string) || null,
+        sellerName: (row.seller_name as string) || null,
+        sellerHasInstance: row.seller_has_instance === true,
+        sellerConnected: typeof row.seller_connected === 'boolean' ? row.seller_connected : null,
+        connectedInstanceId: (row.connected_instance_id as string) || null,
+        firstContactAt: (row.first_contact_at as string) || null,
+        firstContactSource: (row.first_contact_source as string) || null,
       });
     })();
     return () => { cancelled = true; };
@@ -908,22 +936,21 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   // pra o envio manual sair do numero dele. So no modo Conversas.
   useEffect(() => {
     const memberId = selectedLead?.assigned_to_id;
-    if (!unified || !memberId) { setSellerSendInstanceId(null); setSellerInstanceLoaded(false); return; }
+    if (!unified || !memberId) { setSellerSendInstanceId(null); return; }
     let cancelled = false;
-    setSellerInstanceLoaded(false);
     (async () => {
+      const memberIds = sellerMemberScope(sellers, memberId);
       const { data } = await (supabase as any)
         .from('wa_instances')
         .select('id')
-        .eq('seller_member_id', memberId)
+        .in('seller_member_id', memberIds)
         .eq('status', 'connected')
         .limit(1);
       if (cancelled) return;
       setSellerSendInstanceId((data && data[0]?.id) || null);
-      setSellerInstanceLoaded(true);
     })();
     return () => { cancelled = true; };
-  }, [unified, selectedLead?.id, selectedLead?.assigned_to_id]);
+  }, [unified, selectedLead?.id, selectedLead?.assigned_to_id, sellers]);
 
   useEffect(() => {
     const recoverable = messages.filter(msg => {
@@ -965,12 +992,16 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
 
     pollingRef.current = setInterval(() => {
       fetchMessages(true);
+      if (transferInfo?.status === 'pending'
+          || (transferInfo?.status === 'confirmed' && !transferInfo.firstContactAt)) {
+        setTransferRefreshKey(key => key + 1);
+      }
     }, 7000);
 
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
-  }, [selectedLeadId, fetchMessages]);
+  }, [selectedLeadId, fetchMessages, transferInfo?.status, transferInfo?.firstContactAt]);
 
   /* ── Realtime como SINAL (Pedro V3 + wa_inbox) ─────────────────── */
   // O payload do evento NUNCA entra no estado nem é renderizado: serve só de
@@ -983,29 +1014,34 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   const fetchMessagesSignalRef = useRef(fetchMessages);
   useEffect(() => { fetchMessagesSignalRef.current = fetchMessages; }, [fetchMessages]);
   const rtDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rtTransferRefreshPendingRef = useRef(false);
 
   useEffect(() => {
     if (!userId) return;
-    const signal = () => {
+    const signal = (refreshTransfer = false) => {
+      rtTransferRefreshPendingRef.current ||= refreshTransfer;
       if (rtDebounceRef.current) clearTimeout(rtDebounceRef.current);
       rtDebounceRef.current = setTimeout(() => {
+        if (rtTransferRefreshPendingRef.current) {
+          rtTransferRefreshPendingRef.current = false;
+          setTransferRefreshKey(key => key + 1);
+        }
         fetchLeadsRef.current();
         fetchMessagesSignalRef.current(true); // no-op se nenhum lead aberto
       }, 1200);
     };
     const transferSignal = () => {
-      setTransferRefreshKey(key => key + 1);
-      signal();
+      signal(true);
     };
     const ch = supabase
       .channel(`pedro-conv-rt-${userId}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wa_inbox', filter: `user_id=eq.${userId}` }, signal)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'v3_inbox', filter: `tenant_id=eq.${userId}` }, signal)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'v3_effect_outbox', filter: `tenant_id=eq.${userId}` }, signal)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'v3_conversation_state', filter: `tenant_id=eq.${userId}` }, signal)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_conversation_index', filter: `user_id=eq.${userId}` }, signal)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wa_synced_messages', filter: `tenant_id=eq.${userId}` }, signal)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_crm_leads', filter: `user_id=eq.${userId}` }, signal)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wa_inbox', filter: `user_id=eq.${userId}` }, () => signal(true))
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'v3_inbox', filter: `tenant_id=eq.${userId}` }, () => signal())
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'v3_effect_outbox', filter: `tenant_id=eq.${userId}` }, () => signal())
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'v3_conversation_state', filter: `tenant_id=eq.${userId}` }, () => signal())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_conversation_index', filter: `user_id=eq.${userId}` }, () => signal())
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wa_synced_messages', filter: `tenant_id=eq.${userId}` }, () => signal(true))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_crm_leads', filter: `user_id=eq.${userId}` }, () => signal())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_lead_transfers', filter: `user_id=eq.${userId}` }, transferSignal)
       .subscribe();
     return () => {
@@ -1611,23 +1647,22 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   // encerra a fase da IA nem afirma que o vendedor ja assumiu.
   const transferConfirmedAt = transferInfo?.status === 'confirmed' ? transferInfo.confirmedAt : null;
   const transferAtMs = transferConfirmedAt ? new Date(transferConfirmedAt).getTime() : null;
-  const transferSellerName = transferInfo?.toMemberId ? (sellerNameById.get(transferInfo.toMemberId) || null) : null;
+  const transferSellerName = transferInfo?.sellerName
+    || (transferInfo?.toMemberId ? (sellerNameById.get(transferInfo.toMemberId) || null) : null);
   const selectedAssignedSeller = selectedLead?.assigned_to_id ? (sellerNameById.get(selectedLead.assigned_to_id) || null) : null;
   const pendingTransferSeller = transferInfo?.status === 'pending' ? transferSellerName : null;
   // #3 — ultima atualizacao = mensagem mais recente (vendedor OU IA); lista ja ordenada asc.
   const lastActivityIso = messages.length ? messages[messages.length - 1].created_at : null;
-  // Metrica de tempo ate o 1o contato: do OK (confirmed_at) ate a 1a mensagem ENVIADA depois dele.
+  // O indice continua servindo apenas para posicionar o divisor na timeline.
   const firstPostIdx = transferAtMs != null ? messages.findIndex(m => new Date(m.created_at).getTime() >= transferAtMs) : -1;
-  // O recibo operacional enviado logo apos o OK tambem e uma mensagem outgoing,
-  // mas nao e contato do vendedor. A metrica so pode nascer de autoria humana
-  // comprovada pela RPC; saida da IA/sistema/desconhecida nunca conta.
-  const firstContactMsg = transferAtMs != null ? messages.find(m => (
-    m.direction === 'outgoing'
-    && new Date(m.created_at).getTime() >= transferAtMs
-    && (m.actor_source === 'humano_manual' || m.actor === 'vendedor')
-  )) : null;
-  const firstContactMs = firstContactMsg ? new Date(firstContactMsg.created_at).getTime() : null;
-  const handoffDelayMs = transferAtMs == null ? null : (firstContactMs != null ? firstContactMs - transferAtMs : Date.now() - transferAtMs);
+  const sellerContactMetric = transferConfirmedAt && transferInfo
+    ? deriveSellerContactMetric({
+        confirmedAt: transferConfirmedAt,
+        firstContactAt: transferInfo.firstContactAt,
+        sellerConnected: transferInfo.sellerConnected,
+      })
+    : null;
+  const handoffDelayMs = sellerContactMetric?.delayMs ?? null;
   const handoffColor = handoffDelayMs == null ? '' : handoffDelayMs <= 15 * 60000 ? 'text-emerald-300' : handoffDelayMs <= 60 * 60000 ? 'text-amber-300' : 'text-red-300';
   const selectedLeadTags = selectedLead
     ? (contactTags[cleanPhone(selectedLead.remote_jid)] || contactTags[phoneCanonical(selectedLead.remote_jid)] || [])
@@ -1656,19 +1691,26 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
         <p className="text-[11px] text-emerald-300/90 mt-1 flex items-center justify-center gap-1">
           <CheckCheck className="h-3 w-3" /> Vendedor confirmou (OK) · {format(new Date(transferConfirmedAt), "dd/MM 'às' HH:mm", { locale: ptBR })}
         </p>
-        {firstContactMs != null ? (
+        {sellerContactMetric?.state === 'contacted' ? (
           <p className={`text-[11px] mt-0.5 font-semibold ${handoffColor}`}>
-            1º contato do vendedor · {fmtDur(handoffDelayMs as number)} depois do OK
+            1º contato registrado · {fmtDur(handoffDelayMs as number)} depois do OK
           </p>
-        ) : (sellerInstanceLoaded && !sellerSendInstanceId) ? (
+        ) : sellerContactMetric?.state === 'seller_disconnected' ? (
           <p className="text-[11px] mt-0.5 text-amber-200/80">
-            Número do vendedor não conectado à Logos — o 1º contato dele não aparece aqui
+            Número do vendedor não conectado à Logos — contato fora da plataforma não pode ser medido
+          </p>
+        ) : sellerContactMetric?.state === 'checking' ? (
+          <p className="text-[11px] mt-0.5 text-[#8696a0]">
+            Verificando o 1º contato registrado...
           </p>
         ) : (
           <p className={`text-[11px] mt-0.5 font-semibold ${handoffColor}`}>
             Aguardando 1º contato · {fmtDur(handoffDelayMs as number)} desde o OK
           </p>
         )}
+        <p className="mt-1 text-[9px] text-[#667781]">
+          Mede mensagens enviadas pelo WhatsApp conectado do vendedor.
+        </p>
       </div>
     </div>
   ) : null;
