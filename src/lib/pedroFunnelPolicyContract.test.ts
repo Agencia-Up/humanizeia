@@ -204,6 +204,13 @@ describe('Pedro v3 tenant funnel policies', () => {
     expect(prompt).toContain('inclua o efeito `send_media`');
     expect(prompt).toContain('não podem ser herdados de um anúncio que o lead acabou de abandonar');
     expect(prompt).toContain('O teto de orçamento informado pelo lead não é o preço do veículo');
+    expect(prompt).toContain('Uma necessidade factual continua pendente até ser respondida');
+    expect(prompt).toContain('um consultor de vendas pode verificar e confirmar o fato');
+    expect(prompt).toContain('Não afirme que o consultor já conhece a resposta antes da verificação');
+    expect(prompt).toContain('ainda que com uma resposta curta ou cordial no contexto dessa oferta');
+    expect(prompt).toContain('Se o lead aceitar essa continuidade');
+    expect(prompt).toContain('declare `handoff` no mesmo turno');
+    expect(prompt).toContain('Não encerre por uma resposta curta enquanto essa necessidade continuar pendente');
     expect(prompt).toContain('[no_entry] Sem entrada');
     expect((prompt.match(/## PRIMEIRO CONTATO/g) ?? []).length).toBe(1);
     expect((prompt.match(/## QUALIFICAÇÃO ADAPTATIVA/g) ?? []).length).toBe(1);
