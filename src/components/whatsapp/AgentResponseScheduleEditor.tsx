@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { CalendarDays, Check, Clock3, MoonStar, Plus, ShieldCheck, Sun, Trash2, Zap } from 'lucide-react';
+import { CalendarDays, ChevronDown, Clock3, MoonStar, Plus, ShieldCheck, Sun, Trash2, Zap } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -125,6 +126,7 @@ export function AgentResponseScheduleEditor({
   onEnabledChange,
   onWeekChange,
 }: AgentResponseScheduleEditorProps) {
+  const [expandedDay, setExpandedDay] = useState<number | null>(null);
   const byDay = new Map(week.map((plan) => [plan.day, plan]));
   const planFor = (day: number): ResponseDayPlan => byDay.get(day) ?? { day, mode: 'closed', windows: [] };
   const openDays = RESPONSE_WEEK_DAYS.filter(({ value }) => planFor(value).mode !== 'closed').length;
@@ -181,6 +183,7 @@ export function AgentResponseScheduleEditor({
   const applyPreset = (preset: ResponseWeekPreset) => {
     onWeekChange(buildResponseWeekPreset(preset));
     if (!enabled) onEnabledChange(true);
+    setExpandedDay(null);
   };
 
   return (
@@ -242,93 +245,127 @@ export function AgentResponseScheduleEditor({
             <div className="divide-y divide-border/55 px-4">
               {RESPONSE_WEEK_DAYS.map((dayInfo) => {
                 const plan = planFor(dayInfo.value);
+                const isExpanded = expandedDay === dayInfo.value;
+                const contentId = `response-schedule-day-${dayInfo.value}`;
                 return (
-                  <div key={dayInfo.value} className="py-3.5">
-                    <div className="grid gap-3 lg:grid-cols-[140px_1fr] lg:items-start">
-                      <div className="flex items-center justify-between gap-3 lg:block">
-                        <div>
+                  <div key={dayInfo.value}>
+                    <button
+                      type="button"
+                      className="group flex w-full items-center justify-between gap-4 py-3.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                      onClick={() => setExpandedDay(isExpanded ? null : dayInfo.value)}
+                      aria-expanded={isExpanded}
+                      aria-controls={contentId}
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
                           <p className="text-sm font-semibold">{dayInfo.label}</p>
+                          <span className={cn(
+                            'rounded-full px-2 py-0.5 text-[10px] font-medium',
+                            plan.mode === 'closed'
+                              ? 'bg-muted text-muted-foreground'
+                              : 'bg-emerald-500/10 text-emerald-500',
+                          )}>
+                            {plan.mode === 'closed' ? 'Fechado' : plan.mode === 'all_day' ? '24 horas' : 'Personalizado'}
+                          </span>
+                        </div>
+                        <div>
                           <p className={cn(
-                            'mt-0.5 text-[11px]',
+                            'mt-1 truncate text-[11px]',
                             plan.mode === 'closed' ? 'text-muted-foreground' : 'text-emerald-500',
                           )}>
                             {describeResponseDay(plan)}
                           </p>
                         </div>
-                        {plan.mode !== 'closed' && <Check className="h-4 w-4 text-emerald-500 lg:hidden" />}
                       </div>
+                      <ChevronDown className={cn(
+                        'h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-hover:text-foreground',
+                        isExpanded && 'rotate-180 text-foreground',
+                      )} />
+                    </button>
 
-                      <div className="space-y-3">
-                        <div className="inline-flex w-full rounded-lg border border-border/70 bg-muted/25 p-1 sm:w-auto">
-                          {MODE_OPTIONS.map((mode) => (
-                            <button
-                              key={mode.value}
-                              type="button"
-                              onClick={() => setMode(dayInfo.value, mode.value)}
-                              className={cn(
-                                'min-h-8 flex-1 rounded-md px-3 text-[11px] font-medium transition-colors sm:flex-none',
-                                plan.mode === mode.value
-                                  ? 'bg-primary text-primary-foreground shadow-sm'
-                                  : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
-                              )}
-                            >
-                              {mode.label}
-                            </button>
-                          ))}
-                        </div>
-
-                        <AnimatePresence initial={false}>
-                          {plan.mode === 'custom' && (
-                            <motion.div
-                              initial={{ opacity: 0, y: -4 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, y: -4 }}
-                              transition={{ duration: 0.16 }}
-                              className="space-y-2"
-                            >
-                              {plan.windows.map((window, index) => (
-                                <div key={`${dayInfo.value}-${index}`} className="flex flex-wrap items-center gap-2">
-                                  <TimeSelect
-                                    value={window.start}
-                                    onValueChange={(start) => updateWindow(dayInfo.value, index, { start })}
-                                    ariaLabel={`Início de ${dayInfo.label}`}
-                                  />
-                                  <span className="text-xs text-muted-foreground">até</span>
-                                  <TimeSelect
-                                    value={window.end}
-                                    onValueChange={(end) => updateWindow(dayInfo.value, index, { end })}
-                                    allowEndOfDay
-                                    ariaLabel={`Fim de ${dayInfo.label}`}
-                                  />
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                                    onClick={() => removeWindow(dayInfo.value, index)}
-                                    aria-label={`Remover intervalo de ${dayInfo.label}`}
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
-                                </div>
-                              ))}
-                              {plan.windows.length < 3 && firstAvailableWindow(plan.windows) && (
-                                <Button
+                    <AnimatePresence initial={false}>
+                      {isExpanded && (
+                        <motion.div
+                          id={contentId}
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.18, ease: 'easeOut' }}
+                          className="overflow-hidden"
+                        >
+                          <div className="space-y-3 pb-4">
+                            <div className="inline-flex w-full rounded-lg border border-border/70 bg-muted/25 p-1 sm:w-auto">
+                              {MODE_OPTIONS.map((mode) => (
+                                <button
+                                  key={mode.value}
                                   type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-8 gap-1.5 px-2 text-xs text-primary"
-                                  onClick={() => addWindow(dayInfo.value)}
+                                  onClick={() => setMode(dayInfo.value, mode.value)}
+                                  className={cn(
+                                    'min-h-8 flex-1 rounded-md px-3 text-[11px] font-medium transition-colors sm:flex-none',
+                                    plan.mode === mode.value
+                                      ? 'bg-primary text-primary-foreground shadow-sm'
+                                      : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
+                                  )}
                                 >
-                                  <Plus className="h-3.5 w-3.5" />
-                                  Adicionar intervalo
-                                </Button>
+                                  {mode.label}
+                                </button>
+                              ))}
+                            </div>
+
+                            <AnimatePresence initial={false}>
+                              {plan.mode === 'custom' && (
+                                <motion.div
+                                  initial={{ opacity: 0, y: -4 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  exit={{ opacity: 0, y: -4 }}
+                                  transition={{ duration: 0.16 }}
+                                  className="space-y-2"
+                                >
+                                  {plan.windows.map((window, index) => (
+                                    <div key={`${dayInfo.value}-${index}`} className="flex flex-wrap items-center gap-2">
+                                      <TimeSelect
+                                        value={window.start}
+                                        onValueChange={(start) => updateWindow(dayInfo.value, index, { start })}
+                                        ariaLabel={`Início de ${dayInfo.label}`}
+                                      />
+                                      <span className="text-xs text-muted-foreground">até</span>
+                                      <TimeSelect
+                                        value={window.end}
+                                        onValueChange={(end) => updateWindow(dayInfo.value, index, { end })}
+                                        allowEndOfDay
+                                        ariaLabel={`Fim de ${dayInfo.label}`}
+                                      />
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                                        onClick={() => removeWindow(dayInfo.value, index)}
+                                        aria-label={`Remover intervalo de ${dayInfo.label}`}
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </Button>
+                                    </div>
+                                  ))}
+                                  {plan.windows.length < 3 && firstAvailableWindow(plan.windows) && (
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-8 gap-1.5 px-2 text-xs text-primary"
+                                      onClick={() => addWindow(dayInfo.value)}
+                                    >
+                                      <Plus className="h-3.5 w-3.5" />
+                                      Adicionar intervalo
+                                    </Button>
+                                  )}
+                                </motion.div>
                               )}
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
-                    </div>
+                            </AnimatePresence>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 );
               })}
