@@ -19,6 +19,7 @@ import { COMPACT_OPERATIONAL_PROMPT, authoredQuestionsOutsidePortal, fixedOpenin
 import { InMemoryPersistence, FakeClock, FakeIdGen } from "../src/adapters/persistence/in-memory-store.ts";
 import { ScriptedAgentBrain, type BrainResponder } from "../src/adapters/llm/fake-agent-brain.ts";
 import { buildTenantCatalog } from "../src/engine/catalog-utils.ts";
+import { buildAdIdentityTarget, freshAdStockSearchConflict } from "../src/engine/ad-context.ts";
 import { CatalogClaimExtractor } from "../src/engine/turn-context-preparer.ts";
 import { buildSdrQualificationPolicy } from "../src/engine/sdr-conductor.ts";
 import { redact } from "../src/domain/effect-intent.ts";
@@ -119,6 +120,7 @@ const ev = (block: string, capability: string | null, words = 4): TurnUnderstand
 
 type Cap = {
   outbox: string; committed: boolean; hasMedia: boolean; mediaKey: string | null; exec: string[];
+  execInputs: unknown[];
   reasonCode: string | null; responseSource: string | null; degradationKind: string | null;
   retryReasons: string[]; policyFeedback: string[]; degraded: boolean;
   brainCalls: number;
@@ -145,6 +147,7 @@ async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: S
     committed: r.status === "committed",
     hasMedia: !!media, mediaKey: media?.payload?.vehicleKey ?? null,
     exec: executed.map((e) => e.tool),
+    execInputs: executed.map((e) => e.input),
     reasonCode: r.status === "committed" ? r.decision.reasonCode : null,
     responseSource: r.status === "committed" ? r.responseSource : null,
     degradationKind: r.status === "committed" ? r.degradationKind : null,
@@ -1279,6 +1282,126 @@ async function main(): Promise<void> {
     check("[G8] falha factual consulta a tool uma vez", r.exec.filter((tool) => tool === "vehicle_photos_resolve").length === 1, r.exec.join(","));
     check("[G8] falha factual nao fabrica send_media", !r.hasMedia, `${r.mediaKey}`);
     check("[G8] LLM conclui honestamente sem retry storm", r.committed && r.responseSource === "brain_final" && r.retryReasons.length === 1 && r.retryReasons[0] === "tool_upstream" && !has(r.outbox, INSTABILIDADE), `${r.responseSource}|${r.retryReasons.join(",")}|${r.outbox}`);
+  }
+
+  // [G9] Incidente real Icom: uma entrada nova pelo anúncio da Ranger foi
+  // consultada como Renault Renegade 2024. A engine não deve escolher filtros,
+  // mas precisa rejeitar uma CONTRADIÇÃO objetiva entre a identidade declarada
+  // pelo anúncio atual e a stock_search proposta. Campo omitido continua livre;
+  // somente marca/modelo/ano explicitamente incompatíveis são recusados.
+  {
+    const target = buildAdIdentityTarget(adRanger);
+    check("[G9] fixture tem identidade estruturada do anuncio", target != null, JSON.stringify(target));
+    if (target) {
+      check("[G9] filtro coerente com versao do anuncio permanece livre", freshAdStockSearchConflict({ marca: "Ford", modelo: "Ranger Limited", anos: [2025] }, target) == null);
+      check("[G9] campos de identidade omitidos permanecem escolha da LLM", freshAdStockSearchConflict({ tipo: "pickup", precoMax: 300000 }, target) == null);
+      check("[G9] ano que inclui o anunciado permanece livre", freshAdStockSearchConflict({ anos: [2024, 2025] }, target) == null);
+      check("[G9] somente contradicao explicita e detectada", freshAdStockSearchConflict({ marca: "Renault", modelo: "Renegade", anos: [2024] }, target)?.dimensions.join(",") === "marca,modelo,ano");
+    }
+    const c = conv();
+    const block = "Ola! Tenho interesse e queria mais informacoes.";
+    let conflictSeen = false;
+    const responder: BrainResponder = (_frame, observations) => {
+      const u: TurnUnderstanding = {
+        ...U("search_stock"),
+        requestedCapabilities: ["stock_search"],
+        evidence: [{ capability: "stock_search", quote: "Tenho interesse" }],
+      };
+      conflictSeen = conflictSeen || observations.some((o) => !o.ok && o.tool === "response" && o.error.code === "FRESH_AD_IDENTITY_CONFLICT");
+      const wrong = observations.find((o) => o.ok && o.tool === "stock_search"
+        && norm(String((o.data.filtersUsed as Record<string, unknown>).marca ?? "")) === "renault") as QueryResult | undefined;
+      const correct = observations.find((o) => o.ok && o.tool === "stock_search"
+        && norm(String((o.data.filtersUsed as Record<string, unknown>).marca ?? "")) === "ford") as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      if (!conflictSeen && !wrong && !correct) {
+        return qU({ tool: "stock_search", input: { marca: "Renault", modelo: "Renegade", anos: [2024] } }, u);
+      }
+      // Com o contrato antigo a consulta errada executava e a conversa podia
+      // terminar sobre um fato vazio. Esse ramo torna o falso verde observável.
+      if (wrong && !conflictSeen) return finU([txt("A consulta proposta nao encontrou resultados.")], "wrong_ad_search", u);
+      if (!correct) return qU({ tool: "stock_search", input: { marca: "Ford", modelo: "Ranger", anos: [2025] } }, u);
+      return finU([txt("Encontrei a opcao anunciada:"), offer(correct.data.items.map((v) => v.vehicleKey))], "offer_ad_vehicle", u);
+    };
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "ambiguous", responder, adRanger);
+    const stockInputs = r.execInputs.filter((_input, index) => r.exec[index] === "stock_search") as Array<Record<string, unknown>>;
+    check("[G9] contradicao factual da busca e devolvida a mesma LLM", conflictSeen, r.retryReasons.join("|"));
+    check("[G9] filtro contraditorio nunca toca o adapter", !stockInputs.some((input) => norm(String(input.marca ?? "")) === "renault"), JSON.stringify(stockInputs));
+    check("[G9] a propria LLM corrige e executa a busca coerente", stockInputs.some((input) => norm(String(input.marca ?? "")) === "ford" && Array.isArray(input.anos) && input.anos.includes(2025)), JSON.stringify(stockInputs));
+    check("[G9] anuncio correto chega ao lead sem fallback", r.committed && r.responseSource !== "technical_fallback" && has(r.outbox, "Ranger") && !has(r.outbox, INSTABILIDADE), `${r.responseSource}|${r.outbox}`);
+  }
+
+  // [G10] Incidente real Mônaco: o alvo do anúncio já estava resolvido e a
+  // LLM declarou request_photos, mas repetiu duas vezes o mesmo draft sem
+  // vehicle_photos_resolve. O segundo deny idêntico não pode fechar a janela
+  // operacional quando ainda existe exatamente uma consulta factual pendente.
+  // A engine apenas mantém UMA correção aberta; não escolhe nem executa a tool.
+  {
+    const c = conv();
+    const block = "Vim pelo anuncio e quero as fotos desse veiculo.";
+    let invalidFinals = 0;
+    const responder: BrainResponder = (_frame, observations) => {
+      const u: TurnUnderstanding = {
+        ...U("request_photos"),
+        requestedCapabilities: ["send_photos", "stock_search"],
+        evidence: [
+          { capability: "send_photos", quote: "fotos desse veiculo" },
+          { capability: "stock_search", quote: "desse veiculo" },
+        ],
+      };
+      const stock = observations.find((o) => o.ok && o.tool === "stock_search") as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      const photos = observations.find((o) => o.ok && o.tool === "vehicle_photos_resolve") as { ok: true; data: { vehicleKey: string; photoIds: string[] } } | undefined;
+      if (!stock) return qU({ tool: "stock_search", input: { marca: "Audi", modelo: "A3", anos: [2020] } }, u);
+      if (!photos && invalidFinals < 2) {
+        invalidFinals += 1;
+        return finU([txt("Vou providenciar as fotos do veiculo anunciado.")], "send_photos", u);
+      }
+      if (!photos) return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: stock.data.items[0].vehicleKey } } }, u);
+      return {
+        kind: "final", understanding: u,
+        decision: {
+          reasonCode: "send_photos", reasonSummary: "consulta de fotos concluida", confidence: 0.95,
+          responsePlan: { guidance: "g", draft: { parts: [txt("Aqui estao as fotos do Audi A3 2020 anunciado.")] } },
+          proposedEffects: [reply, { kind: "send_media", planId: "photos", order: 1, onSuccess: [], vehicleKey: photos.data.vehicleKey, photoIds: photos.data.photoIds } as ProposedEffectPlan],
+          memoryMutations: [], stateMutations: [],
+        } as AgentBrainDecision,
+      } as AgentBrainStep;
+    };
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "ambiguous", responder, adAudi, { brainMaxSteps: 4 });
+    check("[G10] o mesmo erro foi realmente repetido duas vezes", invalidFinals === 2, `invalidFinals=${invalidFinals}`);
+    check("[G10] a LLM ainda consegue resolver fotos uma unica vez", r.exec.filter((tool) => tool === "vehicle_photos_resolve").length === 1, r.exec.join(","));
+    check("[G10] send_media usa a chave aterrada do anuncio", r.hasMedia && r.mediaKey === AUDI_A3.vehicleKey, `${r.mediaKey}`);
+    check("[G10] repeticao de deny nao vira instabilidade", r.committed && r.responseSource !== "technical_fallback" && !has(r.outbox, INSTABILIDADE), `${r.responseSource}|${r.retryReasons.join("|")}|${r.policyFeedback.join(" | ")}`);
+  }
+
+  // [G11] Incidente real Icom: após uma busca válida, a primeira passagem de
+  // autoria final ainda propôs uma tool. O contrato fechado deve recusá-la,
+  // mas oferecer uma segunda tentativa de REDAÇÃO à mesma LLM. A tool tardia
+  // nunca executa; a engine não escreve a resposta em seu lugar.
+  {
+    const c = conv();
+    const block = "Bom dia, procuro um SUV ate 80 mil.";
+    let lateToolProposed = false;
+    const responder: BrainResponder = (_frame, observations) => {
+      const u: TurnUnderstanding = {
+        ...U("search_stock"),
+        requestedCapabilities: ["stock_search"],
+        evidence: [{ capability: "stock_search", quote: "procuro um SUV" }],
+      };
+      const stock = observations.find((o) => o.ok && o.tool === "stock_search") as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      const finalRequired = observations.some((o) => !o.ok && o.tool === "response" && o.error.code === "FINAL_AUTHORSHIP_REQUIRED");
+      const finalToolForbidden = observations.some((o) => !o.ok && o.tool === "response" && o.error.code === "FINAL_TOOL_FORBIDDEN");
+      if (!stock) return qU({ tool: "stock_search", input: { tipo: "suv", precoMax: 80000 } }, u);
+      if (!finalRequired) return finU([], "invalid_empty_draft", u);
+      if (!finalToolForbidden) {
+        lateToolProposed = true;
+        return qU({ tool: "vehicle_details", input: { vehicleKey: stock.data.items[0].vehicleKey } }, u);
+      }
+      return finU([txt("Encontrei estas opcoes:"), offer(stock.data.items.map((v) => v.vehicleKey))], "offer_stock", u);
+    };
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "ambiguous", responder, undefined, { brainMaxSteps: 3 });
+    check("[G11] primeira autoria fechada tentou uma tool e foi corrigida", lateToolProposed && r.retryReasons.includes("final_tool_forbidden"), r.retryReasons.join("|"));
+    check("[G11] tool proposta na autoria fechada nunca executa", r.exec.filter((tool) => tool === "vehicle_details").length === 0, r.exec.join(","));
+    check("[G11] segunda autoria pertence a LLM e publica os fatos", r.committed && r.responseSource !== "technical_fallback" && has(r.outbox, "EcoSport") && has(r.outbox, "Renegade"), `${r.responseSource}|${r.outbox}`);
+    check("[G11] atraso de autoria nao vira instabilidade", !has(r.outbox, INSTABILIDADE), `${r.degradationKind}|${r.outbox}`);
   }
 
   // SEÇÃO H — TESTE DE CONTRATO (exigido pelo Codex): AUTORIDADE FACTUAL ÚNICA.

@@ -45,7 +45,7 @@ import { applyMonetarySemanticsToCurrentConstraints, sanitizeStockSearchInputMon
 import { selectPhotos } from "./photo-selection.ts";
 import { resolveVehicleTypeFromTaxonomy } from "../adapters/read/vehicle-taxonomy.ts";
 import { detectDisengagement, detectExplicitOptOut, type LeadEngagement } from "./lead-intent.ts";
-import { extractAdVehicleConstraints, adHasVehicle, refersToAd, isBareGreeting, resolveAdCandidateKeys, resolveAdFocusedVehicle, asksAdAlternatives, buildAdDeclaredVehicleIdentity, buildAdIdentityTarget, type AdFocusedVehicle } from "./ad-context.ts";
+import { extractAdVehicleConstraints, adHasVehicle, refersToAd, isBareGreeting, resolveAdCandidateKeys, resolveAdFocusedVehicle, asksAdAlternatives, buildAdDeclaredVehicleIdentity, buildAdIdentityTarget, freshAdStockSearchConflict, type AdFocusedVehicle } from "./ad-context.ts";
 import type { AdContext } from "../domain/conversation-state.ts";
 import type { ClaimExtractor } from "../domain/decision.ts";
 import type { TenantAgentRef } from "../domain/read-ports.ts";
@@ -2385,6 +2385,11 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         || brainAuthorizesResolvedPhotoAct(target);
       const seenDenyFingerprints = new Set<string>();               // deny repetido -> recupera já (não gasta tentativas)
       let repeatedDeny = false;
+      // A repeated rejection can still be operationally actionable when the
+      // brain declared a grounded photo act but has not queried its media yet.
+      // One bounded retry keeps that decision with the brain; the engine never
+      // invokes the tool or authors the response.
+      let repeatedDenyCompletionRetryUsed = false;
       const seenToolSigs = new Set<string>();
       const systemDetailKeys = new Set<string>();                   // P0-2: keys cujo vehicle_details o ENGINE exigiu (grounding)
       // audit institucional: cache/observação TERMINAL por tópico. resolveInstitutional executa NO MÁXIMO 1x por
@@ -2472,16 +2477,13 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       // para a LLM sem duplicar a observação canônica nem criar um deny. O
       // marcador vive por exatamente um passo do cérebro; depois é limpo.
       let lastToolReuse: NonNullable<TurnFrame["toolControl"]>["lastReuse"] = null;
-      // A autoria final sempre teve duas chamadas extras, mas ambas fechavam
-      // todas as tools. Isso criava uma armadilha: se a própria LLM percebesse
-      // no primeiro desses passos que ainda faltava uma consulta legítima, a
-      // engine recusava a decisão correta com FINAL_TOOL_FORBIDDEN. Reserve uma
-      // dessas mesmas chamadas para conclusão ainda com a janela operacional
-      // aberta. O orçamento total não aumenta (1 chamada aberta + 1 autoria
-      // fechada substituem as 2 autorias fechadas), e nenhuma tool é escolhida
-      // pela engine: allowlist, autoridade, policy e grounding seguem iguais.
+      // Uma chamada extra permanece com a janela operacional aberta para a LLM
+      // concluir uma consulta legítima. Depois, duas tentativas fechadas ficam
+      // disponíveis: a primeira pode receber FINAL_TOOL_FORBIDDEN e a segunda
+      // ainda consegue redigir. O custo adicional é limitado a uma chamada e
+      // aparece apenas no caminho degradado; a engine não escolhe tool nem texto.
       const OPEN_TOOL_COMPLETION_RESERVE = singleAuthor && llmFirst ? 1 : 0;
-      const FINAL_AUTHORSHIP_RETRY_CAP = singleAuthor && llmFirst ? 1 : 2;
+      const FINAL_AUTHORSHIP_RETRY_CAP = 2;
       const toolWindowLimit = (): number => (
         brainMaxSteps + idempotentReuseStepCredits + OPEN_TOOL_COMPLETION_RESERVE
       );
@@ -2659,7 +2661,26 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // mesmo erro encerra o loop e segue para a autoria final neutra.
             // O fingerprint usa o erro original, sem prefixos constantes.
             const fp = denyFingerprint(authored.feedback);
-            if (seenDenyFingerprints.has(fp)) { repeatedDeny = true; break; }
+            if (seenDenyFingerprints.has(fp)) {
+              const retryTarget = resolveTargetWithAd();
+              const canCompletePendingPhotoAct = llmFirst
+                && !repeatedDenyCompletionRetryUsed
+                && retryTarget.kind === "resolved"
+                && currentPhotoActAuthorized(retryTarget)
+                && photoLookupStatus(facts, retryTarget) === "not_queried"
+                && brainSteps + 1 < toolWindowLimit();
+              if (canCompletePendingPhotoAct) {
+                repeatedDenyCompletionRetryUsed = true;
+                const currentTurnAnchor = `REVISAO DO MESMO TURNO: o bloco atual do lead e "${leadMessage.slice(0, 280)}". Esta mensagem e feedback de validacao tecnica, nao uma nova ordem comercial.`;
+                observations.push({ tool: "response", ok: false, error: {
+                  code: "RESPONSE_REJECTED",
+                  message: `${currentTurnAnchor}\n${effFeedback}`,
+                } });
+                continue;
+              }
+              repeatedDeny = true;
+              break;
+            }
             seenDenyFingerprints.add(fp);
             if (brainSteps + 1 < toolWindowLimit()) {
               const currentTurnAnchor = `REVISAO DO MESMO TURNO: o bloco atual do lead e "${leadMessage.slice(0, 280)}". Esta mensagem e feedback de validacao tecnica, nao uma nova ordem comercial.`;
@@ -2746,8 +2767,29 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           }
         }
         // Proíbe loop idêntico: mesma tool + mesmos args -> devolve o fato já obtido (nunca reexecuta).
-        // The brain owns the tool decision, but a photo query cannot contradict the
-        // uniquely grounded subject of this turn. Reject before touching the adapter
+        // A fresh paid-ad payload is an objective identity authority for this
+        // turn. Reject an explicitly contradictory brand/model/year before any
+        // adapter is touched. Omitted filters remain untouched, and the engine
+        // never constructs or executes a replacement query.
+        if (
+          llmFirst
+          && call.tool === "stock_search"
+          && burstAdContext != null
+          && adIdentityTarget != null
+          && !currentHasVehicle
+          && !topicChangeThisTurn()
+          && !similarityTurn
+          && !asksAdAlternatives(leadMessage)
+        ) {
+          const conflict = freshAdStockSearchConflict(call.input, adIdentityTarget);
+          if (conflict) {
+            observations.push({ tool: "response", ok: false, error: {
+              code: "FRESH_AD_IDENTITY_CONFLICT",
+              message: `A stock_search proposta contradiz ${conflict.dimensions.join(", ")} da identidade declarada pelo anuncio atual (${conflict.target.identity}). Corrija somente os filtros contraditorios. Se o lead realmente mudou de veiculo, represente essa mudanca em understanding.isTopicChange.`,
+            } });
+            continue;
+          }
+        }
         const sig = toolCallSignature(call);
         if (seenToolSigs.has(sig)) {
           // ⭐F2.81 (missão P0, prioridade 4): REUSO ESTRITO DO RESULTADO JÁ EXECUTADO — uma regra só, para TODAS as

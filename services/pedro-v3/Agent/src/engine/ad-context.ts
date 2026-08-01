@@ -11,7 +11,7 @@ import { normalizeText } from "./catalog-utils.ts";
 import { VEHICLE_TAXONOMY } from "../adapters/read/vehicle-taxonomy.ts";
 import type { AdContext } from "../domain/conversation-state.ts";
 import type { DeclaredVehicleIdentity } from "../domain/context.ts";
-import type { ClaimExtractor, TurnInterpretation } from "../domain/decision.ts";
+import type { ClaimExtractor, QueryInputMap, TurnInterpretation } from "../domain/decision.ts";
 import type { AdIdentityTarget } from "../domain/operational-context.ts";
 import type { VehicleType } from "../domain/types.ts";
 
@@ -262,6 +262,49 @@ export function buildAdIdentityTarget(
     : [];
 
   return { identity, marca, modelo, ano, variantTokens };
+}
+
+export type FreshAdStockSearchConflict = {
+  readonly dimensions: readonly ("marca" | "modelo" | "ano")[];
+  readonly target: AdIdentityTarget;
+};
+
+/**
+ * Validates only identity fields explicitly proposed by the brain for a stock
+ * search on a fresh-ad turn. Omitted fields remain the brain's choice; this
+ * function neither completes filters nor chooses a query.
+ */
+export function freshAdStockSearchConflict(
+  input: QueryInputMap["stock_search"],
+  target: AdIdentityTarget,
+): FreshAdStockSearchConflict | null {
+  const dimensions: Array<"marca" | "modelo" | "ano"> = [];
+
+  if (input.marca && target.marca && canonicalBrand(input.marca) !== canonicalBrand(target.marca)) {
+    dimensions.push("marca");
+  }
+
+  const proposedModels = (input.modelos && input.modelos.length > 0)
+    ? input.modelos
+    : (input.modelo ? [input.modelo] : []);
+  if (proposedModels.length > 0) {
+    const allowedTokens = new Set([
+      ...identityTokens(target.marca ?? ""),
+      ...identityTokens(target.modelo),
+      ...target.variantTokens,
+    ]);
+    const compatible = proposedModels.every((model) => {
+      const proposedTokens = identityTokens(model);
+      return proposedTokens.length > 0 && proposedTokens.every((token) => allowedTokens.has(token));
+    });
+    if (!compatible) dimensions.push("modelo");
+  }
+
+  if (input.anos && input.anos.length > 0 && target.ano != null && !input.anos.includes(target.ano)) {
+    dimensions.push("ano");
+  }
+
+  return dimensions.length > 0 ? { dimensions, target } : null;
 }
 
 /**
