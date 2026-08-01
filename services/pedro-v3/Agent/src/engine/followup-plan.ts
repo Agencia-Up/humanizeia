@@ -1,4 +1,5 @@
 import type { TurnDecision } from "../domain/decision.ts";
+import type { EntityReference } from "../domain/types.ts";
 
 export type FollowupStage = 1 | 2 | 3;
 
@@ -39,6 +40,7 @@ export function buildFollowupBaseDecision(args: {
   readonly anchorEffectId: string;
   readonly now: string;
   readonly text: string | null;
+  readonly presentedVehicle?: EntityReference | null;
 }): TurnDecision {
   const messagePlanId = "followup-message";
   const messageEffectId = `${args.turnId}:${messagePlanId}`;
@@ -65,6 +67,11 @@ export function buildFollowupBaseDecision(args: {
           stage: args.stage,
           sentAt: args.now,
         },
+        ...(args.presentedVehicle ? [{
+          op: "set_presented_vehicle_focus" as const,
+          effectId: messageEffectId,
+          vehicle: args.presentedVehicle,
+        }] : []),
         {
           op: "append_assistant_turn",
           effectId: messageEffectId,

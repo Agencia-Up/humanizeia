@@ -485,7 +485,7 @@ export function isStoreInfoTurn(v: ValidatedUnderstanding | null): boolean {
 //    precedência); subjectValue que CONFLITA com o claim escrito torna o entendimento INVÁLIDO (kind=conflict, zero mídia);
 //    inferência (typo, sem claim exato) só vira candidato se CONFIRMADA por stock_search/catálogo. vehicle_photos_resolve
 //    NUNCA confirma o modelo sozinho (knownModels só vem de stock_search/vehicle_details/oferta/identidade/seleção). ──
-export type TargetResolutionSource = "turn_ordinal" | "turn_offer_reference" | "turn_explicit_model" | "carryover_selected" | "single_offer" | "ad_reference" | "ambiguous" | "none";
+export type TargetResolutionSource = "turn_ordinal" | "turn_offer_reference" | "turn_explicit_model" | "carryover_selected" | "carryover_presented" | "single_offer" | "ad_reference" | "ambiguous" | "none";
 export type TargetResolution =
   | { readonly kind: "resolved"; readonly vehicleKey: string; readonly source: TargetResolutionSource; readonly candidateVehicleKeys: readonly string[]; readonly subjectModel: string | null }
   | { readonly kind: "ambiguous"; readonly candidateVehicleKeys: readonly string[]; readonly subjectModel: string | null }
@@ -541,9 +541,17 @@ export function resolveTurnTarget(args: {
   // Uma afirmação curta que aceita a pergunta única de fotos não introduz um
   // novo veículo. O selected já aterrado é a autoridade do alvo; um
   // subjectValue especulativo do modelo não pode apagar esse contexto.
+  const presentedForAcceptedPhoto = state.vehicleContext.focus?.key ?? null;
   const selectedForAcceptedPhoto = state.vehicleContext.selected?.key ?? null;
-  if (selectedForAcceptedPhoto && acceptsAgentPhotoOffer(leadMessage, state)) {
-    return { kind: "resolved", vehicleKey: selectedForAcceptedPhoto, source: "carryover_selected", candidateVehicleKeys: [selectedForAcceptedPhoto], subjectModel: null };
+  const acceptedPhotoTarget = presentedForAcceptedPhoto ?? selectedForAcceptedPhoto;
+  if (acceptedPhotoTarget && acceptsAgentPhotoOffer(leadMessage, state)) {
+    return {
+      kind: "resolved",
+      vehicleKey: acceptedPhotoTarget,
+      source: presentedForAcceptedPhoto ? "carryover_presented" : "carryover_selected",
+      candidateVehicleKeys: [acceptedPhotoTarget],
+      subjectModel: null,
+    };
   }
 
   // A) ORDINAL explícito -> key EXATA da lista estruturada (desambigua sozinho; independe de modelo).
@@ -627,10 +635,18 @@ export function resolveTurnTarget(args: {
   if (uModel) return { kind: "none", subjectModel: uModel };
   // C) PRONOME / sem novo modelo -> selecionado (nunca em troca de assunto).
   const sel = state.vehicleContext.selected?.key ?? null;
+  const presented = state.vehicleContext.focus?.key ?? null;
+  const canCarryVehicle = u?.isTopicChange !== true || SHORT_AFFIRMATION_RX.test(normalizeText(leadMessage).trim());
+  const photoRequest = u?.primaryIntent === "request_photos" || u?.requestedCapabilities.includes("send_photos") === true;
   // ⭐Codex rodada 2 (smoke T4): uma AFIRMAÇÃO CURTA ("Sim"/"pode"/"quero") NUNCA é troca de assunto por
   // definição — o isTopicChange do cérebro em bloco monossílabo não é confiável e negava o carryover do
   // selected (o "dele" da oferta de foto que o próprio agente fez), derrubando o alvo para "de qual carro?".
-  if (sel && (u?.isTopicChange !== true || SHORT_AFFIRMATION_RX.test(normalizeText(leadMessage).trim()))) return { kind: "resolved", vehicleKey: sel, source: "carryover_selected", candidateVehicleKeys: [sel], subjectModel: null };
+  // Em pedido de fotos, o ultimo veiculo efetivamente apresentado e o referente
+  // mais recente de "dele". Isto evita que uma selecao antiga roube o alvo que
+  // a propria LLM acabou de oferecer no follow-up.
+  if (presented && photoRequest && canCarryVehicle) return { kind: "resolved", vehicleKey: presented, source: "carryover_presented", candidateVehicleKeys: [presented], subjectModel: null };
+  if (sel && canCarryVehicle) return { kind: "resolved", vehicleKey: sel, source: "carryover_selected", candidateVehicleKeys: [sel], subjectModel: null };
+  if (presented && canCarryVehicle) return { kind: "resolved", vehicleKey: presented, source: "carryover_presented", candidateVehicleKeys: [presented], subjectModel: null };
   return { kind: "none", subjectModel: null };
 }
 // Uma vehicleKey (send_media autorado OU photo fact) é compatível com o alvo do assunto? conflict/none -> nunca.

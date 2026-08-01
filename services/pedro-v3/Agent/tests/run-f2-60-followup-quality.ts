@@ -1,9 +1,11 @@
-import type { AgentBrainPort, AgentBrainStep, TurnFrame } from "../src/domain/agent-brain.ts";
+import type { AgentBrainPort, AgentBrainStep, TurnFrame, TurnUnderstanding } from "../src/domain/agent-brain.ts";
 import type { ConversationState } from "../src/domain/conversation-state.ts";
-import type { SendMessagePlan } from "../src/domain/decision.ts";
+import type { ClaimExtractor, ResponsePart, SendMessagePlan } from "../src/domain/decision.ts";
 import { createInitialState } from "../src/domain/conversation-state.ts";
 import { applyEffectOutcome } from "../src/engine/state-reducer.ts";
 import { authorFollowupMessageDetailed } from "../src/engine/followup-author.ts";
+import { buildFollowupBaseDecision } from "../src/engine/followup-plan.ts";
+import { resolveTurnTarget } from "../src/engine/turn-understanding.ts";
 import { getBrazilChannelTime } from "../src/adapters/llm/openai-agent-brain.ts";
 import { invalidBrazilGreeting } from "../src/engine/channel-time.ts";
 
@@ -14,17 +16,21 @@ function check(name: string, pass: boolean, extra?: string): void {
   else { bad += 1; console.error(`  RED ${name}${extra ? ` — ${extra}` : ""}`); }
 }
 
-function final(text: string): AgentBrainStep {
+function finalParts(parts: ResponsePart[]): AgentBrainStep {
   return {
     kind: "final",
     decision: {
       reasonCode: "followup",
       reasonSummary: "followup",
       confidence: 1,
-      responsePlan: { guidance: "", draft: { parts: [{ type: "text", content: text }] } },
+      responsePlan: { guidance: "", draft: { parts } },
       proposedEffects: [], memoryMutations: [], stateMutations: [],
     },
   };
+}
+
+function final(text: string): AgentBrainStep {
+  return finalParts([{ type: "text", content: text }]);
 }
 
 class QueueBrain implements AgentBrainPort {
@@ -140,6 +146,103 @@ check("T2 troca o objetivo da retomada em vez de parafrasear o T1", screenshotFo
 check("retry orienta por criterio sem escrever a resposta comercial", screenshotFollowupBrain.frames[1]?.block.includes("proxima acao concreta") === true
   && screenshotFollowupBrain.frames[1]?.block.includes("Quer que eu te mostre as fotos") === false);
 check("frame proibe inventar conservacao para criar gancho", screenshotFollowupBrain.frames[0]?.block.includes("Nunca invente conservacao") === true);
+
+// Incidente real WA (01/08, depois do primeiro fix de fotos): o follow-up
+// ofereceu fotos da Meriva, mas persistiu apenas a frase. No turno seguinte,
+// "Sim" encontrou Meriva e HB20 aterrados, perdeu o alvo e terminou em
+// technical_fallback sem executar vehicle_photos_resolve. O contrato correto
+// preserva a escolha que a propria LLM fez no follow-up como foco apresentado,
+// sem transformar essa escolha em selecao explicita do lead.
+const followupPhotoState = state();
+followupPhotoState.groundedVehicles = [
+  { vehicleKey: "revendamais:8241227", marca: "Chevrolet", modelo: "Meriva", versao: null, ano: 2012, referenceable: true },
+  { vehicleKey: "revendamais:hb20", marca: "Hyundai", modelo: "HB20", versao: null, ano: 2017, referenceable: true },
+];
+followupPhotoState.vehicleContext.selected = { kind: "vehicle", key: "revendamais:hb20", label: "Hyundai HB20 2017" };
+const followupPhotoBrain = new QueueBrain([finalParts([
+  { type: "text", content: "Quer que eu te envie fotos do " },
+  { type: "vehicle_ref", vehicleKey: "revendamais:8241227", field: "marca" },
+  { type: "text", content: " " },
+  { type: "vehicle_ref", vehicleKey: "revendamais:8241227", field: "modelo" },
+  { type: "text", content: " " },
+  { type: "vehicle_ref", vehicleKey: "revendamais:8241227", field: "ano" },
+  { type: "text", content: " para voce avaliar melhor?" },
+])]);
+const followupPhoto = await authorFollowupMessageDetailed({
+  brain: followupPhotoBrain,
+  state: followupPhotoState,
+  stage: 1,
+  turnId: "fu60-photo-target",
+  now: NOW,
+  portalPromptSha256: "sha",
+});
+check("follow-up expoe todos os veiculos aterrados sem escolher por contagem",
+  followupPhotoBrain.frames[0]?.conversationContext.followup?.groundedVehicles.length === 2);
+check("LLM pode oferecer fotos com identidade estruturada da Meriva",
+  followupPhoto.text === "Quer que eu te envie fotos do Chevrolet Meriva 2012 para voce avaliar melhor?");
+check("autoria do follow-up devolve a vehicleKey exata que apresentou",
+  followupPhoto.presentedVehicle?.key === "revendamais:8241227");
+
+const followupPhotoDecision = buildFollowupBaseDecision({
+  turnId: "fu60-photo-target",
+  stage: 1,
+  anchorEffectId: "anchor-photo-target",
+  now: NOW,
+  text: followupPhoto.text,
+  presentedVehicle: followupPhoto.presentedVehicle,
+});
+const followupPhotoPlan = followupPhotoDecision.effectPlan[0] as SendMessagePlan;
+check("plano persiste o foco apresentado somente junto do envio",
+  followupPhotoPlan.onSuccess.some((mutation) => mutation.op === "set_presented_vehicle_focus"
+    && mutation.vehicle.key === "revendamais:8241227"));
+const followupPhotoCommitted = applyEffectOutcome(followupPhotoState, followupPhotoPlan, {
+  status: "succeeded",
+  effectId: followupPhotoPlan.effectId,
+  receipt: { effectId: followupPhotoPlan.effectId, level: "delivered", at: NOW },
+});
+check("entrega grava Meriva como apresentada sem apagar HB20 selecionado", followupPhotoCommitted.ok
+  && followupPhotoCommitted.next.vehicleContext.focus?.key === "revendamais:8241227"
+  && followupPhotoCommitted.next.vehicleContext.selected?.key === "revendamais:hb20");
+
+const requestPhotosUnderstanding: TurnUnderstanding = {
+  primaryIntent: "request_photos",
+  requestedCapabilities: ["send_photos"],
+  subject: "selected_vehicle",
+  subjectValue: null,
+  subjectSource: "memory",
+  evidence: [{ capability: "send_photos", quote: "Sim" }],
+  isTopicChange: false,
+  answeredLeadQuestions: [],
+  policyDecision: null,
+};
+const noClaims: ClaimExtractor = { extractClaims: () => [] };
+const knownPhotoVehicles = new Map([
+  ["revendamais:8241227", { marca: "Chevrolet", modelo: "Meriva", ano: 2012 }],
+  ["revendamais:hb20", { marca: "Hyundai", modelo: "HB20", ano: 2017 }],
+]);
+if (!followupPhotoCommitted.ok) throw new Error("fixture de follow-up nao foi persistida");
+const acceptedPhotoTarget = resolveTurnTarget({
+  understanding: requestPhotosUnderstanding,
+  leadMessage: "Sim",
+  state: followupPhotoCommitted.next,
+  claimExtractor: noClaims,
+  knownModels: knownPhotoVehicles,
+});
+check("'Sim' aceita a oferta de fotos da Meriva, nao o veiculo selecionado antigo",
+  acceptedPhotoTarget.kind === "resolved"
+    && acceptedPhotoTarget.vehicleKey === "revendamais:8241227"
+    && acceptedPhotoTarget.source === "carryover_presented");
+const directPhotoTarget = resolveTurnTarget({
+  understanding: { ...requestPhotosUnderstanding, evidence: [{ capability: "send_photos", quote: "manda fotos dele" }] },
+  leadMessage: "manda fotos dele",
+  state: followupPhotoCommitted.next,
+  claimExtractor: noClaims,
+  knownModels: knownPhotoVehicles,
+});
+check("pedido direto de fotos tambem usa o ultimo veiculo apresentado",
+  directPhotoTarget.kind === "resolved"
+    && directPhotoTarget.vehicleKey === "revendamais:8241227"
+    && directPhotoTarget.source === "carryover_presented");
 
 const distinctQuestionBrain = new QueueBrain([final("Qual a quilometragem que voce procura no Equinox?")]);
 const distinctQuestion = await authorFollowupMessageDetailed({

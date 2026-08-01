@@ -1,5 +1,7 @@
 import type { AgentBrainPort, TurnFrame } from "../domain/agent-brain.ts";
 import type { ConversationState } from "../domain/conversation-state.ts";
+import type { ResponsePart } from "../domain/decision.ts";
+import type { EntityReference, RememberedVehicleIdentity } from "../domain/types.ts";
 import { ResponseRenderer } from "./response-renderer.ts";
 import { buildWorkingMemory } from "./working-memory.ts";
 import { buildConversationContext } from "./conversation-context.ts";
@@ -9,6 +11,40 @@ import { questionSlotFromAgentText } from "./lead-extraction.ts";
 
 function questionCount(text: string): number {
   return (text.match(/\?/g) ?? []).length;
+}
+
+function groundedFollowupVehicles(state: ConversationState) {
+  return (state.groundedVehicles ?? []).map((vehicle) => ({
+    vehicleKey: vehicle.vehicleKey,
+    marca: vehicle.marca ?? null,
+    modelo: vehicle.modelo ?? null,
+    versao: vehicle.versao ?? null,
+    ano: vehicle.ano ?? null,
+  }));
+}
+
+function rememberedFollowupIdentities(state: ConversationState): RememberedVehicleIdentity[] {
+  return (state.groundedVehicles ?? []).flatMap((vehicle) => {
+    const marca = vehicle.marca?.trim();
+    const modelo = vehicle.modelo?.trim();
+    if (!marca || !modelo) return [];
+    return [{
+      vehicleKey: vehicle.vehicleKey,
+      marca,
+      modelo,
+      ano: vehicle.ano ?? null,
+    }];
+  });
+}
+
+function followupVehicleLabel(state: ConversationState, vehicleKey: string): string | null {
+  const vehicle = (state.groundedVehicles ?? []).find((item) => item.vehicleKey === vehicleKey);
+  if (!vehicle) return null;
+  const label = [vehicle.marca, vehicle.modelo, vehicle.versao, vehicle.ano]
+    .filter((value) => value != null && String(value).trim().length > 0)
+    .join(" ")
+    .trim();
+  return label || null;
 }
 
 function normalizeFollowupText(text: string): string {
@@ -193,8 +229,9 @@ export async function authorFollowupMessage(args: {
 
 export type FollowupAuthorResult = {
   readonly text: string | null;
+  readonly presentedVehicle: EntityReference | null;
   readonly attempts: number;
-  readonly reason: "authored" | "brain_error" | "query_not_allowed" | "text_missing" | "duplicate_message" | "question_contract" | "unsupported_claim" | "unsupported_handoff_claim";
+  readonly reason: "authored" | "brain_error" | "query_not_allowed" | "text_missing" | "duplicate_message" | "question_contract" | "unsupported_claim" | "unsupported_handoff_claim" | "vehicle_target_not_grounded" | "vehicle_reference_invalid";
 };
 
 export async function authorFollowupMessageDetailed(args: {
@@ -216,7 +253,7 @@ export async function authorFollowupMessageDetailed(args: {
     const previousLead = lastLeadMessage(args.state);
     const agentQuestions = recentAgentQuestions(args.state);
     const advertisedVehicle = adVehicleLabel(args.state);
-    const block = `[EVENTO SISTEMICO FOLLOW-UP T${args.stage}] O cliente esta inativo. Reabra a conversa com autoria propria, usando apenas o historico factual deste frame. Nao repita uma mensagem, ficha, proposta ou CTA ja enviados. Nao afirme que algo foi enviado se nao aparece nas falas anteriores ou na oferta visivel. Em T1/T2, escolha uma proxima acao concreta, util e facil de responder com base no que ja esta comprovado (por exemplo, oferecer material disponivel, esclarecer outro detalhe ou comparar alternativas); nao use apenas uma cobranca generica como "o que achou?" ou "ficou alguma duvida?". T2 deve mudar o objetivo da retomada, nao apenas parafrasear T1. Nunca invente conservacao, qualidade, disponibilidade ou outro atributo que nao esteja nos fatos.${feedback}`;
+    const block = `[EVENTO SISTEMICO FOLLOW-UP T${args.stage}] O cliente esta inativo. Reabra a conversa com autoria propria, usando apenas o historico factual deste frame. Nao repita uma mensagem, ficha, proposta ou CTA ja enviados. Nao afirme que algo foi enviado se nao aparece nas falas anteriores ou na oferta visivel. Em T1/T2, escolha uma proxima acao concreta, util e facil de responder com base no que ja esta comprovado (por exemplo, oferecer material disponivel, esclarecer outro detalhe ou comparar alternativas); nao use apenas uma cobranca generica como "o que achou?" ou "ficou alguma duvida?". T2 deve mudar o objetivo da retomada, nao apenas parafrasear T1. Nunca invente conservacao, qualidade, disponibilidade ou outro atributo que nao esteja nos fatos. Se voce decidir mencionar um veiculo de followup.groundedVehicles, componha marca/modelo/ano com partes vehicle_ref da mesma vehicleKey; nao escreva a identidade desse veiculo apenas em texto livre. Isso preserva o alvo factual para uma resposta curta do lead no proximo turno.${feedback}`;
     const conversationContext = buildConversationContext({ state: args.state, workingMemory: memory });
     const frame: TurnFrame = {
       turnId: args.turnId,
@@ -236,6 +273,7 @@ export async function authorFollowupMessageDetailed(args: {
           adEntry: args.state.adContext != null,
           adVehicleLabel: advertisedVehicle,
           handoffAvailable: args.handoffAvailable === true,
+          groundedVehicles: groundedFollowupVehicles(args.state),
         },
       },
       currentTurnFacts: { expectedAnswer: { slot: null, lastAgentQuestion: null }, extracted: [], offerReference: null },
@@ -266,18 +304,40 @@ export async function authorFollowupMessageDetailed(args: {
       continue;
     }
     const draft = step.decision.responsePlan.draft;
-    const textParts = draft?.parts.filter((part) => part.type === "text") ?? [];
-    if (textParts.length === 0) {
+    const supportedParts = draft?.parts.filter((part): part is Extract<ResponsePart, { type: "text" | "message_break" | "vehicle_ref" }> =>
+      part.type === "text" || part.type === "message_break" || part.type === "vehicle_ref") ?? [];
+    if (!supportedParts.some((part) => part.type === "text")) {
       lastReason = "text_missing";
       feedback = " FEEDBACK: inclua uma mensagem em draft.parts usando uma parte text.";
       continue;
     }
-    // A LLM continua sendo a autora. Efeitos ou refs adicionais propostos por ela
-    // sao deliberadamente ignorados: o turno sistemico possui seu proprio plano
-    // seguro e nao deve falhar apenas porque o provider devolveu metadados extras.
+    const referencedKeys = [...new Set(
+      supportedParts.filter((part): part is Extract<ResponsePart, { type: "vehicle_ref" }> => part.type === "vehicle_ref")
+        .map((part) => part.vehicleKey),
+    )];
+    const groundedKeys = new Set((args.state.groundedVehicles ?? []).map((vehicle) => vehicle.vehicleKey));
+    if (referencedKeys.some((key) => !groundedKeys.has(key))) {
+      lastReason = "vehicle_target_not_grounded";
+      feedback = " FEEDBACK: uma vehicle_ref apontou para uma vehicleKey que nao esta em followup.groundedVehicles. Use somente uma chave factual desse conjunto ou escreva uma retomada sem mencionar veiculo.";
+      continue;
+    }
+    // A LLM continua sendo a autora. Efeitos e partes operacionais fora do
+    // texto/vehicle_ref sao ignorados: este turno sistemico tem plano proprio.
+    // A vehicle_ref, ao contrario, e um fato estruturado necessario para que o
+    // veiculo escolhido pela propria LLM sobreviva ao proximo turno.
     let text: string;
-    try { text = ResponseRenderer.render({ parts: textParts }, [], args.state).trim(); }
-    catch { text = ""; }
+    try {
+      text = ResponseRenderer.render(
+        { parts: supportedParts },
+        [],
+        args.state,
+        rememberedFollowupIdentities(args.state),
+      ).trim();
+    } catch {
+      lastReason = "vehicle_reference_invalid";
+      feedback = " FEEDBACK: nao foi possivel renderizar a vehicle_ref escolhida. Use apenas marca/modelo/ano disponiveis para a mesma vehicleKey, ou escreva uma retomada sem mencionar veiculo.";
+      continue;
+    }
     const repeatedMessage = repeatsRecentAgentMessage(text, args.state);
     const repeatedQuestion = args.stage !== 3 && repeatsLastAgentQuestion(text, lastAgentMessage(args.state));
     const repeatedPendingSlot = args.stage !== 3
@@ -307,7 +367,14 @@ export async function authorFollowupMessageDetailed(args: {
                 : " FEEDBACK: escreva uma mensagem curta com no maximo uma pergunta.";
       continue;
     }
-    return { text, attempts: attempt + 1, reason: "authored" };
+    const presentedVehicle = referencedKeys.length === 1
+      ? {
+          kind: "vehicle" as const,
+          key: referencedKeys[0],
+          label: followupVehicleLabel(args.state, referencedKeys[0]),
+        }
+      : null;
+    return { text, presentedVehicle, attempts: attempt + 1, reason: "authored" };
   }
-  return { text: null, attempts: maxAttempts, reason: lastReason };
+  return { text: null, presentedVehicle: null, attempts: maxAttempts, reason: lastReason };
 }

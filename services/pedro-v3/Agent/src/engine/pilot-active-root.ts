@@ -683,6 +683,7 @@ export class PilotActiveRoot {
         anchorEffectId: input.due.anchorEffectId,
         now,
         text,
+        presentedVehicle: messageResolution.source === "llm" ? authored.presentedVehicle : null,
       });
 
       let handoffPlanned = false;

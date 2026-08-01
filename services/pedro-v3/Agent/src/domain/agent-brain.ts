@@ -281,6 +281,18 @@ export type ConversationContext = {
     readonly adEntry: boolean;
     readonly adVehicleLabel: string | null;
     readonly handoffAvailable?: boolean;
+    /**
+     * Veiculos ja aterrados e referenciaveis pela conversa. O follow-up pode
+     * escolher livremente se fala de algum deles, mas, se escolher, deve usar
+     * a vehicleKey para que o alvo sobreviva ao proximo turno.
+     */
+    readonly groundedVehicles: readonly {
+      readonly vehicleKey: string;
+      readonly marca: string | null;
+      readonly modelo: string | null;
+      readonly versao: string | null;
+      readonly ano: number | null;
+    }[];
   };
 };
 
