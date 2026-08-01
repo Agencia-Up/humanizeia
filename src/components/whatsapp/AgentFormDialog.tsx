@@ -17,7 +17,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
 import { descricaoErro } from '@/lib/erroAmigavel';
-import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, UserCheck, Target, QrCode, CheckCircle, Trash2, RefreshCw, BookOpen, MessageSquare } from 'lucide-react';
+import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, UserCheck, Target, QrCode, CheckCircle, Trash2, RefreshCw, BookOpen, MessageSquare, CalendarClock } from 'lucide-react';
 import { KnowledgeBaseManager } from '@/components/whatsapp/KnowledgeBaseManager';
 import { AgentCrmEquipeTab } from '@/components/whatsapp/AgentCrmEquipeTab';
 import { AgentResponseScheduleEditor } from '@/components/whatsapp/AgentResponseScheduleEditor';
@@ -942,6 +942,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                   { v: 'settings',     label: 'Modelo',      Icon: Settings2,   activeCls: 'bg-primary/10 text-primary border-primary/20' },
                   { v: 'knowledge',    label: 'Base',        Icon: BookOpen,    activeCls: 'bg-purple-500/10 text-purple-500 border-purple-500/20' },
                   { v: 'equipe',       label: 'Vendedores',  Icon: UserCheck,   activeCls: 'bg-blue-500/10 text-blue-500 border-blue-500/20' },
+                  { v: 'schedule',     label: 'Horários',    Icon: CalendarClock, activeCls: 'bg-cyan-500/10 text-cyan-500 border-cyan-500/20' },
                   { v: 'rules',        label: 'Regras',      Icon: Clock,       activeCls: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' },
                   { v: 'mensagens',    label: 'Mensagens',   Icon: MessageSquare, activeCls: 'bg-orange-500/10 text-orange-500 border-orange-500/20' },
                 ].map(({ v, label, Icon, activeCls }) => {
@@ -969,6 +970,16 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
             {/* ── Tab: Vendedores (Repasse) ── */}
             {activeTab === 'equipe' && <div className="space-y-6 mt-0">
                <AgentCrmEquipeTab agentId={agent?.id || null} userId={effectiveUserId || ''} />
+            </div>}
+
+            {/* ── Tab: Horários de atendimento da IA ── */}
+            {activeTab === 'schedule' && <div className="space-y-4 mt-0">
+              <AgentResponseScheduleEditor
+                enabled={businessHoursOnly}
+                week={responseWeek}
+                onEnabledChange={setBusinessHoursOnly}
+                onWeekChange={setResponseWeek}
+              />
             </div>}
 
             {/* ── Tab: Regras (follow-up + transferencia) ── */}
@@ -1298,13 +1309,6 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                   Inclua informações do seu produto, preços, políticas e tom de voz.
                 </p>
               </div>
-
-              <AgentResponseScheduleEditor
-                enabled={businessHoursOnly}
-                week={responseWeek}
-                onEnabledChange={setBusinessHoursOnly}
-                onWeekChange={setResponseWeek}
-              />
 
               {/* Blocked categories */}
               <div className="space-y-2">
