@@ -9,7 +9,6 @@ import { Slider } from '@/components/ui/slider';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ScrollArea } from '@/components/ui/scroll-area';
 // Radix Tabs removido — debug ao vivo via Chrome MCP provou que TabsTrigger
 // não disparava onValueChange dentro do DialogContent. Substituído por
 // botões nativos + render condicional (mais simples, funciona 100%).
@@ -21,10 +20,18 @@ import { descricaoErro } from '@/lib/erroAmigavel';
 import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, UserCheck, Target, QrCode, CheckCircle, Trash2, RefreshCw, BookOpen, MessageSquare } from 'lucide-react';
 import { KnowledgeBaseManager } from '@/components/whatsapp/KnowledgeBaseManager';
 import { AgentCrmEquipeTab } from '@/components/whatsapp/AgentCrmEquipeTab';
+import { AgentResponseScheduleEditor } from '@/components/whatsapp/AgentResponseScheduleEditor';
 import FunilDoAgenteTab from '@/components/pedro/FunilDoAgenteTab';
 import { WhatsAppQrCode } from '@/components/uazapi/WhatsAppQrCode';
 import { UazapiConnectDialog } from '@/components/uazapi/UazapiConnectDialog';
 import { Smartphone } from 'lucide-react';
+import {
+  buildResponseWeekPreset,
+  readResponseWeekPlan,
+  serializeResponseScheduleV2,
+  validateResponseWeekPlan,
+  type ResponseWeekPlan,
+} from '@/lib/agentResponseSchedule';
 
 interface Instance {
   id: string;
@@ -63,17 +70,6 @@ interface AIAgent {
   sdr_goal?: string;
   qualification_questions?: string[];
 }
-
-const RESPONSE_WEEK_DAYS = [
-  { value: 1, label: 'Seg' },
-  { value: 2, label: 'Ter' },
-  { value: 3, label: 'Qua' },
-  { value: 4, label: 'Qui' },
-  { value: 5, label: 'Sex' },
-  { value: 6, label: 'Sáb' },
-  { value: 7, label: 'Dom' },
-] as const;
-const DEFAULT_RESPONSE_WEEK_DAYS = RESPONSE_WEEK_DAYS.slice(0, 6).map((day) => day.value);
 
 interface AgentFormDialogProps {
   open: boolean;
@@ -259,7 +255,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   const [businessHoursOnly, setBusinessHoursOnly] = useState(false);
   const [businessStart, setBusinessStart] = useState('08:00');
   const [businessEnd, setBusinessEnd] = useState('18:00');
-  const [businessDays, setBusinessDays] = useState<number[]>(DEFAULT_RESPONSE_WEEK_DAYS);
+  const [responseWeek, setResponseWeek] = useState<ResponseWeekPlan>(() => buildResponseWeekPreset('business_hours'));
   const [selectedInstanceIds, setSelectedInstanceIds] = useState<string[]>([]);
   const [blockedCategories, setBlockedCategories] = useState<string[]>(['opt-out', 'spam']);
 
@@ -659,14 +655,18 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       setTemperature(Number(agent.temperature));
       setMaxTokens(agent.max_tokens);
       setReplyDelay(agent.reply_delay_ms);
-      setBusinessHoursOnly(agent.business_hours_only);
       setBusinessStart(agent.business_hours_start?.slice(0, 5) || '08:00');
       setBusinessEnd(agent.business_hours_end?.slice(0, 5) || '18:00');
       const responseSchedule = (agent as any).automation_rules?.response_schedule;
-      const savedDays = responseSchedule?.days ?? agent.business_hours_days;
-      setBusinessDays(Array.isArray(savedDays) && savedDays.length > 0
-        ? [...new Set(savedDays.map(Number).filter((day: number) => Number.isInteger(day) && day >= 1 && day <= 7))]
-        : DEFAULT_RESPONSE_WEEK_DAYS);
+      setBusinessHoursOnly(typeof responseSchedule?.enabled === 'boolean'
+        ? responseSchedule.enabled
+        : agent.business_hours_only);
+      setResponseWeek(readResponseWeekPlan({
+        responseSchedule,
+        legacyStart: agent.business_hours_start,
+        legacyEnd: agent.business_hours_end,
+        legacyDays: agent.business_hours_days,
+      }));
       setSelectedInstanceIds(agent.instance_ids?.length ? agent.instance_ids : (agent.instance_id ? [agent.instance_id] : []));
       setBlockedCategories(agent.blocked_categories || ['opt-out', 'spam']);
       setCompanyName(agent.company_name || '');
@@ -712,7 +712,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       setBusinessHoursOnly(false);
       setBusinessStart('08:00');
       setBusinessEnd('18:00');
-      setBusinessDays(DEFAULT_RESPONSE_WEEK_DAYS);
+      setResponseWeek(buildResponseWeekPreset('business_hours'));
       setSelectedInstanceIds([]);
       setBlockedCategories(['opt-out', 'spam']);
       setCompanyName('');
@@ -776,13 +776,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       const t2 = Math.max(1, Math.round(Number(ruT2)) || 8);
       const t3 = Math.max(1, Math.round(Number(ruT3)) || 12);
       return {
-        response_schedule: {
-          enabled: businessHoursOnly,
-          start: businessStart,
-          end: businessEnd,
-          days: businessDays,
-          timezone: 'America/Sao_Paulo',
-        },
+        response_schedule: serializeResponseScheduleV2(businessHoursOnly, responseWeek),
         followup: { enabled: ruFollowupEnabled, t1_min: t1, t2_min: t2, t3_min: t3, t3_transfers: ruT3Transfers },
         transfer: {
           enabled: ruTransferEnabled,
@@ -847,8 +841,13 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       toast({ title: 'Sessao expirada', description: 'Faca login novamente para salvar o agente.', variant: 'destructive' });
       return;
     }
-    if (businessHoursOnly && businessDays.length === 0) {
-      toast({ title: 'Selecione pelo menos um dia', description: 'Escolha os dias em que o agente poderá responder.', variant: 'destructive' });
+    const responseScheduleErrors = validateResponseWeekPlan(businessHoursOnly, responseWeek);
+    if (responseScheduleErrors.length > 0) {
+      toast({
+        title: 'Revise os horários da IA',
+        description: responseScheduleErrors[0],
+        variant: 'destructive',
+      });
       return;
     }
     setSaving(true);
@@ -1300,59 +1299,12 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                 </p>
               </div>
 
-              {/* Business Hours */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <Label className="flex items-center gap-2"><Clock className="h-4 w-4" /> Horário comercial</Label>
-                  <Switch checked={businessHoursOnly} onCheckedChange={setBusinessHoursOnly} />
-                </div>
-                {businessHoursOnly && (
-                  <div className="space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <Label className="text-xs">Início</Label>
-                      <Input type="time" value={businessStart} onChange={e => setBusinessStart(e.target.value)} />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Fim</Label>
-                      <Input type="time" value={businessEnd} onChange={e => setBusinessEnd(e.target.value)} />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs">Dias em que o agente responde</Label>
-                    <div className="flex flex-wrap gap-2">
-                      {RESPONSE_WEEK_DAYS.map((day) => {
-                        const selected = businessDays.includes(day.value);
-                        return (
-                          <Button
-                            key={day.value}
-                            type="button"
-                            size="sm"
-                            variant={selected ? 'default' : 'outline'}
-                            onClick={() => setBusinessDays((current) => selected
-                              ? current.filter((value) => value !== day.value)
-                              : [...current, day.value].sort((a, b) => a - b))}
-                          >
-                            {day.label}
-                          </Button>
-                        );
-                      })}
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setBusinessDays([...DEFAULT_RESPONSE_WEEK_DAYS])}
-                    >
-                      Horário comercial (seg–sáb)
-                    </Button>
-                    <p className="text-xs text-muted-foreground">
-                      Em uma janela que atravessa a meia-noite, o dia marcado é o dia de início. Ex.: domingo 18:00–08:00 funciona até segunda às 08:00.
-                    </p>
-                  </div>
-                  </div>
-                )}
-              </div>
+              <AgentResponseScheduleEditor
+                enabled={businessHoursOnly}
+                week={responseWeek}
+                onEnabledChange={setBusinessHoursOnly}
+                onWeekChange={setResponseWeek}
+              />
 
               {/* Blocked categories */}
               <div className="space-y-2">

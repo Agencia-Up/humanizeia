@@ -29,6 +29,7 @@ interface AIAgent {
   business_hours_only: boolean;
   business_hours_start: string;
   business_hours_end: string;
+  automation_rules?: any;
   blocked_categories: string[];
   total_replies: number;
   instance_id: string | null;
@@ -143,6 +144,13 @@ function AgentCard({
   const [menuOpen, setMenuOpen] = useState(false);
   const modelInfo = MODEL_LABELS[agent.model] || { short: agent.model.split('/').pop() || agent.model, color: 'bg-muted text-muted-foreground border-border' };
   const tokenCount = Math.ceil((agent.system_prompt || '').length / 4);
+  const responseSchedule = agent.automation_rules?.response_schedule;
+  const responseScheduleEnabled = typeof responseSchedule?.enabled === 'boolean'
+    ? responseSchedule.enabled
+    : agent.business_hours_only;
+  const responseScheduleLabel = responseSchedule?.version === 2 || Array.isArray(responseSchedule?.weekly)
+    ? 'Agenda por dia'
+    : `${agent.business_hours_start?.slice(0, 5)}-${agent.business_hours_end?.slice(0, 5)}`;
 
   const getInstanceNames = () => {
     const ids = agent.instance_ids?.length ? agent.instance_ids : (agent.instance_id ? [agent.instance_id] : []);
@@ -242,10 +250,10 @@ function AgentCard({
             </Badge>
           )}
 
-          {agent.business_hours_only && (
+          {responseScheduleEnabled && (
             <Badge variant="outline" className="text-[10px] px-1.5 gap-1">
               <Clock className="h-2.5 w-2.5" />
-              {agent.business_hours_start?.slice(0, 5)}-{agent.business_hours_end?.slice(0, 5)}
+              {responseScheduleLabel}
             </Badge>
           )}
         </div>
