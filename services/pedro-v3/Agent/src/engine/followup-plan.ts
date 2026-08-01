@@ -2,12 +2,36 @@ import type { TurnDecision } from "../domain/decision.ts";
 
 export type FollowupStage = 1 | 2 | 3;
 
+export const T3_TRANSFER_NOTICE =
+  "Estarei te transferindo para um dos nossos consultores de vendas. Agradeço o contato!";
+
+export type FollowupMessageResolution = {
+  readonly text: string | null;
+  readonly source: "llm" | "operational_fallback" | "none";
+};
+
 /**
- * Cria somente a parte autoral do follow-up. Texto e efeito operacional sao
- * eixos independentes: T1/T2 precisam de texto; o T3 pode continuar sem
- * send_message quando a cadeia de handoff configurada for materializada pelo
- * chamador. Assim uma falha de redacao nunca cancela a regra operacional do
- * portal, e a engine tambem nao inventa uma mensagem substituta.
+ * Preserva a autoria comercial da LLM. A unica excecao e um recibo operacional
+ * no T3, depois de esgotadas as tentativas de autoria e somente quando o
+ * handoff ja foi validado como executavel. T1/T2 nunca recebem texto da engine.
+ */
+export function resolveFollowupMessageText(args: {
+  readonly stage: FollowupStage;
+  readonly authoredText: string | null;
+  readonly handoffAvailable: boolean;
+}): FollowupMessageResolution {
+  const authoredText = args.authoredText?.trim() || null;
+  if (authoredText) return { text: authoredText, source: "llm" };
+  if (args.stage === 3 && args.handoffAvailable) {
+    return { text: T3_TRANSFER_NOTICE, source: "operational_fallback" };
+  }
+  return { text: null, source: "none" };
+}
+
+/**
+ * Cria a parte de mensagem do follow-up. O chamador resolve antes se o texto
+ * veio da LLM ou do recibo operacional estrito do T3; este builder apenas
+ * materializa o texto recebido e nunca decide a conducao comercial.
  */
 export function buildFollowupBaseDecision(args: {
   readonly turnId: string;

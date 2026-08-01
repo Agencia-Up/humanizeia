@@ -6,6 +6,10 @@ import {
   rearmTransferAtNextWindow,
   resolveAutomationRules,
 } from "../../../../supabase/functions/_shared/automation/rules.ts";
+import {
+  buildConversationBriefing,
+  buildTransferAuditNotes,
+} from "../../../../supabase/functions/_shared/transfer/buildBriefing.ts";
 
 let failures = 0;
 function check(label: string, ok: boolean) {
@@ -68,6 +72,79 @@ check("fila segue para o segundo no ciclo seguinte", pickNextTimeoutSeller([firs
   { to_member_id: "seller-1", created_at: "2026-07-20T16:00:00.000Z" },
   ...sameLeadHistory,
 ], "seller-1", "11999991111")?.id === "seller-2");
+
+function briefingDb(input: {
+  readonly v3Rows?: any[];
+  readonly v3Error?: any;
+  readonly legacyRows?: any[];
+}) {
+  const calls: string[] = [];
+  return {
+    calls,
+    from(table: string) {
+      calls.push(table);
+      const query: any = {
+        select() { return query; },
+        eq() { return query; },
+        order() { return query; },
+        async limit() {
+          if (table === "v3_conversation_state") {
+            return { data: input.v3Rows ?? [], error: input.v3Error ?? null };
+          }
+          if (table === "wa_chat_history") {
+            return { data: input.legacyRows ?? [], error: null };
+          }
+          return { data: [], error: null };
+        },
+      };
+      return query;
+    },
+  };
+}
+
+const canonicalDb = briefingDb({
+  v3Rows: [{
+    state: {
+      recentTurns: [
+        { role: "lead", text: "Quero saber o valor do Compass" },
+        { role: "agent", text: "Ele custa R$ 121.400." },
+        { role: "lead", text: "Pode me passar para um vendedor?" },
+      ],
+    },
+  }],
+  legacyRows: [{ role: "user", content: "historico antigo" }],
+});
+const canonicalBriefing = await buildConversationBriefing(canonicalDb, {
+  id: "lead-v3",
+  agent_id: "agent-1",
+  remote_jid: "5511999999999@s.whatsapp.net",
+});
+check("briefing manual usa a conversa canonica do Pedro v3",
+  canonicalBriefing.includes("Quero saber o valor do Compass")
+    && canonicalBriefing.includes("Pode me passar para um vendedor?"));
+check("briefing v3 nao mistura historico legado quando o canonico existe",
+  !canonicalDb.calls.includes("wa_chat_history") && !canonicalBriefing.includes("historico antigo"));
+
+const legacyDb = briefingDb({
+  v3Rows: [{ state: { recentTurns: [] } }],
+  legacyRows: [
+    { role: "assistant", content: "Qual veiculo voce procura?" },
+    { role: "user", content: "Uma SUV automatica" },
+  ],
+});
+const legacyBriefing = await buildConversationBriefing(legacyDb, {
+  id: "lead-legado",
+  agent_id: "agent-1",
+  remote_jid: "5511888888888@s.whatsapp.net",
+});
+check("briefing mantem fallback para historico legado",
+  legacyDb.calls.includes("wa_chat_history") && legacyBriefing.includes("Uma SUV automatica"));
+
+const auditNotes = buildTransferAuditNotes("Briefing completo do Pedro v3", "Cliente pediu retorno hoje");
+check("observacao manual e anexada sem substituir o briefing",
+  auditNotes.includes("Briefing completo do Pedro v3")
+    && auditNotes.includes("Cliente pediu retorno hoje")
+    && auditNotes.indexOf("Briefing completo") < auditNotes.indexOf("Observacao manual"));
 
 if (failures > 0) process.exit(1);
 console.log("PASS transfer-infrastructure");

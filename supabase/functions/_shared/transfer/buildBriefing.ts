@@ -44,6 +44,7 @@ export interface HandoffTransferArgs {
 }
 
 export interface ConversationLeadLike {
+  id?: string | null;
   remote_jid?: string | null;
   lead_name?: string | null;
   summary?: string | null;
@@ -152,7 +153,44 @@ export async function buildConversationBriefing(
     parts.push(`Resumo salvo no CRM:\n${String(lead.summary).substring(0, 800)}`);
   }
 
-  if (lead.agent_id && lead.remote_jid) {
+  let hasCanonicalTranscript = false;
+  if (lead.id) {
+    try {
+      const { data: stateRows, error: stateError } = await supabase
+        .from('v3_conversation_state')
+        .select('state, updated_at')
+        .eq('lead_id', lead.id)
+        .order('updated_at', { ascending: false })
+        .limit(1);
+
+      const stateRow = Array.isArray(stateRows) ? stateRows[0] : stateRows;
+      const recentTurns = Array.isArray(stateRow?.state?.recentTurns)
+        ? stateRow.state.recentTurns
+        : [];
+      const transcript = recentTurns
+        .filter((turn: any) => {
+          const role = String(turn?.role || '').toLowerCase();
+          return ['lead', 'user', 'agent', 'assistant'].includes(role)
+            && String(turn?.text ?? turn?.content ?? '').trim().length > 0;
+        })
+        .slice(-12)
+        .map((turn: any) => {
+          const role = String(turn?.role || '').toLowerCase();
+          const author = role === 'lead' || role === 'user' ? 'Cliente' : 'IA';
+          return `${author}: ${String(turn?.text ?? turn?.content ?? '').trim().substring(0, 300)}`;
+        })
+        .join('\n');
+
+      if (!stateError && transcript) {
+        parts.push(`Ultimas mensagens (Pedro v3):\n${transcript}`);
+        hasCanonicalTranscript = true;
+      }
+    } catch {
+      // Estado v3 enriquece o briefing; indisponibilidade cai no legado abaixo.
+    }
+  }
+
+  if (!hasCanonicalTranscript && lead.agent_id && lead.remote_jid) {
     const { data: history, error } = await supabase
       .from('wa_chat_history')
       .select('role, content, created_at')
@@ -178,6 +216,19 @@ export async function buildConversationBriefing(
   }
 
   return parts.join('\n\n').substring(0, 1800);
+}
+
+/** Mantem o briefing canonico e anexa a observacao do operador sem substitui-lo. */
+export function buildTransferAuditNotes(
+  conversationBriefing: string,
+  operatorNotes?: string | null,
+): string {
+  const briefing = String(conversationBriefing || '').trim();
+  const notes = String(operatorNotes || '').trim();
+  return [
+    briefing,
+    notes ? `Observacao manual:\n${notes}` : '',
+  ].filter(Boolean).join('\n\n').substring(0, 4000);
 }
 
 // ─── Versão MARCOS (lead manual sem histórico WhatsApp) ────────────────────

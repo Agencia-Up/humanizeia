@@ -61,7 +61,7 @@ import type {
 } from "./automation-execution-gate.ts";
 import { sanitizeAutomationReason } from "./automation-execution-gate.ts";
 import { resolveConversationWhatsAppInstance } from "../domain/whatsapp-instance-binding.ts";
-import { buildFollowupBaseDecision } from "./followup-plan.ts";
+import { buildFollowupBaseDecision, resolveFollowupMessageText } from "./followup-plan.ts";
 
 // R13-D/4: modo do cérebro. central_active é o caminho canônico de produção e
 // usa autoria única/LLM-first. central_shadow mantém o handler legado como
@@ -662,11 +662,16 @@ export class PilotActiveRoot {
         handoffAvailable: t3HandoffAvailable,
         maxAttempts: 3,
       });
-      const text = authored.text;
-      // T1/T2 sao mensagens e continuam dependendo da autoria. No T3, porem,
-      // a transferencia configurada no portal e uma obrigacao operacional
-      // independente: falhar ao redigir a despedida nao pode fazer o lead sumir.
-      // Nao ha fallback textual da engine; apenas a cadeia tipada de handoff.
+      const messageResolution = resolveFollowupMessageText({
+        stage: input.due.stage,
+        authoredText: authored.text,
+        handoffAvailable: t3HandoffAvailable,
+      });
+      const text = messageResolution.text;
+      // T1/T2 continuam dependendo integralmente da autoria. No T3, depois
+      // dos retries da LLM, um recibo operacional pode ser usado somente se a
+      // transferencia foi prevalidada. Abaixo, a materializacao do handoff e
+      // conferida novamente antes de qualquer mensagem ser persistida.
       if (!text && !t3HandoffAvailable) {
         commitFailureReason = `author_${authored.reason}`;
         return;
@@ -705,9 +710,23 @@ export class PilotActiveRoot {
           handoffPlanned = true;
         }
       }
+      if (t3HandoffAvailable && !handoffPlanned) {
+        // Nunca publique "vou transferir" sem a transferencia no mesmo grafo.
+        commitFailureReason = "handoff_not_planned_after_precheck";
+        return;
+      }
       if (!text && !handoffPlanned) {
         commitFailureReason = `author_${authored.reason}`;
         return;
+      }
+      if (messageResolution.source === "operational_fallback") {
+        console.log(JSON.stringify({
+          event: "pedro_v3_t3_operational_notice_used",
+          tenantId: this.ref.tenantId,
+          agentId: this.ref.agentId,
+          conversationId: input.conversationId,
+          turnId,
+        }));
       }
       const graph = validateEffectPlans(decision.effectPlan);
       if (graph.length > 0) return;

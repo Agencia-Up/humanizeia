@@ -8,7 +8,7 @@ import { authorFollowupMessage, authorFollowupMessageDetailed } from "../src/eng
 import { readFileSync } from "node:fs";
 import { sanitizeOutgoingText } from "../src/engine/central-engine.ts";
 import { buildHandoffChain, forcedSilentDisengagementReason } from "../src/engine/handoff-plan.ts";
-import { buildFollowupBaseDecision } from "../src/engine/followup-plan.ts";
+import { buildFollowupBaseDecision, resolveFollowupMessageText, T3_TRANSFER_NOTICE } from "../src/engine/followup-plan.ts";
 import { validateEffectPlans } from "../src/engine/finalizer.ts";
 import { applyEffectOutcome } from "../src/engine/state-reducer.ts";
 import { requiredReceiptFor } from "../src/domain/effect-policy.ts";
@@ -172,18 +172,25 @@ check("[H7] grafo valido", validateEffectPlans(chain.effectPlan).length === 0);
 const handoffReply = chain.effectPlan.find((p) => p.kind === "send_message");
 check("[H8] reply do handoff nao inventa delivery gate", handoffReply?.onSuccess.every((o) => o.op !== "mark_message_delivered") === true);
 
-// O T3 tem dois eixos independentes: texto autorado e transferencia
-// operacional configurada no portal. Se a LLM nao conseguir redigir depois
-// dos retries, a engine nao inventa uma despedida; ainda assim, ela nao pode
-// apagar o handoff devido. T1/T2 continuam sem efeito quando nao ha autoria.
+// A LLM continua sendo a primeira autora. Se ela esgotar os retries no T3 e o
+// handoff estiver de fato disponivel, entra apenas o recibo operacional que
+// acompanha a transferencia. Sem handoff, a engine nunca promete transferir.
+const authorlessT3Message = resolveFollowupMessageText({
+  stage: 3,
+  authoredText: null,
+  handoffAvailable: true,
+});
 const authorlessT3Base = buildFollowupBaseDecision({
   turnId: "followup:anchor:3-no-text",
   stage: 3,
   anchorEffectId: anchor.effectId,
   now: NOW,
-  text: null,
+  text: authorlessT3Message.text,
 });
-check("[H8a] T3 sem autoria nao cria texto deterministico", authorlessT3Base.effectPlan.every((p) => p.kind !== "send_message"));
+check("[H8a] T3 usa recibo operacional somente apos falha de autoria",
+  authorlessT3Message.source === "operational_fallback"
+    && authorlessT3Message.text === T3_TRANSFER_NOTICE
+    && authorlessT3Base.effectPlan.some((p) => p.kind === "send_message"));
 const authorlessT3 = buildHandoffChain({
   decision: authorlessT3Base,
   turnId: authorlessT3Base.turnId,
@@ -204,8 +211,21 @@ const authorlessNotify = authorlessT3.effectPlan.find((p) => p.kind === "notify_
 check("[H8b] falha de redacao nao cancela o handoff T3", authorlessT3.planned
   && authorlessHandoff?.kind === "handoff"
   && authorlessNotify?.kind === "notify_seller");
-check("[H8c] handoff sem mensagem nao depende de efeito fantasma", authorlessHandoff?.dependsOn?.length === 0);
-check("[H8d] cadeia operacional sem texto continua valida", validateEffectPlans(authorlessT3.effectPlan).length === 0);
+check("[H8c] handoff depende do recibo enviado ao lead", authorlessHandoff?.dependsOn?.includes("followup-message") === true);
+check("[H8d] cadeia mensagem -> handoff -> vendedor continua valida", validateEffectPlans(authorlessT3.effectPlan).length === 0);
+const authoredT3Message = resolveFollowupMessageText({
+  stage: 3,
+  authoredText: "Vou te encaminhar agora. Obrigado pelo contato!",
+  handoffAvailable: true,
+});
+check("[H8e] autoria valida da LLM sempre vence o recibo operacional",
+  authoredT3Message.source === "llm" && authoredT3Message.text?.startsWith("Vou te encaminhar") === true);
+const unavailableT3Message = resolveFollowupMessageText({
+  stage: 3,
+  authoredText: null,
+  handoffAvailable: false,
+});
+check("[H8f] T3 sem handoff nao promete transferencia", unavailableT3Message.text === null && unavailableT3Message.source === "none");
 const authorlessT1 = buildFollowupBaseDecision({
   turnId: "followup:anchor:1-no-text",
   stage: 1,
@@ -213,7 +233,7 @@ const authorlessT1 = buildFollowupBaseDecision({
   now: NOW,
   text: null,
 });
-check("[H8e] T1 sem autoria nao envia nem transfere", authorlessT1.effectPlan.length === 0);
+check("[H8g] T1 sem autoria nao envia nem transfere", authorlessT1.effectPlan.length === 0);
 
 // Encerramento/desinteresse é uma transferência OPERACIONAL silenciosa: a LLM
 // já escreveu a despedida e o plan apenas acopla CRM -> handoff -> vendedor.

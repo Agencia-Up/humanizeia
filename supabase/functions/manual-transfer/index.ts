@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { buildPedroV3ConversationBriefing, buildMarcosBriefing, buildManagerReport } from "../_shared/transfer/buildBriefing.ts";
+import { buildPedroV3ConversationBriefing, buildMarcosBriefing, buildManagerReport, buildTransferAuditNotes } from "../_shared/transfer/buildBriefing.ts";
 import { resolveAutomationRules } from "../_shared/automation/rules.ts";
 import { resolveTransferFailures } from "../_shared/pedro-v2/logTransferFailure.ts";
 import { managerPhones } from "../_shared/transfer/managers.ts";
@@ -999,6 +999,7 @@ Deno.serve(async (req) => {
       reason: "Transferência manual — aguardando confirmação do vendedor",
       sellerName: member.name,
     });
+    const transferAuditNotes = buildTransferAuditNotes(conversationBriefing, notes);
     const msgVars = buildEtiquetas({ lead: { telefone: phone, nome: pushName } }, {
       agentName,
       leadName: pushName,
@@ -1090,7 +1091,7 @@ _Gerado automaticamente pelo Pedro SDR_`;
       from_member_id: lead.assigned_to_id,
       to_member_id: member.id,
       transfer_reason: "manual",
-      notes: notes || conversationBriefing,
+      notes: transferAuditNotes,
       is_confirmed: false,
       transfer_status: "pending",
       confirmation_timeout_at: new Date(Date.now() + transferRules.seller_response_min * 60 * 1000).toISOString(),
