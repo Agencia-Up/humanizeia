@@ -1,8 +1,9 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { requireInternalCaller, internalAuthDenied } from "../_shared/jose-v2/internalAuth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-jose-internal-secret, x-jose-ts, x-jose-nonce",
 };
 
 const META_GRAPH_URL = "https://graph.facebook.com/v21.0";
@@ -14,6 +15,11 @@ const META_GRAPH_URL = "https://graph.facebook.com/v21.0";
  * Finds action_log entries older than 7 days with no outcome yet.
  * Fetches current Meta metrics and computes improvement scores.
  * Writes to apollo_action_outcomes and aggregates to apollo_learning.
+ *
+ * FASE 1 (segurança): a função era PÚBLICA (verify_jwt=false + zero checagem).
+ * Qualquer anônimo disparava consumo da Graph API com os tokens Meta de todos os
+ * tenants e escrevia em apollo_action_outcomes/apollo_learning — ou seja, dava
+ * para ENVENENAR o aprendizado do agente. Agora exige chamador interno.
  */
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -22,6 +28,9 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
+
+  const auth = await requireInternalCaller(req, { admin });
+  if (!auth.ok) return internalAuthDenied(auth, corsHeaders);
 
   const sevenDaysAgo = new Date();
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -56,12 +65,20 @@ Deno.serve(async (req) => {
       if (!account?.access_token_encrypted) continue;
 
       // Fetch current metrics for the campaign
+      // FASE 1: o token vai no HEADER, nunca na query string — como parâmetro de
+      // URL ele fica gravado em log de proxy/CDN e no histórico do Graph API.
       const url = new URL(`${META_GRAPH_URL}/${outcome.campaign_id_meta}/insights`);
-      url.searchParams.set("access_token", account.access_token_encrypted);
       url.searchParams.set("fields", "spend,ctr,cpc,cpm,impressions,clicks,reach,frequency,actions,action_values");
       url.searchParams.set("date_preset", "last_7d");
-      const res = await fetch(url.toString());
+      const res = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${account.access_token_encrypted}` },
+      });
       const insData = await res.json();
+      // Falha da Meta NÃO pode virar métrica: sem res.ok, não computa outcome.
+      if (!res.ok) {
+        console.error(`[measure-outcomes] Meta ${res.status} na campanha ${outcome.campaign_id_meta}`);
+        continue;
+      }
       const afterMetrics = insData.data?.[0];
 
       if (!afterMetrics) continue;
