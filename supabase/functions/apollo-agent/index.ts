@@ -1,7 +1,12 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { logAiCall } from "../_shared/observability/aiCallLog.ts";
 import { leadQualityByAd, leadMotivosByAd, formatMotivos, sellerFeedbackByAd } from "../_shared/jose-v2/leadQuality.ts";
-import { resolveEffectiveTenant } from "../_shared/resolveTenant.ts";
+import { buildAccess, canMutateAction, type JoseAccess } from "../_shared/jose-v2/authz.ts";
+import { checkGuardrails } from "../_shared/jose-v2/guardrails.ts";
+import { sendApprovalWhatsApp } from "../_shared/jose-v2/approvalGate.ts";
+import { resolveOwnedAdAccount, assertResourceBelongsToAccount } from "../_shared/jose-v2/ownership.ts";
+import * as idem from "../_shared/jose-v2/idempotency.ts";
+import { mapTipoAcao, estimateGastoAlterado, riscoDaAcao, orcamentoPlausivel } from "../_shared/jose-v2/actionTaxonomy.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -42,39 +47,56 @@ Deno.serve(async (req) => {
       serviceKey
     );
 
-    // ── Detect cron call (jose-cron-runner passes service role key + x-apollo-cron header) ──
+    // ── Identidade do chamador ────────────────────────────────────────────
+    // Dois caminhos, ambos exigindo prova criptográfica ou posse de segredo:
+    //   CRON     -> service key (comparação estrita) + x-user-id, que agora é
+    //               VALIDADO contra apollo_cron_config (antes era aceito cru).
+    //   USUÁRIO  -> JWT verificado por auth.getUser() e contrato de poder.
     const isCronCall = req.headers.get("x-apollo-cron") === "true";
     const cronUserId = req.headers.get("x-user-id");
 
-    let userId: string;
+    let access: JoseAccess;
 
     if (isCronCall && cronUserId && token === serviceKey) {
-      // Cron call — trust x-user-id header (validated by service role key match)
-      userId = cronUserId;
+      // O header só é aceito se corresponder a um tenant realmente agendado.
+      const { data: cfg } = await admin
+        .from("apollo_cron_config")
+        .select("user_id")
+        .eq("user_id", cronUserId)
+        .eq("is_enabled", true)
+        .maybeSingle();
+      if (!cfg) {
+        return new Response(JSON.stringify({ error: "cron_user_id_invalido" }), { status: 403, headers: corsHeaders });
+      }
+      access = {
+        authUserId: cronUserId, tenantId: cronUserId, isOwner: true, isSeller: false,
+        isManager: true, canView: true, canRecommend: true, canMutate: true, motivo: "cron_interno",
+      };
     } else {
-      // Normal user call — validate JWT
       const supabase = createClient(
         Deno.env.get("SUPABASE_URL")!,
         Deno.env.get("SUPABASE_ANON_KEY")!,
         { global: { headers: { Authorization: authHeader } } }
       );
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) {
+      const { data: { user: authUser }, error: userError } = await supabase.auth.getUser();
+      if (userError || !authUser) {
         return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
       }
-      // Tenant efetivo: dono = ele mesmo; vendedor/parceiro = a MASTER (opera a conta
-      // da master; o Facebook fica na master p/ o tracking). ZERO regressão pro dono.
-      // O shim `const user = { id: userId }` abaixo propaga isto pros 39 usos de user.id.
-      userId = await resolveEffectiveTenant(admin, user.id);
+      // buildAccess separa VER (tenant efetivo = master p/ parceiro) de PODER
+      // (mutação exige owner/master ou permissão explícita). Antes, resolver o
+      // tenant já dava poder de escrita ao vendedor.
+      access = await buildAccess(admin, authUser.id);
+      if (!access.canView) {
+        return new Response(JSON.stringify({ error: "sem_acesso_ao_jose", motivo: access.motivo }), { status: 403, headers: corsHeaders });
+      }
     }
 
-    // Expose as user object for backward compat with rest of code
-    const user = { id: userId };
+    // Shim de compatibilidade: o restante do arquivo usa `user.id` como TENANT.
+    const user = { id: access.tenantId };
 
     const body = await req.json().catch(() => ({}));
     const {
       targetAccountId,
-      auto_execute = false,
       datePreset = "last_30d",
       action: bodyAction,
       campaignId,
@@ -82,16 +104,42 @@ Deno.serve(async (req) => {
       objective: bodyObjective,
       actionType,
       actionParams,
+      idempotency_key,
     } = body;
+
+    // ── auto_execute: SÓ DO BANCO, nunca do body ──────────────────────────
+    // Antes vinha do corpo da requisição (`auto_execute = false` no destructuring),
+    // então qualquer cliente forjava `auto_execute: true` e ligava a autonomia
+    // mesmo com o toggle do banco desligado. Agora a fonte é apollo_cron_config;
+    // na ausência/erro de configuração, fica DESLIGADO (fail-closed).
+    let auto_execute = false;
+    let autoExecuteFonte = "config_ausente_fail_closed";
+    try {
+      const { data: cfgAuto } = await admin
+        .from("apollo_cron_config")
+        .select("auto_execute, is_enabled")
+        .eq("user_id", access.tenantId)
+        .maybeSingle();
+      if (cfgAuto) {
+        auto_execute = cfgAuto.auto_execute === true && cfgAuto.is_enabled === true;
+        autoExecuteFonte = auto_execute ? "apollo_cron_config" : "config_desligada";
+      }
+    } catch (_e) {
+      auto_execute = false;
+      autoExecuteFonte = "erro_lendo_config_fail_closed";
+    }
+    if (body?.auto_execute !== undefined && body.auto_execute !== auto_execute) {
+      console.warn(`[apollo-agent] auto_execute do body IGNORADO (body=${body.auto_execute}, banco=${auto_execute}) tenant=${access.tenantId}`);
+    }
 
     // ── Direct action execution ──
     if (bodyAction === "execute_action") {
-      return await handleExecuteAction(admin, user.id, targetAccountId, campaignId, actionType, actionParams, corsHeaders);
+      return await handleExecuteAction(admin, access, targetAccountId, campaignId, actionType, actionParams, idempotency_key, corsHeaders);
     }
 
     // ── Clone campaign ──
     if (bodyAction === "clone_campaign") {
-      return await handleCloneCampaign(admin, user.id, targetAccountId, campaignId, actionParams, corsHeaders);
+      return await handleCloneCampaign(admin, access, targetAccountId, campaignId, actionParams, idempotency_key, corsHeaders);
     }
 
     // ── Load last saved session (persist across page reloads) ──
@@ -174,32 +222,18 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Testa também o secret META_ACCESS_TOKEN como fallback
-      const secretToken = Deno.env.get("META_ACCESS_TOKEN");
-      const secretAcctId = Deno.env.get("META_AD_ACCOUNT_ID");
-      let secretPing: any = null;
-
-      if (secretToken && secretAcctId) {
-        try {
-          const pingUrl = new URL(`${META_GRAPH_URL}/act_${secretAcctId.replace(/^act_/, "")}`);
-          pingUrl.searchParams.set("access_token", secretToken);
-          pingUrl.searchParams.set("fields", "id,name,currency,account_status");
-          const r = await fetch(pingUrl.toString());
-          secretPing = await r.json();
-        } catch (e: any) {
-          secretPing = { error: e.message };
-        }
-      } else {
-        secretPing = { error: "Secret META_ACCESS_TOKEN ou META_AD_ACCOUNT_ID não configurado" };
-      }
+      // FASE 1: o debug NÃO fala mais com a conta da plataforma. Antes ele
+      // pingava META_ACCESS_TOKEN/META_AD_ACCOUNT_ID e devolvia id, nome, moeda
+      // e status da conta de anúncios da Logos para QUALQUER chamador.
+      const secretPing = { info: "diagnostico_restrito_a_conta_do_tenant" };
 
       return new Response(JSON.stringify({
         user_id: user.id,
         db_accounts: diagResults,
         db_error: acctErr?.message || null,
         secret_token_ping: secretPing,
-        has_secret_token: !!secretToken,
-        has_secret_account_id: !!secretAcctId,
+        // has_secret_token / has_secret_account_id removidos: expunham a
+        // existência das credenciais globais da plataforma para o chamador.
         timestamp: new Date().toISOString(),
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
@@ -304,24 +338,19 @@ Deno.serve(async (req) => {
       accountId = adAccount.account_id;
       currency = adAccount.currency || "BRL";
     } else {
-      // Tenta secrets configurados no projeto
-      const secretToken = Deno.env.get("META_ACCESS_TOKEN");
-      const secretAccountId = Deno.env.get("META_AD_ACCOUNT_ID");
-
-      if (!secretToken || !secretAccountId) {
-        return new Response(
-          JSON.stringify({
-            error: "Nenhuma conta Meta Ads conectada. Vá em Configurações > Contas Conectadas e adicione sua conta Meta Ads.",
-            code: "NO_ACCOUNT"
-          }),
-          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      // Remove "act_" prefix se existir
-      accessToken = secretToken;
-      accountId = secretAccountId.replace(/^act_/, "");
-      console.log("[apollo-agent v4] Usando token do secret META_ACCESS_TOKEN (fallback)");
+      // FASE 1 — FALLBACK GLOBAL REMOVIDO.
+      // Aqui o código caía para META_ACCESS_TOKEN / META_AD_ACCOUNT_ID, que são
+      // a conta de anúncios DA PLATAFORMA. Qualquer cliente sem conexão própria
+      // passava a analisar — e, no caminho de criação, a GASTAR — na conta da
+      // Logos. Agora isso é erro operacional explícito: sem conexão do tenant,
+      // não há operação.
+      return new Response(
+        JSON.stringify({
+          error: "Nenhuma conta Meta Ads conectada. Vá em Configurações > Contas Conectadas e adicione sua conta Meta Ads.",
+          code: "NO_ACCOUNT"
+        }),
+        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     const currencySymbol = currency === "USD" ? "US$" : "R$";
@@ -433,33 +462,96 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ── Auto-execute safe actions ──
+    // ── Auto-execute safe actions ─────────────────────────────────────────
+    // ANTES: `if (action.auto_safe && ...)` — o flag `auto_safe` é gerado pela
+    // PRÓPRIA IA e era obedecido cegamente. Bastava uma injeção de prompt no
+    // nome/dados de uma campanha para a IA marcar auto_safe:true e o dinheiro
+    // ser gasto. `auto_execute` também vinha do body do cliente.
+    // AGORA: auto_execute vem do banco (lido lá em cima) e o auto_safe da IA é
+    // apenas uma SUGESTÃO — quem decide é o guardrail (kill-switch, permissão
+    // por conta/ação, cap diário, teto de IA). Sem "execute", vira aprovação.
     const executionLog: any[] = [];
     if (auto_execute && aiResult.actions?.length > 0) {
       for (const action of aiResult.actions) {
-        if (action.auto_safe && action.action_type !== "clone_campaign") {
-          const result = await executeMetaAction(accessToken, action);
-          executionLog.push({
-            ...action,
-            result,
-            executed_at: new Date().toISOString(),
-            executed_by: "apollo_auto",
-          });
-          // Find the campaign metrics for before_state
-          const camp = enriched.find((e: any) => e.id === action.campaign_id);
-          try {
-            await admin.from("apollo_action_log").insert({
-              user_id: user.id,
-              campaign_id: action.campaign_id,
-              action_type: action.action_type,
-              params: action.params || {},
-              result,
-              before_state: camp ? { health_score: camp.health_score, roas: camp.roas, ctr: camp.ctr, cpc: camp.cpc, spend: camp.spend } : {},
-              executed_by: "apollo_auto",
-              executed_at: new Date().toISOString(),
-            });
-          } catch { /* ignore log error */ }
+        if (!action.auto_safe || action.action_type === "clone_campaign") continue;
+
+        const tipoAcao = mapTipoAcao(action.action_type);
+
+        // Sanidade de orçamento antes de qualquer coisa.
+        const chkOrc = orcamentoPlausivel(action?.params?.daily_budget ?? action?.params?.budget);
+        if (!chkOrc.ok) {
+          executionLog.push({ ...action, blocked: true, guardrail: chkOrc.motivo, executed_by: "guardrail_orcamento" });
+          continue;
         }
+
+        // O recurso é mesmo desta conta? (a IA escolhe campaign_id do contexto)
+        const donoOk = await assertResourceBelongsToAccount(accessToken, accountId, action.campaign_id, "campaign");
+        if (!donoOk.ok) {
+          executionLog.push({ ...action, blocked: true, guardrail: donoOk.error, executed_by: "guardrail_propriedade" });
+          continue;
+        }
+
+        const guard = await checkGuardrails(admin, {
+          user_id: user.id,
+          ad_account_id: adAccount?.id || null,
+          tipo_acao: tipoAcao,
+          gasto_alterado: estimateGastoAlterado(action),
+        });
+
+        if (guard.decision === "block") {
+          executionLog.push({ ...action, blocked: true, guardrail: guard.reason, executed_at: new Date().toISOString(), executed_by: "guardrail_block" });
+          continue;
+        }
+
+        if (guard.decision === "gate") {
+          try {
+            const { data: ap } = await admin.from("jose_action_approvals").insert({
+              user_id: user.id,
+              ad_account_id: adAccount?.id || null,
+              risco: riscoDaAcao(action),
+              tipo_acao: tipoAcao,
+              payload: { campaign_id: action.campaign_id, action_type: action.action_type, params: action.params || {} },
+              resumo_humano: action.reason || action.description || `${tipoAcao} em ${action.campaign_id}`,
+              status: "pendente",
+              expira_em: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+            }).select().maybeSingle();
+            if (ap) await sendApprovalWhatsApp(admin, { user_id: user.id, agent_id: null, approval: ap });
+          } catch { /* aprovação é best-effort; o importante é NÃO executar */ }
+          executionLog.push({ ...action, gated: true, guardrail: guard.reason, executed_at: new Date().toISOString(), executed_by: "guardrail_gate" });
+          continue;
+        }
+
+        // guard.decision === "execute"
+        const result = await executeMetaAction(accessToken, action);
+        const falhouNaMeta = !!(result as any)?.error;
+        executionLog.push({
+          ...action,
+          result,
+          falhou: falhouNaMeta,
+          executed_at: new Date().toISOString(),
+          executed_by: "apollo_auto",
+        });
+        // Find the campaign metrics for before_state
+        const camp = enriched.find((e: any) => e.id === action.campaign_id);
+        try {
+          await admin.from("apollo_action_log").insert({
+            user_id: user.id,
+            campaign_id: action.campaign_id,
+            action_type: action.action_type,
+            params: {
+              ...(action.params || {}),
+              _ator: access.authUserId,
+              _origem: access.motivo,
+              _guardrail: guard.reason,
+              _auto_execute_fonte: autoExecuteFonte,
+              _desfecho: falhouNaMeta ? "falha_meta" : "executado",
+            },
+            result,
+            before_state: camp ? { health_score: camp.health_score, roas: camp.roas, ctr: camp.ctr, cpc: camp.cpc, spend: camp.spend } : {},
+            executed_by: "apollo_auto",
+            executed_at: new Date().toISOString(),
+          });
+        } catch { /* ignore log error */ }
       }
     }
 
@@ -1601,61 +1693,178 @@ async function sendCriticalWhatsApp(admin: any, userId: string, aiResult: any, e
 
 // ── Action execution ──────────────────────────────────────────────────────────
 
+/**
+ * handleExecuteAction — caminho que GASTA DINHEIRO. Ordem dos portões:
+ *   permissão -> conta do tenant -> propriedade do recurso -> idempotência
+ *   -> guardrails (kill-switch/caps) -> aprovação -> Meta -> auditoria
+ * Qualquer portão que não puder ser confirmado NEGA a execução.
+ */
 async function handleExecuteAction(
-  admin: any, userId: string, targetAccountId: string,
+  admin: any, access: JoseAccess, targetAccountId: string,
   campaignId: string, actionType: string, actionParams: any,
-  corsHeaders: any
+  idempotencyKey: string | undefined, corsHeaders: any
 ) {
-  let accountQuery = admin.from("ad_accounts").select("*")
-    .eq("user_id", userId).eq("platform", "meta").eq("is_active", true);
-  if (targetAccountId) accountQuery = accountQuery.eq("account_id", targetAccountId);
-  const { data: adAccount } = await accountQuery.limit(1).single();
+  const tipoAcao = mapTipoAcao(actionType);
 
-  if (!adAccount?.access_token_encrypted) {
-    return new Response(JSON.stringify({ error: "Conta não encontrada" }), { status: 404, headers: corsHeaders });
+  // ── 1) PERMISSÃO (vendedor comum nunca executa) ────────────────────────
+  const perm = await canMutateAction(admin, access, tipoAcao, null);
+  if (!perm.permitido) {
+    return json({ error: "sem_permissao_para_executar", motivo: perm.motivo, tipo_acao: tipoAcao }, 403, corsHeaders);
   }
 
-  // Get before-state for learning
-  const beforeInsights = await fetchCampaignCurrentInsights(adAccount.access_token_encrypted, campaignId);
+  // ── 2) SANIDADE DE ORÇAMENTO (último anteparo antes da Meta) ───────────
+  for (const campo of ["daily_budget", "lifetime_budget", "budget", "amount"]) {
+    const v = (actionParams || {})[campo];
+    const chk = orcamentoPlausivel(v);
+    if (!chk.ok) {
+      return json({ error: "orcamento_invalido", campo, valor: v, motivo: chk.motivo }, 422, corsHeaders);
+    }
+  }
 
-  const result = await executeMetaAction(adAccount.access_token_encrypted, {
-    campaign_id: campaignId,
-    action_type: actionType,
-    params: actionParams || {},
+  // ── 3) CHAVE DE IDEMPOTÊNCIA obrigatória ───────────────────────────────
+  if (!idempotencyKey || String(idempotencyKey).length < 8) {
+    return json({ error: "idempotency_key_obrigatoria", detalhe: "Toda ação que muta a Meta exige idempotency_key (>= 8 chars)." }, 400, corsHeaders);
+  }
+
+  // ── 3) CONTA DO TENANT (sem fallback para a conta da plataforma) ───────
+  const contaRes = await resolveOwnedAdAccount(admin, access.tenantId, targetAccountId);
+  if (!contaRes.ok) {
+    return json({ error: contaRes.error, detalhe: contaRes.detalhe }, contaRes.status, corsHeaders);
+  }
+  const conta = contaRes.account;
+
+  // ── 4) O RECURSO É DESTA CONTA? ────────────────────────────────────────
+  const dono = await assertResourceBelongsToAccount(conta.access_token, conta.account_id, campaignId, "campaign");
+  if (!dono.ok) {
+    return json({ error: dono.error, detalhe: dono.detalhe }, dono.status, corsHeaders);
+  }
+
+  // ── 5) RESERVA IDEMPOTENTE (replay não repete gasto) ───────────────────
+  const reserva = await idem.begin(admin, {
+    tenantId: access.tenantId,
+    key: String(idempotencyKey),
+    actionType: tipoAcao,
+    resourceRef: campaignId,
+    payload: { campaignId, actionType, actionParams: actionParams || {}, accountId: conta.account_id },
   });
+  if (reserva.estado === "repetido") return json(reserva.resposta, reserva.status, corsHeaders);
+  if (reserva.estado === "em_voo") return json({ error: "acao_em_andamento", detalhe: "Mesma idempotency_key já está sendo processada." }, 409, corsHeaders);
+  if (reserva.estado === "conflito_de_payload") return json({ error: "idempotency_key_reutilizada_com_payload_diferente" }, 422, corsHeaders);
+  if (reserva.estado === "indisponivel") return json({ error: "idempotencia_indisponivel", detalhe: reserva.detalhe }, 503, corsHeaders);
 
-  // Log the action with before state
-  let logEntry: any = null;
+  const registroId = reserva.registroId;
+
   try {
-    const { data } = await admin.from("apollo_action_log").insert({
-      user_id: userId,
+    // ── 6) GUARDRAILS: kill-switch, permissão por conta, caps, teto de IA ──
+    const guard = await checkGuardrails(admin, {
+      user_id: access.tenantId,
+      ad_account_id: conta.db_id,
+      tipo_acao: tipoAcao,
+      gasto_alterado: Number(actionParams?.daily_budget ?? actionParams?.budget ?? 0) || 0,
+    });
+
+    if (guard.decision === "block") {
+      const resp = { ok: false, bloqueado: true, motivo: guard.reason, nivel: guard.nivel };
+      await idem.complete(admin, registroId, "failed", resp);
+      await registrarAuditoria(admin, access, conta, campaignId, tipoAcao, actionParams, null, "bloqueado", guard.reason, idempotencyKey);
+      return json(resp, 409, corsHeaders);
+    }
+
+    if (guard.decision === "gate") {
+      // Não executa: cria APROVAÇÃO pendente e avisa o responsável.
+      const { data: ap } = await admin.from("jose_action_approvals").insert({
+        user_id: access.tenantId,
+        ad_account_id: conta.db_id,
+        risco: tipoAcao.includes("orcamento") || tipoAcao.includes("budget") ? "alto" : "medio",
+        tipo_acao: tipoAcao,
+        payload: { campaign_id: campaignId, action_type: actionType, params: actionParams || {}, idempotency_key: idempotencyKey },
+        resumo_humano: `${tipoAcao} em ${campaignId} (solicitado por ${access.authUserId})`,
+        status: "pendente",
+        expira_em: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+      }).select().maybeSingle();
+      try { if (ap) await sendApprovalWhatsApp(admin, { user_id: access.tenantId, agent_id: null, approval: ap }); } catch { /* best-effort */ }
+
+      const resp = { ok: false, aguardando_aprovacao: true, approval_id: ap?.id ?? null, motivo: guard.reason };
+      await idem.complete(admin, registroId, "failed", resp);
+      await registrarAuditoria(admin, access, conta, campaignId, tipoAcao, actionParams, null, "aguardando_aprovacao", guard.reason, idempotencyKey);
+      return json(resp, 202, corsHeaders);
+    }
+
+    // ── 7) EXECUTA NA META ─────────────────────────────────────────────────
+    const beforeInsights = await fetchCampaignCurrentInsights(conta.access_token, campaignId);
+    const result = await executeMetaAction(conta.access_token, {
       campaign_id: campaignId,
       action_type: actionType,
       params: actionParams || {},
-      result,
-      before_state: beforeInsights,
-      executed_by: "user",
+    });
+
+    // Falha da Meta NÃO pode virar 200 de sucesso.
+    const metaFalhou = !!(result as any)?.error || (result as any)?.success === false;
+    const status = metaFalhou ? 502 : 200;
+
+    // ── 8) AUDITORIA (ator, tenant, recurso, antes/depois, aprovação) ──────
+    const logEntry = await registrarAuditoria(
+      admin, access, conta, campaignId, tipoAcao, actionParams, beforeInsights,
+      metaFalhou ? "falha_meta" : "executado", guard.reason, idempotencyKey, result,
+    );
+
+    if (logEntry && !metaFalhou) {
+      try {
+        await admin.from("apollo_action_outcomes").insert({
+          user_id: access.tenantId,
+          action_log_id: logEntry.id,
+          campaign_id_meta: campaignId,
+          action_type: actionType,
+          before_ctr: beforeInsights?.ctr,
+          before_cpc: beforeInsights?.cpc,
+          before_spend: beforeInsights?.spend,
+        });
+      } catch { /* outcome é best-effort */ }
+    }
+
+    await idem.complete(admin, registroId, metaFalhou ? "failed" : "succeeded", result);
+    return json(result, status, corsHeaders);
+  } catch (e: any) {
+    const resp = { ok: false, error: "falha_executando_acao", detalhe: String(e?.message || e) };
+    await idem.complete(admin, registroId, "failed", resp);
+    return json(resp, 500, corsHeaders);
+  }
+}
+
+function json(payload: unknown, status: number, corsHeaders: any) {
+  return new Response(JSON.stringify(payload), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+/** Auditoria completa: quem, qual tenant, qual recurso, antes/depois, decisão. */
+async function registrarAuditoria(
+  admin: any, access: JoseAccess, conta: { db_id: string; account_id: string },
+  campaignId: string, tipoAcao: string, params: any, beforeState: any,
+  desfecho: string, motivoGuardrail: string | undefined, idempotencyKey: string | undefined,
+  result?: any,
+): Promise<any> {
+  try {
+    const { data } = await admin.from("apollo_action_log").insert({
+      user_id: access.tenantId,
+      campaign_id: campaignId,
+      action_type: tipoAcao,
+      params: {
+        ...(params || {}),
+        _ator: access.authUserId,           // QUEM pediu (≠ tenant quando é parceiro)
+        _origem: access.motivo,
+        _conta_meta: conta.account_id,
+        _idempotency_key: idempotencyKey ?? null,
+        _guardrail: motivoGuardrail ?? null,
+        _desfecho: desfecho,
+      },
+      result: result ?? { desfecho },
+      before_state: beforeState ?? null,
+      executed_by: access.isSeller ? "parceiro" : "user",
       executed_at: new Date().toISOString(),
     }).select().single();
-    logEntry = data;
-  } catch { /* ignore log error */ }
-
-  // Create outcome tracking record
-  if (logEntry) {
-    try {
-      await admin.from("apollo_action_outcomes").insert({
-        user_id: userId,
-        action_log_id: logEntry.id,
-        campaign_id_meta: campaignId,
-        action_type: actionType,
-        before_ctr: beforeInsights?.ctr,
-        before_cpc: beforeInsights?.cpc,
-        before_spend: beforeInsights?.spend,
-      });
-    } catch { /* ignore outcome insert error */ }
+    return data;
+  } catch (_e) {
+    return null;
   }
-
-  return new Response(JSON.stringify(result), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
 async function fetchCampaignCurrentInsights(accessToken: string, campaignId: string) {
@@ -1704,17 +1913,69 @@ async function executeMetaAction(accessToken: string, action: any) {
 
 // ── Campaign cloning ──────────────────────────────────────────────────────────
 
-async function handleCloneCampaign(admin: any, userId: string, targetAccountId: string, campaignId: string, params: any, corsHeaders: any) {
+/**
+ * Clonar campanha cria estrutura nova que gasta dinheiro — passa pelos MESMOS
+ * portões de execute_action (permissão, propriedade, idempotência, guardrails,
+ * aprovação). Antes não passava por nenhum.
+ */
+async function handleCloneCampaign(admin: any, access: JoseAccess, targetAccountId: string, campaignId: string, params: any, idempotencyKey: string | undefined, corsHeaders: any) {
+  const tipoAcao = mapTipoAcao("clone_campaign"); // -> criar_campanha
+
+  const perm = await canMutateAction(admin, access, tipoAcao, null);
+  if (!perm.permitido) {
+    return json({ error: "sem_permissao_para_executar", motivo: perm.motivo, tipo_acao: tipoAcao }, 403, corsHeaders);
+  }
+  if (!idempotencyKey || String(idempotencyKey).length < 8) {
+    return json({ error: "idempotency_key_obrigatoria", detalhe: "Clonar campanha exige idempotency_key (>= 8 chars)." }, 400, corsHeaders);
+  }
+
+  const contaRes = await resolveOwnedAdAccount(admin, access.tenantId, targetAccountId);
+  if (!contaRes.ok) return json({ error: contaRes.error, detalhe: contaRes.detalhe }, contaRes.status, corsHeaders);
+  const conta = contaRes.account;
+
+  const dono = await assertResourceBelongsToAccount(conta.access_token, conta.account_id, campaignId, "campaign");
+  if (!dono.ok) return json({ error: dono.error, detalhe: dono.detalhe }, dono.status, corsHeaders);
+
+  const reserva = await idem.begin(admin, {
+    tenantId: access.tenantId, key: String(idempotencyKey), actionType: tipoAcao,
+    resourceRef: campaignId, payload: { campaignId, params: params || {}, accountId: conta.account_id },
+  });
+  if (reserva.estado === "repetido") return json(reserva.resposta, reserva.status, corsHeaders);
+  if (reserva.estado === "em_voo") return json({ error: "clone_em_andamento" }, 409, corsHeaders);
+  if (reserva.estado === "conflito_de_payload") return json({ error: "idempotency_key_reutilizada_com_payload_diferente" }, 422, corsHeaders);
+  if (reserva.estado === "indisponivel") return json({ error: "idempotencia_indisponivel", detalhe: reserva.detalhe }, 503, corsHeaders);
+  const registroId = reserva.registroId;
+
+  // Clone é sempre risco ALTO: guardrails decidem se executa ou vira aprovação.
+  const guard = await checkGuardrails(admin, {
+    user_id: access.tenantId, ad_account_id: conta.db_id, tipo_acao: tipoAcao,
+    gasto_alterado: estimateGastoAlterado({ params }),
+  });
+  if (guard.decision === "block") {
+    const resp = { ok: false, bloqueado: true, motivo: guard.reason };
+    await idem.complete(admin, registroId, "failed", resp);
+    return json(resp, 409, corsHeaders);
+  }
+  if (guard.decision === "gate") {
+    const { data: ap } = await admin.from("jose_action_approvals").insert({
+      user_id: access.tenantId, ad_account_id: conta.db_id,
+      risco: riscoDaAcao({ action_type: "clone_campaign", params }),
+      tipo_acao: tipoAcao,
+      payload: { campaign_id: campaignId, action_type: "clone_campaign", params: params || {}, idempotency_key: idempotencyKey },
+      resumo_humano: `Clonar campanha ${params?.source_name || campaignId} (pedido por ${access.authUserId})`,
+      status: "pendente",
+      expira_em: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+    }).select().maybeSingle();
+    try { if (ap) await sendApprovalWhatsApp(admin, { user_id: access.tenantId, agent_id: null, approval: ap }); } catch { /* best-effort */ }
+    const resp = { ok: false, aguardando_aprovacao: true, approval_id: ap?.id ?? null, motivo: guard.reason };
+    await idem.complete(admin, registroId, "failed", resp);
+    return json(resp, 202, corsHeaders);
+  }
+
+  const adAccount = { id: conta.db_id, account_id: conta.account_id, access_token_encrypted: conta.access_token };
+  const userId = access.tenantId;
+
   try {
-    let accountQuery = admin.from("ad_accounts").select("*")
-      .eq("user_id", userId).eq("platform", "meta").eq("is_active", true);
-    if (targetAccountId) accountQuery = accountQuery.eq("account_id", targetAccountId);
-    const { data: adAccount } = await accountQuery.limit(1).single();
-
-    if (!adAccount?.access_token_encrypted) {
-      return new Response(JSON.stringify({ error: "Conta Meta não encontrada" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    }
-
     // Log clone attempt (fire and forget)
     let cloneRecordId: string | null = null;
     try {
@@ -1745,15 +2006,16 @@ async function handleCloneCampaign(admin: any, userId: string, targetAccountId: 
       } catch { /* ignore */ }
     }
 
-    return new Response(JSON.stringify({ success: true, ...result }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" }
-    });
+    const resp = { success: true, ...result };
+    await idem.complete(admin, registroId, "succeeded", resp);
+    await registrarAuditoria(admin, access, conta, campaignId, tipoAcao, params, null, "executado", guard.reason, idempotencyKey, result);
+    return json(resp, 200, corsHeaders);
   } catch (err: any) {
     console.error("[apollo-agent] Clone error:", err?.message || err);
-    return new Response(JSON.stringify({ success: false, error: err?.message || "Erro ao clonar campanha" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" }
-    });
+    const resp = { success: false, error: err?.message || "Erro ao clonar campanha" };
+    await idem.complete(admin, registroId, "failed", resp);
+    await registrarAuditoria(admin, access, conta, campaignId, tipoAcao, params, null, "falha_meta", guard.reason, idempotencyKey, resp);
+    return json(resp, 502, corsHeaders);
   }
 }
 
@@ -3110,12 +3372,11 @@ async function getMetaTokenForUser(admin: any, userId: string, targetAccountId?:
     };
   }
 
-  const secretToken = Deno.env.get("META_ACCESS_TOKEN");
-  const secretAcctId = Deno.env.get("META_AD_ACCOUNT_ID");
-  if (secretToken && secretAcctId) {
-    return { accessToken: secretToken, accountId: secretAcctId, currency: "BRL" };
-  }
-
+  // FASE 1 — FALLBACK GLOBAL REMOVIDO. Esta função alimenta create_campaign,
+  // swap_creative, create_custom_audience e ab_test_setup: cair para a conta da
+  // plataforma aqui significava criar campanha e gastar dinheiro na conta da
+  // Logos em nome de um cliente sem conexão. Sem conta do tenant -> null, e o
+  // chamador devolve erro operacional.
   return null;
 }
 
