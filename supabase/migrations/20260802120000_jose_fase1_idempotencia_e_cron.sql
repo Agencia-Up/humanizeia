@@ -325,7 +325,8 @@ SELECT
   c.last_runner_version,
   -- destinatário configurado? (relatório ligado sem número é falha silenciosa)
   (c.send_daily_report AND c.whatsapp_report_number IS NULL) AS relatorio_sem_destinatario,
-  (SELECT max(s.created_at) FROM public.jose_dashboard_snapshots s WHERE s.user_id = c.user_id) AS ultimo_snapshot_em,
+  -- jose_dashboard_snapshots usa computed_at (verificado no schema vivo), nao created_at
+  (SELECT max(s.computed_at) FROM public.jose_dashboard_snapshots s WHERE s.user_id = c.user_id) AS ultimo_snapshot_em,
   (SELECT max(m.created_at) FROM public.apollo_metric_snapshots m WHERE m.user_id = c.user_id) AS ultima_metrica_meta_em,
   (SELECT max(l.executed_at) FROM public.apollo_action_log l WHERE l.user_id = c.user_id) AS ultima_acao_em,
   (SELECT count(*) FROM public.jose_action_approvals a
