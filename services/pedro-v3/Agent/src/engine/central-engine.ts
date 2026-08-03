@@ -2363,7 +2363,17 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // aterrado num veículo único) -> o alvo é esse veículo do anúncio (source="ad_reference"). Narrow, grounding máximo.
       const resolveTargetWithAd = (): TargetResolution => {
         const base = resolveTarget();
-        if (base.kind === "resolved") return base;
+        // Referencias que o lead declarou no bloco atual sao mais fortes que
+        // qualquer resultado de busca. Memoria carregada (selected/focus) e a
+        // oferta unica anterior, por outro lado, nao podem vencer uma busca
+        // exata que a propria LLM acabou de fazer para este pedido de fotos.
+        // Isso preserva a autoria comercial da LLM e impede que um carro velho
+        // roube o alvo novo depois de uma troca de foco em linguagem natural.
+        const baseIsCurrentTurnReference = base.kind === "resolved"
+          && (base.source === "turn_ordinal"
+            || base.source === "turn_offer_reference"
+            || base.source === "turn_explicit_model");
+        if (baseIsCurrentTurnReference) return base;
         // A LLM decidiu buscar o carro para atender o pedido de fotos. Quando a
         // busca do PROPRIO turno retorna exatamente uma chave (match exato), o
         // resultado factual resolve o alvo sem a engine escolher comercialmente.
@@ -2379,6 +2389,11 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           const vehicle = latestStock.data.items[0];
           return { kind: "resolved", vehicleKey: vehicle.vehicleKey, source: "current_stock_exact", candidateVehicleKeys: [vehicle.vehicleKey], subjectModel: vehicle.modelo ?? null };
         }
+
+        // Sem nova evidencia exata, o carryover continua valido. A mudanca de
+        // precedencia acima e estreita ao pedido de fotos autorado + busca
+        // exata do proprio turno; nao apaga contexto por conveniencia.
+        if (base.kind === "resolved") return base;
 
         const normLead = normalizeText(leadMessage);
         const pronounAttributeTurn = /\b(?:ele|dele|desse|deste|esse|este)\b/.test(normLead)

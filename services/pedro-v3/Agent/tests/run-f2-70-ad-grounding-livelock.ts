@@ -1140,6 +1140,98 @@ async function main(): Promise<void> {
     check("[G4d] LLM pode pedir desambiguacao sem fallback", r.committed && r.responseSource !== "technical_fallback" && !has(r.outbox, INSTABILIDADE), `${r.responseSource}|${r.retryReasons.join("|")}|${r.policyFeedback.join(" | ")}`);
   }
 
+  // [G4e] Regressao do smoke WA: depois de enviar fotos do veiculo A, a LLM
+  // troca naturalmente para o veiculo B usando stock_search, sem renderizar
+  // outra vehicle_offer_list. No pedido pronominal seguinte, a memoria do A
+  // ainda existe, mas a busca exata que a LLM faz no bloco atual precisa
+  // vencer esse carryover. A engine nao escolhe B: apenas aceita o unico fato
+  // exato da consulta que a propria LLM decidiu executar.
+  {
+    const c = conv();
+
+    const firstSearch = "Quero um Compass 2022";
+    const firstSearchResponder: BrainResponder = (frame, observations) => {
+      const u: TurnUnderstanding = { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: ev(frame.block ?? firstSearch, "stock_search") };
+      const stock = observations.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      if (!stock) return qU({ tool: "stock_search", input: { marca: "Jeep", modelo: "Compass", anos: [2022] } }, u);
+      return finU([txt("Encontrei o Jeep Compass 2022."), offer(stock.data.items.map((v) => v.vehicleKey))], "offer_stock", u);
+    };
+    await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, firstSearch, "ambiguous", firstSearchResponder);
+
+    const firstPhoto = "Pode me mandar fotos dele?";
+    const firstPhotoResponder: BrainResponder = (_frame, observations) => {
+      const u: TurnUnderstanding = {
+        ...U("request_photos"), requestedCapabilities: ["send_photos"],
+        evidence: [{ capability: "send_photos", quote: "fotos dele" }],
+      };
+      const photos = observations.find((o) => o.tool === "vehicle_photos_resolve" && o.ok) as { ok: true; data: { vehicleKey: string; photoIds: string[] } } | undefined;
+      if (!photos) return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: COMPASS22.vehicleKey } } }, u);
+      return {
+        kind: "final", understanding: u,
+        decision: {
+          reasonCode: "send_photos", reasonSummary: "fotos do primeiro foco", confidence: 0.95,
+          responsePlan: { guidance: "g", draft: { parts: [txt("Aqui estao as fotos do Jeep Compass 2022.")] } },
+          proposedEffects: [reply, { kind: "send_media", planId: "photos", order: 1, onSuccess: [], vehicleKey: photos.data.vehicleKey, photoIds: photos.data.photoIds } as ProposedEffectPlan],
+          memoryMutations: [], stateMutations: [],
+        } as AgentBrainDecision,
+      } as AgentBrainStep;
+    };
+    await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 2, firstPhoto, "continues_offer", firstPhotoResponder);
+
+    const switchBlock = "Agora quero ver o Ford EcoSport 2020.";
+    const switchResponder: BrainResponder = (frame, observations) => {
+      const u: TurnUnderstanding = {
+        ...U("search_stock"), isTopicChange: true, requestedCapabilities: ["stock_search"],
+        evidence: ev(frame.block ?? switchBlock, "stock_search"),
+      };
+      const stock = observations.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      if (!stock) return qU({ tool: "stock_search", input: { marca: "Ford", modelo: "EcoSport", anos: [2020] } }, u);
+      return finU([
+        txt("Agora o foco e o "),
+        vref(ECOSPORT20.vehicleKey, "modelo"),
+        txt(" "),
+        vref(ECOSPORT20.vehicleKey, "ano"),
+        txt("."),
+      ], "switch_vehicle", u);
+    };
+    await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 3, switchBlock, "direction_change", switchResponder);
+
+    const secondPhoto = "Teria uma foto dele?";
+    let targetAfterCurrentSearch: string | null = null;
+    const secondPhotoResponder: BrainResponder = (frame, observations) => {
+      const u: TurnUnderstanding = {
+        ...U("request_photos"), requestedCapabilities: ["send_photos", "stock_search"],
+        evidence: [
+          { capability: "send_photos", quote: "uma foto dele" },
+          { capability: "stock_search", quote: "foto dele" },
+        ],
+      };
+      const stock = observations.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      const photos = observations.find((o) => o.tool === "vehicle_photos_resolve" && o.ok) as { ok: true; data: { vehicleKey: string; photoIds: string[] } } | undefined;
+      if (!stock) return qU({ tool: "stock_search", input: { marca: "Ford", modelo: "EcoSport", anos: [2020] } }, u);
+      targetAfterCurrentSearch = frame.operationalContext?.target.status === "resolved"
+        ? frame.operationalContext.target.vehicleKey
+        : null;
+      if (!photos && targetAfterCurrentSearch) {
+        return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: targetAfterCurrentSearch } } }, u);
+      }
+      if (!photos) return finU([txt("Preciso identificar o veiculo antes de enviar as fotos.")], "clarify_vehicle", u);
+      return {
+        kind: "final", understanding: u,
+        decision: {
+          reasonCode: "send_photos", reasonSummary: "fotos do foco novo", confidence: 0.95,
+          responsePlan: { guidance: "g", draft: { parts: [txt("Aqui estao as fotos do Ford EcoSport 2020.")] } },
+          proposedEffects: [reply, { kind: "send_media", planId: "photos", order: 1, onSuccess: [], vehicleKey: photos.data.vehicleKey, photoIds: photos.data.photoIds } as ProposedEffectPlan],
+          memoryMutations: [], stateMutations: [],
+        } as AgentBrainDecision,
+      } as AgentBrainStep;
+    };
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 4, secondPhoto, "continues_offer", secondPhotoResponder);
+    check("[G4e] busca exata atual vence carryover do veiculo anterior", targetAfterCurrentSearch === ECOSPORT20.vehicleKey, `${targetAfterCurrentSearch}`);
+    check("[G4e] fotos resolvem uma vez na chave do foco novo", r.exec.filter((tool) => tool === "vehicle_photos_resolve").length === 1 && r.execKeys.includes(ECOSPORT20.vehicleKey), `${r.exec.join(",")} keys=${r.execKeys.join(",")}`);
+    check("[G4e] send_media usa o foco novo e nao cai em fallback", r.hasMedia && r.mediaKey === ECOSPORT20.vehicleKey && r.responseSource !== "technical_fallback" && !has(r.outbox, INSTABILIDADE), `${r.mediaKey}|${r.responseSource}|${r.retryReasons.join("|")}|${r.policyFeedback.join(" | ")}`);
+  }
+
   // [G5] O pedido do lead e a ação escolhida pela LLM são eixos distintos. A
   // primeira decisão omite send_photos, mas declara que o FINAL afirma envio.
   // A engine não infere a tool pelo texto/intenção: apenas rejeita a
