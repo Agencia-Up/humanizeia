@@ -48,7 +48,25 @@ interface ConnectedAccount {
   timezone: string | null;
 }
 
+/**
+ * Cache VISUAL apenas. A fonte oficial da conta ativa do José é o servidor
+ * (apollo_cron_config.selected_ad_account_id, lido por get_jose_selected_account).
+ * Nunca decida nada a partir desta chave.
+ */
 const SELECTED_ACCOUNT_KEY = 'logosia_selected_meta_account_id';
+
+/** Estados do contrato de conexão — os mesmos que o backend devolve. */
+export type MetaConnectionEstado =
+  | 'connected' | 'expired' | 'reconnect_required'
+  | 'no_account_selected' | 'configuration_error' | 'unknown';
+
+export interface JoseConnectionState {
+  estado: MetaConnectionEstado;
+  podeAlterar: boolean;
+  erroCode: number | null;
+  erroSubcode: number | null;
+  validadoEm: string | null;
+}
 
 export function useMetaConnection() {
   const { user } = useAuth();
@@ -61,7 +79,13 @@ export function useMetaConnection() {
   const [pixels, setPixels] = useState<MetaPixel[]>([]);
   const [pages, setPages] = useState<MetaPage[]>([]);
   const [businesses, setBusinesses] = useState<MetaBusiness[]>([]);
-  const [pendingToken, setPendingToken] = useState<string | null>(null);
+  // Só o ID da sessão. O access_token nunca chega ao navegador.
+  const [pendingSessionId, setPendingSessionId] = useState<string | null>(null);
+  const [isCheckingHealth, setIsCheckingHealth] = useState(false);
+  const [joseState, setJoseState] = useState<JoseConnectionState>({
+    estado: 'no_account_selected', podeAlterar: false,
+    erroCode: null, erroSubcode: null, validadoEm: null,
+  });
 
   const fetchConnectedAccount = useCallback(async () => {
     if (!user) return;
@@ -71,18 +95,32 @@ export function useMetaConnection() {
       // MASTER (RPC get_effective_ad_accounts, SECURITY DEFINER, SEM o token). Antes
       // era .eq('user_id', user.id) — o parceiro via vazio e era forçado a reconectar
       // o Facebook, que precisa ficar na master pro tracking/CAPI.
+      // "Contas encontradas na Meta" (integradas neste tenant).
       const { data, error } = await supabase.rpc('get_effective_ad_accounts');
+      const lista = (!error && data ? data : []) as ConnectedAccount[];
+      setConnectedAccounts(lista);
 
-      if (!error && data && data.length > 0) {
-        setConnectedAccounts(data as ConnectedAccount[]);
-        // Restore previously selected account from localStorage, else use first
-        const savedId = localStorage.getItem(SELECTED_ACCOUNT_KEY);
-        const savedAccount = savedId ? data.find(a => a.id === savedId) : null;
-        setConnectedAccount(savedAccount ?? (data[0] as ConnectedAccount));
-      } else {
-        setConnectedAccounts([]);
-        setConnectedAccount(null);
-      }
+      // "Conta ativa no José" — vem do SERVIDOR, não do navegador.
+      // Antes era localStorage com fallback `data[0]`: em outro navegador, ou
+      // depois de um logout, a tela apontava para uma conta que ninguém havia
+      // escolhido — e o José usava outra ainda. Agora há uma só resposta.
+      const { data: sel } = await supabase.rpc('get_jose_selected_account');
+      const selecionadaId = (sel as any)?.ad_account_id ?? null;
+
+      setJoseState({
+        estado: (sel as any)?.estado ?? 'no_account_selected',
+        podeAlterar: (sel as any)?.pode_alterar === true,
+        erroCode: (sel as any)?.erro_code ?? null,
+        erroSubcode: (sel as any)?.erro_subcode ?? null,
+        validadoEm: (sel as any)?.credencial_validada_em ?? null,
+      });
+
+      const ativa = selecionadaId ? lista.find(a => a.id === selecionadaId) ?? null : null;
+      setConnectedAccount(ativa);
+
+      // localStorage vira só cache visual, espelhando o servidor.
+      if (selecionadaId) localStorage.setItem(SELECTED_ACCOUNT_KEY, selecionadaId);
+      else localStorage.removeItem(SELECTED_ACCOUNT_KEY);
     } catch {
       setConnectedAccounts([]);
       setConnectedAccount(null);
@@ -91,17 +129,62 @@ export function useMetaConnection() {
     }
   }, [user]);
 
-  const selectConnectedAccount = useCallback((accountId: string) => {
-    setConnectedAccounts(prev => {
-      const found = prev.find(a => a.id === accountId);
-      if (found) {
-        // Persist the selection so it survives page navigation
-        localStorage.setItem(SELECTED_ACCOUNT_KEY, accountId);
-        setConnectedAccount(found);
+  /**
+   * Troca a conta ativa do José. A verdade é do servidor: só consideramos
+   * trocado depois que o banco confirma. Antes isto era um setState local +
+   * localStorage — o José nunca ficava sabendo.
+   */
+  const selectConnectedAccount = useCallback(async (accountId: string) => {
+    setIsConnecting(true);
+    try {
+      const { data, error } = await supabase.rpc('set_jose_selected_account', {
+        p_ad_account_id: accountId,
+      });
+      if (error) throw error;
+
+      const res = data as any;
+      if (!res?.ok) {
+        const motivo = res?.erro === 'credencial_nao_saudavel'
+          ? 'A conexão com a Meta precisa ser validada (ou reconectada) antes de escolher esta conta.'
+          : res?.erro === 'sem_permissao_para_alterar_integracao'
+            ? 'Seu perfil pode visualizar, mas não alterar a integração Meta.'
+            : res?.erro === 'conta_nao_pertence_ao_tenant'
+              ? 'Esta conta não pertence a este cliente.'
+              : res?.erro ?? 'Não foi possível salvar a seleção.';
+        toast({ title: 'Seleção não aplicada', description: motivo, variant: 'destructive' });
+        return { success: false };
       }
-      return prev;
-    });
-  }, []);
+
+      // Relê do servidor: o que vale é o que o banco devolveu.
+      await fetchConnectedAccount();
+      toast({ title: 'Conta do José atualizada', description: `${res.account_name} agora alimenta o José.` });
+      return { success: true };
+    } catch (err: any) {
+      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      return { success: false };
+    } finally {
+      setIsConnecting(false);
+    }
+  }, [fetchConnectedAccount, toast]);
+
+  /** Validação REAL da conexão (Graph API), sob demanda. Nunca recebe token. */
+  const testConnection = useCallback(async () => {
+    setIsCheckingHealth(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('meta-connection-health', { body: {} });
+      if (error) throw error;
+      const res = data as any;
+      setJoseState(prev => ({ ...prev, estado: res?.estado ?? 'unknown',
+                              erroCode: res?.error_code ?? null, erroSubcode: res?.error_subcode ?? null,
+                              validadoEm: res?.validado_em ?? new Date().toISOString() }));
+      return res;
+    } catch (err: any) {
+      toast({ title: 'Erro ao testar conexão', description: err.message, variant: 'destructive' });
+      return null;
+    } finally {
+      setIsCheckingHealth(false);
+    }
+  }, [toast]);
 
   useEffect(() => {
     fetchConnectedAccount();
@@ -114,7 +197,8 @@ export function useMetaConnection() {
     if (data?.pixels) setPixels(data.pixels);
     if (data?.pages) setPages(data.pages);
     if (data?.businesses) setBusinesses(data.businesses);
-    if (data?.token) setPendingToken(data.token);
+    // A edge não devolve mais `token`. Guardamos apenas a referência da sessão.
+    if (data?.session_id) setPendingSessionId(data.session_id);
   };
 
   const consumeOAuthSession = async (sessionId: string) => {
@@ -252,23 +336,25 @@ export function useMetaConnection() {
   };
 
   const selectAccount = async (account: any) => {
-    if (!pendingToken) return;
+    if (!pendingSessionId) return;
     setIsConnecting(true);
     try {
+      // Caminho de conta única passa pelo MESMO fluxo do multi: sessão no
+      // servidor, sem token no navegador.
       const { data, error } = await supabase.functions.invoke('meta-oauth', {
         body: {
-          action: 'save_account',
-          account_id: account.id,
-          account_name: account.name,
-          currency: account.currency,
-          timezone: account.timezone_name,
-          access_token: pendingToken,
+          action: 'save_selected',
+          session_id: pendingSessionId,
+          account_ids: [String(account.account_id ?? account.id).replace(/^act_/, '')],
         },
       });
 
       if (error) throw error;
+      if ((data as any)?.ok !== true) {
+        throw new Error((data as any)?.error ?? 'Falha ao integrar a conta');
+      }
 
-      setPendingToken(null);
+      setPendingSessionId(null);
       setAvailableAccounts([]);
       setPixels([]);
       setPages([]);
@@ -300,22 +386,28 @@ export function useMetaConnection() {
 
   // Fix 2: salva de uma vez as contas/pixels/paginas SELECIONADOS (checkboxes).
   const saveSelectedAssets = async (sel: { accounts: any[]; pixels: MetaPixel[]; pages: MetaPage[] }) => {
-    if (!pendingToken) return { success: false };
+    if (!pendingSessionId) return { success: false };
     setIsConnecting(true);
     try {
       const { data, error } = await supabase.functions.invoke('meta-oauth', {
         body: {
           action: 'save_selected',
-          access_token: pendingToken,
-          accounts: sel.accounts,
+          // Só a referência da sessão e os IDs escolhidos. O backend recupera o
+          // token da sessão e confere que cada ID veio DESSA autorização.
+          session_id: pendingSessionId,
+          account_ids: sel.accounts.map((a: any) => String(a.account_id ?? a.id).replace(/^act_/, '')),
           pixels: sel.pixels,
           pages: sel.pages,
         },
       });
       if (error) throw error;
-      if ((data as any)?.error) throw new Error((data as any).error);
+      // Erro parcial NÃO é sucesso: a edge devolve ok:false com a lista.
+      if ((data as any)?.ok !== true) {
+        const errs = (data as any)?.errors ?? [];
+        throw new Error((data as any)?.error ?? errs[0] ?? 'Falha ao integrar');
+      }
 
-      setPendingToken(null);
+      setPendingSessionId(null);
       setAvailableAccounts([]);
       setPixels([]);
       setPages([]);
@@ -393,7 +485,13 @@ export function useMetaConnection() {
   return {
     isConnecting,
     isLoading,
+    isCheckingHealth,
+    /** Estado REAL da conexão do José (servidor). Não derive de is_active. */
+    joseState,
+    testConnection,
+    /** A conta ativa no José, confirmada pelo servidor. */
     connectedAccount,
+    /** Contas encontradas/integradas neste tenant — conceito SEPARADO da ativa. */
     connectedAccounts,
     availableAccounts,
     pixels,
