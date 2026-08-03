@@ -49,6 +49,17 @@ const LEASE_MIN = 10;          // janela da reserva enquanto o agente trabalha
 const MAX_ATTEMPTS = 3;        // tentativas antes de desistir do dia
 const BACKOFF_MIN = [5, 20];   // espera após 1ª e 2ª falha (minutos)
 
+/**
+ * Allowlist da implantacao gradual do "conta exata".
+ * Tenants aqui usam EXCLUSIVAMENTE apollo_cron_config.selected_ad_account_id e
+ * exigem credencial connected. Quem esta fora segue rodando (ver comentario no
+ * bloco de escolha da conta). Formato: uuids separados por virgula.
+ */
+const ENFORCE_EXACT_ACCOUNT = new Set(
+  (Deno.env.get("JOSE_EXACT_ACCOUNT_ENFORCEMENT_TENANT_IDS") ?? "")
+    .split(",").map((s) => s.trim()).filter(Boolean),
+);
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -135,8 +146,26 @@ Deno.serve(async (req) => {
       // uma e sem selecao, paramos com motivo claro em vez de adivinhar.
       let account: { account_id: string; access_token_encrypted: string | null } | null = null;
       let motivoConta: string | null = null;
+      const rigoroso = ENFORCE_EXACT_ACCOUNT.has(config.user_id);
 
-      if (!config.selected_ad_account_id) {
+      if (!config.selected_ad_account_id && !rigoroso) {
+        const { data: unicas, error: unErr } = await admin
+          .from("ad_accounts")
+          .select("account_id, access_token_encrypted")
+          .eq("user_id", config.user_id)
+          .eq("platform", "meta")
+          .eq("is_active", true);
+        if (unErr) {
+          motivoConta = `erro_lendo_conta:${unErr.code ?? unErr.message}`;
+        } else if ((unicas || []).length === 1) {
+          account = unicas![0] as any;
+          console.log(`[jose-cron-runner] ${config.user_id}: conta unica (fora da allowlist), sem ambiguidade`);
+        } else {
+          motivoConta = (unicas || []).length === 0
+            ? "sem_conta_meta_integrada"
+            : `selecao_obrigatoria:${(unicas || []).length}_contas_ativas`;
+        }
+      } else if (!config.selected_ad_account_id) {
         motivoConta = "conta_do_jose_nao_selecionada";
       } else {
         const { data: conta, error: contaErr } = await admin
