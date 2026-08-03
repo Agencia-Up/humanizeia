@@ -119,13 +119,24 @@ Deno.serve(async (req) => {
       runId = await abrirRun(admin, config.user_id, "daily_report", tentativa, leaseToken);
 
       // ── 2) PRÉ-REQUISITOS (antes de gastar qualquer chamada) ─────────────
-      const { data: account } = await admin
+      // ATENCAO: NAO usar .single()/.maybeSingle() aqui. Um tenant pode ter
+      // VARIAS contas Meta ativas (a Icom tem 10) e ambos estouram com
+      // "multiple rows returned" — o `data` volta null e o tenant era
+      // silenciosamente pulado. O relatorio diario da Icom estava quebrado por
+      // isso, sem ninguem perceber. Escolha DETERMINISTICA da primeira conta,
+      // mesmo criterio de getMetaTokenForUser no apollo-agent.
+      const { data: contas, error: contaErr } = await admin
         .from("ad_accounts")
         .select("account_id, access_token_encrypted")
         .eq("user_id", config.user_id)
         .eq("platform", "meta")
         .eq("is_active", true)
-        .maybeSingle();
+        .order("created_at", { ascending: true })
+        .limit(1);
+      if (contaErr) {
+        console.error("[jose-cron-runner] erro lendo ad_accounts de", config.user_id, contaErr.message ?? contaErr.code);
+      }
+      const account = (contas || [])[0] ?? null;
 
       const faltando: string[] = [];
       if (!account) faltando.push("conta_meta_ativa");
