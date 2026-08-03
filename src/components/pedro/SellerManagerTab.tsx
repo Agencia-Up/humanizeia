@@ -418,9 +418,12 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
     setSaving(true);
     try {
       const cleanPhone = newPhone.replace(/\D/g, '');
+      // Radix Select precisa de um valor textual para a opção "Nenhum".
+      // Esse sentinela nunca pode chegar à coluna UUID agent_id.
+      const selectedAgentId = newAgentId.trim();
       const payload = {
         user_id: userId,
-        agent_id: newAgentId || null,
+        agent_id: selectedAgentId && selectedAgentId !== 'none' ? selectedAgentId : null,
         name: newName.trim(),
         whatsapp_number: cleanPhone,
         email: newEmail.trim() || null,
