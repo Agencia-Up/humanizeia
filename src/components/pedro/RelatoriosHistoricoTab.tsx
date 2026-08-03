@@ -4,6 +4,7 @@ import { useToast } from '@/hooks/use-toast';
 import { loadV3FeedbackReport } from './v3FeedbackReports';
 import { Button } from '@/components/ui/button';
 import { FileText, Loader2, Download, CheckCircle2, Clock, AlertTriangle, Lightbulb, Send } from 'lucide-react';
+import jsPDF from 'jspdf';
 
 // ── Histórico dos relatórios que a IA produziu ───────────────────────────────
 // Substitui o antigo "Feedbacks" manual. Lista o que o Cérebro de Feedback gerou
@@ -72,8 +73,23 @@ export function RelatoriosHistoricoTab() {
   useEffect(() => { load(); }, [load]);
 
   const baixar = async (id: string) => {
-    if (rows.find((r) => r.id === id)?.v3) {
-      toast({ title: 'Dados do Pedro v3', description: 'Este registro é uma leitura operacional dos eventos e receipts do v3; ainda não existe PDF para ele.' });
+    const row = rows.find((r) => r.id === id);
+    if (row?.v3) {
+      const resumo = row.resumo || {};
+      const doc = new jsPDF();
+      doc.setFontSize(18);
+      doc.text('Relatório operacional — Pedro v3', 14, 20);
+      doc.setFontSize(11);
+      doc.text(`Data: ${fmtData(row.data_ref)}`, 14, 30);
+      doc.text(`Leads recebidos: ${Number(resumo.leads_recebidos) || 0}`, 14, 44);
+      doc.text(`Leads analisados: ${Number(resumo.leads_analisados) || 0}`, 14, 52);
+      doc.text(`Pendentes: ${Number(resumo.pendentes_analise) || 0}`, 14, 60);
+      doc.text(`Leads qualificados: ${Number(resumo.leads_qualificados) || 0}`, 14, 68);
+      doc.text(`Efeitos entregues: ${Number(resumo.efeitos_entregues) || 0}`, 14, 76);
+      doc.text(`Falhas v3: ${Number(resumo.falhas_v3) || 0}`, 14, 84);
+      doc.setFontSize(9);
+      doc.text('Fonte: eventos, decisões e receipts agregados do Pedro v3.', 14, 100);
+      doc.save(`relatorio-pedro-v3_${row.data_ref}.pdf`);
       return;
     }
     setBaixando(id);
@@ -195,17 +211,15 @@ export function RelatoriosHistoricoTab() {
                       </div>
                     )}
                   </div>
-                  {!r.v3 && (
-                    <Button
-                      variant="outline" size="sm"
-                      onClick={() => baixar(r.id)}
-                      disabled={baixando === r.id}
-                      className="gap-1.5 shrink-0"
-                    >
-                      {baixando === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                      Baixar PDF
-                    </Button>
-                  )}
+                  <Button
+                    variant="outline" size="sm"
+                    onClick={() => baixar(r.id)}
+                    disabled={baixando === r.id}
+                    className="gap-1.5 shrink-0"
+                  >
+                    {baixando === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                    Baixar PDF
+                  </Button>
                 </div>
               </div>
             );
