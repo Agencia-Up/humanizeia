@@ -50,6 +50,74 @@ const nextMonday = nextTransferWindowStart(configured.transfer.window, sunday);
 check("domingo reabre na segunda no inicio configurado", nextMonday.toISOString() === "2026-07-20T12:11:00.000Z");
 check("timeout rearmado começa depois da abertura", rearmTransferAtNextWindow(configured.transfer.window, sunday, 15).toISOString() === "2026-07-20T12:26:00.000Z");
 
+const weekly = resolveAutomationRules({
+  transfer: {
+    enabled: true,
+    seller_response_min: 15,
+    window: {
+      version: 2,
+      enabled: true,
+      timezone: "America/Sao_Paulo",
+      weekly: [
+        { day: 1, mode: "custom", windows: [{ start: "08:30", end: "19:30" }] },
+        { day: 2, mode: "custom", windows: [{ start: "08:30", end: "19:30" }] },
+        { day: 3, mode: "custom", windows: [{ start: "08:00", end: "12:00" }, { start: "14:00", end: "18:00" }] },
+        { day: 4, mode: "custom", windows: [{ start: "08:30", end: "19:30" }] },
+        { day: 5, mode: "custom", windows: [{ start: "08:30", end: "19:30" }] },
+        { day: 6, mode: "custom", windows: [{ start: "09:00", end: "13:00" }] },
+        { day: 7, mode: "closed", windows: [] },
+      ],
+    },
+  },
+});
+check("agenda semanal fecha domingo por configuracao", !isWithinTransferWindow(weekly.transfer.window, sunday));
+check("agenda semanal abre segunda no horario proprio", isWithinTransferWindow(
+  weekly.transfer.window,
+  new Date("2026-07-20T12:00:00.000Z"), // 09:00 BRT
+));
+check("domingo fechado rearma na abertura configurada de segunda", nextTransferWindowStart(
+  weekly.transfer.window,
+  sunday,
+).toISOString() === "2026-07-20T11:30:00.000Z");
+check("rearme semanal concede o prazo integral ao vendedor", rearmTransferAtNextWindow(
+  weekly.transfer.window,
+  sunday,
+  15,
+).toISOString() === "2026-07-20T11:45:00.000Z");
+
+const wednesdayGap = new Date("2026-07-22T16:00:00.000Z"); // 13:00 BRT
+check("intervalo entre expedientes congela o rodizio", !isWithinTransferWindow(weekly.transfer.window, wednesdayGap));
+check("intervalo entre expedientes reabre no segundo horario do mesmo dia", nextTransferWindowStart(
+  weekly.transfer.window,
+  wednesdayGap,
+).toISOString() === "2026-07-22T17:00:00.000Z");
+
+const sundayOpen = resolveAutomationRules({
+  transfer: {
+    window: {
+      version: 2,
+      enabled: true,
+      weekly: [{ day: 7, mode: "all_day", windows: [{ start: "00:00", end: "24:00" }] }],
+    },
+  },
+});
+check("domingo pode operar quando a loja configurar 24 horas", isWithinTransferWindow(sundayOpen.transfer.window, sunday));
+
+const malformedWeekly = resolveAutomationRules({
+  transfer: {
+    window: {
+      version: 2,
+      enabled: true,
+      weekly: [{ day: 1, mode: "custom", windows: [{ start: "19:00", end: "08:00" }] }],
+    },
+  },
+});
+check("agenda semanal invalida falha fechada", !isWithinTransferWindow(malformedWeekly.transfer.window, monday));
+check("agenda semanal invalida nao cai na janela legada", nextTransferWindowStart(
+  malformedWeekly.transfer.window,
+  monday,
+).getUTCFullYear() === 2099);
+
 check(
   "prazo persistido vence sobre created_at antigo",
   effectiveTransferDeadline({

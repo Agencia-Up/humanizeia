@@ -30,6 +30,20 @@ describe('agentResponseSchedule', () => {
     expect(decoded).toEqual(expected);
   });
 
+  it('migra a janela antiga do rodízio para segunda a sábado sem abrir domingo', () => {
+    const week = readResponseWeekPlan({
+      responseSchedule: { enabled: true, start: '09:11', end: '18:29' },
+      legacyDays: [1, 2, 3, 4, 5, 6],
+    });
+
+    expect(week.slice(0, 6).every((day) => (
+      day.mode === 'custom'
+      && day.windows[0]?.start === '09:11'
+      && day.windows[0]?.end === '18:29'
+    ))).toBe(true);
+    expect(week[6]).toMatchObject({ day: 7, mode: 'closed', windows: [] });
+  });
+
   it('preset fora do comercial deixa sábado e domingo em 24 horas', () => {
     const week = buildResponseWeekPreset('outside_business_hours');
     expect(week[0].windows).toEqual([

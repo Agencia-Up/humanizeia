@@ -23,6 +23,14 @@ type AgentResponseScheduleEditorProps = {
   readonly week: ResponseWeekPlan;
   readonly onEnabledChange: (enabled: boolean) => void;
   readonly onWeekChange: (week: ResponseWeekPlan) => void;
+  readonly title?: string;
+  readonly description?: string;
+  readonly toggleAriaLabel?: string;
+  readonly disabledStatusLabel?: string;
+  readonly disabledDescription?: string;
+  readonly enabledFooter?: string;
+  readonly presetOptions?: readonly ResponseWeekPreset[];
+  readonly contentIdPrefix?: string;
 };
 
 const HALF_HOUR_OPTIONS = Array.from({ length: 48 }, (_, index) => {
@@ -125,6 +133,14 @@ export function AgentResponseScheduleEditor({
   week,
   onEnabledChange,
   onWeekChange,
+  title = 'Horários de atendimento da IA',
+  description = 'Defina quando este agente pode responder automaticamente.',
+  toggleAriaLabel = 'Restringir respostas da IA por horário',
+  disabledStatusLabel = 'Sem restrição',
+  disabledDescription = 'A IA pode responder em qualquer dia e horário. CRM, inbox e transferências permanecem disponíveis em todos os modos.',
+  enabledFooter = 'Esta agenda pausa somente as respostas automáticas da IA e os follow-ups T1/T2/T3. CRM, inbox e transferência manual continuam funcionando. Fuso: São Paulo (UTC−3).',
+  presetOptions,
+  contentIdPrefix = 'response-schedule',
 }: AgentResponseScheduleEditorProps) {
   const [expandedDay, setExpandedDay] = useState<number | null>(null);
   const byDay = new Map(week.map((plan) => [plan.day, plan]));
@@ -195,18 +211,18 @@ export function AgentResponseScheduleEditor({
               <CalendarDays className="h-4 w-4" />
             </div>
             <div>
-              <Label className="text-sm font-semibold">Horários de atendimento da IA</Label>
+              <Label className="text-sm font-semibold">{title}</Label>
               <p className="text-xs text-muted-foreground">
-                Defina quando este agente pode responder automaticamente.
+                {description}
               </p>
             </div>
           </div>
         </div>
         <div className="flex items-center justify-between gap-3 rounded-full border border-border/70 bg-background/80 px-3 py-2 sm:justify-start">
           <span className={cn('text-xs font-medium', enabled ? 'text-emerald-500' : 'text-muted-foreground')}>
-            {enabled ? `${openDays} ${openDays === 1 ? 'dia ativo' : 'dias ativos'}` : 'Sem restrição'}
+            {enabled ? `${openDays} ${openDays === 1 ? 'dia ativo' : 'dias ativos'}` : disabledStatusLabel}
           </span>
-          <Switch checked={enabled} onCheckedChange={onEnabledChange} aria-label="Restringir respostas da IA por horário" />
+          <Switch checked={enabled} onCheckedChange={onEnabledChange} aria-label={toggleAriaLabel} />
         </div>
       </div>
 
@@ -225,7 +241,7 @@ export function AgentResponseScheduleEditor({
                 <p className="mt-1 text-xs text-muted-foreground">O modelo só preenche a agenda. Você pode ajustar cada dia logo abaixo.</p>
               </div>
               <div className="grid gap-2 md:grid-cols-3">
-                {PRESETS.map(({ value, label, description, icon: Icon }) => (
+                {PRESETS.filter(({ value }) => !presetOptions || presetOptions.includes(value)).map(({ value, label, description, icon: Icon }) => (
                   <button
                     key={value}
                     type="button"
@@ -246,7 +262,7 @@ export function AgentResponseScheduleEditor({
               {RESPONSE_WEEK_DAYS.map((dayInfo) => {
                 const plan = planFor(dayInfo.value);
                 const isExpanded = expandedDay === dayInfo.value;
-                const contentId = `response-schedule-day-${dayInfo.value}`;
+                const contentId = `${contentIdPrefix}-day-${dayInfo.value}`;
                 return (
                   <div key={dayInfo.value}>
                     <button
@@ -373,10 +389,7 @@ export function AgentResponseScheduleEditor({
 
             <div className="flex items-start gap-2.5 border-t border-border/60 bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
               <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
-              <p>
-                Esta agenda pausa somente as respostas automáticas da IA e os follow-ups T1/T2/T3.
-                CRM, inbox e transferência manual continuam funcionando. Fuso: São Paulo (UTC−3).
-              </p>
+              <p>{enabledFooter}</p>
             </div>
           </motion.div>
         ) : (
@@ -388,7 +401,7 @@ export function AgentResponseScheduleEditor({
             className="flex items-start gap-2.5 px-4 py-3 text-xs text-muted-foreground"
           >
             <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-            <p>A IA pode responder em qualquer dia e horário. CRM, inbox e transferências permanecem disponíveis em todos os modos.</p>
+            <p>{disabledDescription}</p>
           </motion.div>
         )}
       </AnimatePresence>
