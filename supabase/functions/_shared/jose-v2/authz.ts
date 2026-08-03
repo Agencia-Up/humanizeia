@@ -50,6 +50,7 @@ export async function authenticateJoseCaller(
   req: Request,
   admin: any,
   createClientFn: (url: string, key: string, opts?: any) => any,
+  tenantContext?: string | null,
 ): Promise<AuthnResult> {
   const authHeader = req.headers.get("Authorization") || "";
   if (!authHeader.toLowerCase().startsWith("bearer ")) {
@@ -70,19 +71,41 @@ export async function authenticateJoseCaller(
     return { ok: false, status: 401, error: "token_invalido_ou_expirado" };
   }
 
-  return { ok: true, access: await buildAccess(admin, authUserId) };
+  return { ok: true, access: await buildAccess(admin, authUserId, tenantContext) };
 }
 
-/** Monta o contrato de poder a partir da identidade JÁ verificada. */
-export async function buildAccess(admin: any, authUserId: string): Promise<JoseAccess> {
+/**
+ * Monta o contrato de poder a partir da identidade JÁ verificada.
+ *
+ * PROVA DE PROPRIEDADE (corrigido após auditoria): a única prova de que alguém
+ * é dono do tenant é `authUserId === tenantId`. A versão anterior tratava
+ * "role != 'seller'" como propriedade e concedia canMutate — o que dava poder de
+ * mutação a gerente, responsável ou qualquer perfil não-seller. `role` descreve
+ * o TIPO de conta, nunca a titularidade de um tenant.
+ *
+ * Quem NÃO é o tenant (gerente, responsável, parceiro, vendedor) precisa, em
+ * conjunto: vínculo ATIVO e não removido com aquele tenant + permissão
+ * EXPLÍCITA em jose_permissions (avaliada por ação em canMutateAction).
+ *
+ * `tenantContext` é o tenant EXPLÍCITO e VERIFICÁVEL da requisição — na prática
+ * derivado do RECURSO pedido (dono da conta de anúncios). Quando o usuário tem
+ * vínculo ativo com MAIS DE UM tenant, ele é obrigatório: pegar `ativos[0]`
+ * seria o sistema decidir sozinho em nome de qual empresa a pessoa está agindo.
+ * Sem contexto confiável e com ambiguidade -> RECUSA.
+ */
+export async function buildAccess(
+  admin: any,
+  authUserId: string,
+  tenantContext?: string | null,
+): Promise<JoseAccess> {
   const base: JoseAccess = {
     authUserId,
     tenantId: authUserId,
-    isOwner: true,
+    isOwner: false,
     isSeller: false,
     isManager: false,
-    canView: true,
-    canRecommend: true,
+    canView: false,
+    canRecommend: false,
     canMutate: false,
     motivo: "nao_avaliado",
   };
@@ -95,46 +118,102 @@ export async function buildAccess(admin: any, authUserId: string): Promise<JoseA
       .maybeSingle();
 
     const isSeller = prof?.role === "seller";
-    const tenantId = await resolveEffectiveTenant(admin, authUserId);
-    const isOwner = !isSeller && tenantId === authUserId;
+    const isSuperadmin = prof?.is_superadmin === true; // campo oficial, não inferência
 
-    if (!isSeller) {
-      // dono/master: pode tudo no PRÓPRIO tenant (guardrails ainda se aplicam
-      // depois — kill-switch, caps, aprovação).
+    // ── VÍNCULO PRIMEIRO, papel nunca ──────────────────────────────────────
+    // A pergunta que decide tudo é "este usuário É um membro de alguma conta?",
+    // não "qual o role dele?". Quem tem vínculo ATIVO é MEMBRO daquele tenant —
+    // seja vendedor, gerente ou responsável — e por isso precisa de permissão
+    // explícita para mutar. Só quem não é membro de ninguém opera a própria
+    // conta como dono.
+    // ATENÇÃO: a busca NÃO filtra removido/inativo no banco. Se filtrasse, um
+    // membro DESLIGADO voltaria zero linhas e cairia no ramo "dono" logo abaixo,
+    // recebendo poder total — foi exatamente o bug que o teste A8/A9 pegou.
+    // Precisamos distinguir "nunca foi membro" de "é membro, porém morto".
+    const { data: vinculos } = await admin
+      .from("ai_team_members")
+      .select("user_id, is_manager, visible_features, removed_at, active_in_system")
+      .eq("auth_user_id", authUserId)
+      .order("is_manager", { ascending: false })
+      .limit(20);
+
+    const todos = (vinculos || []) as any[];
+    const ativos = todos.filter((v) => v.removed_at == null && v.active_in_system !== false);
+
+    // ── VÍNCULO EXISTE MAS ESTÁ MORTO: nega tudo ──────────────────────────
+    if (todos.length > 0 && ativos.length === 0) {
+      if (isSuperadmin) {
+        // Mesmo superadmin precisa dizer QUAL tenant quando há mais de um.
+        const alvo = tenantContext ?? (todos.length === 1 ? (todos[0].user_id as string) : null);
+        if (!alvo) return { ...base, isSeller, motivo: "associacao_ambigua_informe_tenant" };
+        return {
+          ...base, tenantId: alvo, isSeller, isManager: true,
+          canView: true, canRecommend: true, canMutate: true, motivo: "superadmin_comprovado",
+        };
+      }
       return {
         ...base,
-        tenantId,
-        isOwner,
-        isSeller: false,
-        isManager: true,
-        canMutate: true,
-        motivo: prof?.is_superadmin ? "superadmin" : "owner_master",
+        tenantId: tenantContext ?? (todos.length === 1 ? (todos[0].user_id as string) : authUserId),
+        isSeller,
+        motivo: "vinculo_removido_ou_inativo",
       };
     }
 
-    // ── vendedor/parceiro ──────────────────────────────────────────────────
-    const { data: membro } = await admin
-      .from("ai_team_members")
-      .select("is_manager, visible_features, removed_at, active_in_system")
-      .eq("auth_user_id", authUserId)
-      .eq("user_id", tenantId)
-      .is("removed_at", null)
-      .neq("active_in_system", false)
-      .order("is_manager", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (!membro) {
-      // Vendedor sem vínculo ativo com o tenant: nem lê.
+    // ── DONO: nunca foi membro de ninguém, o escopo é a própria conta ──────
+    if (ativos.length === 0) {
+      // Confirma que o tenant efetivo é ele mesmo; se apontar para outra conta
+      // (ex.: profiles.manager_id preenchido), NÃO é dono.
+      const tenantResolvido = await resolveEffectiveTenant(admin, authUserId);
+      if (tenantResolvido !== authUserId) {
+        return {
+          ...base, tenantId: tenantResolvido, isSeller,
+          canView: isSuperadmin, canRecommend: isSuperadmin, canMutate: isSuperadmin,
+          motivo: isSuperadmin ? "superadmin_comprovado" : "vinculo_inativo_ou_removido",
+        };
+      }
       return {
-        ...base,
-        tenantId,
-        isOwner: false,
-        isSeller: true,
-        canView: false,
-        canRecommend: false,
-        canMutate: false,
-        motivo: "vendedor_sem_vinculo_ativo",
+        ...base, tenantId: authUserId, isOwner: true, isSeller, isManager: true,
+        canView: true, canRecommend: true, canMutate: true,
+        motivo: "owner_do_tenant",
+      };
+    }
+
+    // ── RESOLUÇÃO DO TENANT: explícita, nunca "o primeiro da lista" ────────
+    const tenantsAtivos = [...new Set(ativos.map((v) => String(v.user_id)))];
+    let membro: any;
+    let tenantId: string;
+
+    if (tenantContext) {
+      // Contexto informado: só vale se houver vínculo ATIVO exatamente nele.
+      const casa = ativos.filter((v) => String(v.user_id) === String(tenantContext));
+      if (casa.length === 0) {
+        return {
+          ...base, tenantId: String(tenantContext), isSeller,
+          motivo: "sem_vinculo_ativo_no_tenant_solicitado",
+        };
+      }
+      // Entre linhas-irmãs do MESMO tenant, a de gerente tem precedência —
+      // isso não é escolha de tenant, é escolha de papel dentro dele.
+      membro = casa.find((v) => v.is_manager === true) ?? casa[0];
+      tenantId = String(tenantContext);
+    } else if (tenantsAtivos.length === 1) {
+      const casa = ativos.filter((v) => String(v.user_id) === tenantsAtivos[0]);
+      membro = casa.find((v) => v.is_manager === true) ?? casa[0];
+      tenantId = tenantsAtivos[0];
+    } else {
+      // Vários tenants ativos e nenhum contexto confiável: RECUSA.
+      return {
+        ...base, isSeller,
+        motivo: `associacao_ambigua_informe_tenant:${tenantsAtivos.length}_tenants_ativos`,
+      };
+    }
+
+    // Superadmin comprovado mantém poder mesmo sendo membro de alguma conta.
+    if (isSuperadmin) {
+      return {
+        ...base, tenantId, isOwner: false, isSeller, isManager: true,
+        canView: true, canRecommend: true, canMutate: true,
+        motivo: "superadmin_comprovado",
       };
     }
 
@@ -146,18 +225,20 @@ export async function buildAccess(admin: any, authUserId: string): Promise<JoseA
       ...base,
       tenantId,
       isOwner: false,
-      isSeller: true,
+      isSeller,
       isManager: membro.is_manager === true,
       canView: temJose,
       canRecommend: temJose,
-      // MUTAÇÃO exige prova positiva, avaliada por ação em canMutateAction().
+      // MUTAÇÃO nunca vem do vínculo: exige prova positiva por ação em
+      // canMutateAction(), inclusive para gerente.
       canMutate: false,
-      motivo: temJose ? "vendedor_precisa_permissao_explicita" : "vendedor_sem_agent_jose",
+      motivo: temJose
+        ? (membro.is_manager === true ? "gerente_precisa_permissao_explicita" : "membro_precisa_permissao_explicita")
+        : "sem_agent_jose",
     };
   } catch (e) {
-    // Fail-closed no poder, fail-open na leitura: erro de infraestrutura não
-    // pode liberar gasto, mas também não pode derrubar o painel de todo mundo.
-    return { ...base, canMutate: false, motivo: `erro_avaliando_permissao:${String((e as any)?.message || e)}` };
+    // Fail-closed em TUDO: sem conseguir avaliar, não há leitura nem mutação.
+    return { ...base, motivo: `erro_avaliando_permissao:${String((e as any)?.message || e)}` };
   }
 }
 

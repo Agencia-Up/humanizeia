@@ -349,7 +349,7 @@ Deno.test("T7b - cron so considera sucesso com response.ok E corpo coerente", as
     .join("\n");
   assert(!/status:\s*"ok"/.test(semComentarios), "não pode mais reportar 'ok' fixo no código");
   // next_run_at definitivo só depois do resultado
-  const idxLease = src.indexOf("const lease =");
+  const idxLease = src.indexOf("const leaseAte =");
   const idxFinal = src.indexOf("SÓ AGORA agenda o próximo dia");
   assert(idxLease > 0 && idxFinal > idxLease, "o agendamento definitivo tem de vir DEPOIS da execucao");
 });

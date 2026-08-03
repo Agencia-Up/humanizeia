@@ -47,6 +47,25 @@ Deno.serve(async (req) => {
       serviceKey
     );
 
+    // O corpo é lido ANTES da autorização porque o tenant precisa vir de um
+    // contexto explícito e verificável — aqui, o DONO da conta de anúncios
+    // pedida. Sem isso, um usuário com vínculo em várias contas não teria como
+    // dizer em nome de quem está agindo (e o código escolheria por ele).
+    const body = await req.json().catch(() => ({}));
+
+    let tenantContext: string | null = null;
+    if (body?.targetAccountId) {
+      // Busca SEM filtro de tenant: queremos descobrir de quem é a conta, e a
+      // associação do usuário com esse tenant é verificada logo em seguida.
+      const { data: contaAlvo } = await admin
+        .from("ad_accounts")
+        .select("user_id")
+        .eq("account_id", String(body.targetAccountId))
+        .limit(1)
+        .maybeSingle();
+      tenantContext = (contaAlvo?.user_id as string) ?? null;
+    }
+
     // ── Identidade do chamador ────────────────────────────────────────────
     // Dois caminhos, ambos exigindo prova criptográfica ou posse de segredo:
     //   CRON     -> service key (comparação estrita) + x-user-id, que agora é
@@ -85,16 +104,22 @@ Deno.serve(async (req) => {
       // buildAccess separa VER (tenant efetivo = master p/ parceiro) de PODER
       // (mutação exige owner/master ou permissão explícita). Antes, resolver o
       // tenant já dava poder de escrita ao vendedor.
-      access = await buildAccess(admin, authUser.id);
+      access = await buildAccess(admin, authUser.id, tenantContext);
       if (!access.canView) {
-        return new Response(JSON.stringify({ error: "sem_acesso_ao_jose", motivo: access.motivo }), { status: 403, headers: corsHeaders });
+        const ambiguo = access.motivo.startsWith("associacao_ambigua");
+        return new Response(JSON.stringify({
+          error: ambiguo ? "associacao_ambigua" : "sem_acesso_ao_jose",
+          motivo: access.motivo,
+          detalhe: ambiguo
+            ? "Voce tem vinculo ativo com mais de uma conta. Informe targetAccountId para indicar em nome de qual empresa a operacao acontece."
+            : undefined,
+        }), { status: ambiguo ? 409 : 403, headers: corsHeaders });
       }
     }
 
     // Shim de compatibilidade: o restante do arquivo usa `user.id` como TENANT.
     const user = { id: access.tenantId };
 
-    const body = await req.json().catch(() => ({}));
     const {
       targetAccountId,
       datePreset = "last_30d",
@@ -330,7 +355,7 @@ Deno.serve(async (req) => {
     let accountId: string;
     let currency = "BRL";
 
-    const adAccountDbId: string | undefined = adAccount?.id;
+    const adAccountDbId: string | null = adAccount?.id ?? null;
     const adAccountName: string = adAccount?.account_name || "Conta Meta";
 
     if (adAccount?.access_token_encrypted && adAccount?.account_id) {
@@ -383,7 +408,9 @@ Deno.serve(async (req) => {
       fetchAdSetBudgets(accessToken, accountId),
     ]);
 
-    const insightsMap = new Map(insights.map((i: any) => [i.campaign_id, i]));
+    // Tipagem explícita: sem ela o TS infere Map<unknown, unknown> a partir do
+    // array de `any` e a chamada a enrichCampaign nao compila.
+    const insightsMap = new Map<string, any>(insights.map((i: any) => [String(i.campaign_id), i]));
     const adSetInsightsMap = buildAdSetInsightsMap(adSetInsights);
 
     // ── Enrich campaigns with insights + health score ──
@@ -433,7 +460,7 @@ Deno.serve(async (req) => {
     // ── Validate & fix campaign IDs in actions (AI sometimes returns slugs instead of numeric IDs) ──
     if (aiResult.actions?.length > 0) {
       const campaignIdMap = new Map(enriched.map((c: any) => [c.id, c]));
-      const campaignNameMap = new Map(enriched.map((c: any) => [c.name.toLowerCase().trim(), c]));
+      const campaignNameMap = new Map<string, any>(enriched.map((c: any) => [c.name.toLowerCase().trim(), c]));
 
       aiResult.actions = aiResult.actions.map((action: any) => {
         // If campaign_id is already valid (exists in enriched), keep it
@@ -1765,8 +1792,11 @@ async function handleExecuteAction(
 
     if (guard.decision === "block") {
       const resp = { ok: false, bloqueado: true, motivo: guard.reason, nivel: guard.nivel };
-      await idem.complete(admin, registroId, "failed", resp);
+      const f = await finalizarReserva(admin, registroId, "failed", resp, {
+        access, conta, recurso: campaignId, tipoAcao, idempotencyKey, metaFoiAlterada: false,
+      });
       await registrarAuditoria(admin, access, conta, campaignId, tipoAcao, actionParams, null, "bloqueado", guard.reason, idempotencyKey);
+      if (!f.ok) return json(f.corpo, f.status, corsHeaders);
       return json(resp, 409, corsHeaders);
     }
 
@@ -1785,8 +1815,11 @@ async function handleExecuteAction(
       try { if (ap) await sendApprovalWhatsApp(admin, { user_id: access.tenantId, agent_id: null, approval: ap }); } catch { /* best-effort */ }
 
       const resp = { ok: false, aguardando_aprovacao: true, approval_id: ap?.id ?? null, motivo: guard.reason };
-      await idem.complete(admin, registroId, "failed", resp);
+      const f = await finalizarReserva(admin, registroId, "failed", resp, {
+        access, conta, recurso: campaignId, tipoAcao, idempotencyKey, metaFoiAlterada: false,
+      });
       await registrarAuditoria(admin, access, conta, campaignId, tipoAcao, actionParams, null, "aguardando_aprovacao", guard.reason, idempotencyKey);
+      if (!f.ok) return json(f.corpo, f.status, corsHeaders);
       return json(resp, 202, corsHeaders);
     }
 
@@ -1822,13 +1855,115 @@ async function handleExecuteAction(
       } catch { /* outcome é best-effort */ }
     }
 
-    await idem.complete(admin, registroId, metaFalhou ? "failed" : "succeeded", result);
+    const fim = await finalizarReserva(admin, registroId, metaFalhou ? "failed" : "succeeded", result, {
+      access, conta, recurso: campaignId, tipoAcao, idempotencyKey, metaFoiAlterada: true,
+    });
+    // A ação JÁ aconteceu na Meta. Se a finalização local falhou, o helper
+    // monta o desfecho explícito (não sucesso limpo, que seria mentira; nem
+    // erro puro, que induziria repetição e gasto dobrado) e já registrou a
+    // auditoria operacional para reconciliação.
+    if (!fim.ok) return json(fim.corpo, fim.status, corsHeaders);
     return json(result, status, corsHeaders);
   } catch (e: any) {
+    // A excecao pode ter ocorrido DEPOIS da chamada a Meta: tratamos como
+    // possivelmente alterada (conservador) para nao induzir repeticao cega.
     const resp = { ok: false, error: "falha_executando_acao", detalhe: String(e?.message || e) };
-    await idem.complete(admin, registroId, "failed", resp);
+    const f = await finalizarReserva(admin, registroId, "failed", resp, {
+      access, conta, recurso: campaignId, tipoAcao, idempotencyKey, metaFoiAlterada: true,
+    });
+    if (!f.ok) return json(f.corpo, f.status, corsHeaders);
     return json(resp, 500, corsHeaders);
   }
+}
+
+
+/**
+ * Finaliza a reserva de idempotência tratando SEMPRE o retorno.
+ *
+ * Nenhum caminho pode deixar a reserva silenciosamente em 'in_progress': se
+ * isso acontecer, toda repetição futura daquela chave responde 409 "em
+ * andamento" para sempre, e a ação fica travada sem ninguém perceber.
+ *
+ * Quando a Meta JÁ foi alterada e a finalização local falha, devolvemos um
+ * desfecho observável em vez de sucesso — com dados suficientes para
+ * reconciliação manual (chave, conta, recurso, resultado da Meta).
+ */
+async function finalizarReserva(
+  admin: any,
+  registroId: string,
+  status: "succeeded" | "failed",
+  resposta: unknown,
+  ctx: {
+    access: JoseAccess;
+    conta?: { db_id: string; account_id: string } | null;
+    recurso?: string | null;
+    tipoAcao: string;
+    idempotencyKey?: string;
+    metaFoiAlterada: boolean;
+  },
+): Promise<{ ok: true } | { ok: false; corpo: unknown; status: number }> {
+  const fim = await idem.complete(admin, registroId, status, resposta);
+  if (fim.ok) return { ok: true };
+
+  console.error(
+    `[apollo-agent] RESERVA NAO FINALIZADA (${fim.motivo}: ${fim.detalhe}) ` +
+    `tenant=${ctx.access.tenantId} chave=${ctx.idempotencyKey} recurso=${ctx.recurso} meta_alterada=${ctx.metaFoiAlterada}`,
+  );
+
+  // Auditoria operacional: preserva o necessário para reconciliar depois.
+  try {
+    await admin.from("apollo_action_log").insert({
+      user_id: ctx.access.tenantId,
+      campaign_id: ctx.recurso ?? null,
+      action_type: ctx.tipoAcao,
+      params: {
+        _ator: ctx.access.authUserId,
+        _idempotency_key: ctx.idempotencyKey ?? null,
+        _conta_meta: ctx.conta?.account_id ?? null,
+        _registro_idempotencia: registroId,
+        _falha_persistencia: fim,
+        _meta_foi_alterada: ctx.metaFoiAlterada,
+        _desfecho: "reserva_nao_finalizada",
+      },
+      result: resposta ?? null,
+      executed_by: ctx.access.isSeller ? "parceiro" : "user",
+      executed_at: new Date().toISOString(),
+    });
+  } catch (e) {
+    console.error("[apollo-agent] auditoria da inconsistencia TAMBEM falhou:", String((e as any)?.message || e));
+  }
+
+  if (ctx.metaFoiAlterada) {
+    return {
+      ok: false,
+      status: 500,
+      corpo: {
+        ok: false,
+        estado: "aplicado_na_meta_sem_confirmacao_local",
+        alerta: "A ação foi enviada à Meta, mas o registro local não pôde ser finalizado. NÃO repita a operação: confira o estado na Meta antes de tentar de novo.",
+        idempotency_key: ctx.idempotencyKey ?? null,
+        conta_meta: ctx.conta?.account_id ?? null,
+        recurso: ctx.recurso ?? null,
+        registro_idempotencia: registroId,
+        persistencia: fim,
+        resultado_meta: resposta,
+      },
+    };
+  }
+
+  return {
+    ok: false,
+    status: 503,
+    corpo: {
+      ok: false,
+      estado: "reserva_nao_finalizada",
+      alerta: "Nada foi alterado na Meta, mas o registro de idempotência ficou pendente. Use uma NOVA idempotency_key para tentar novamente.",
+      idempotency_key: ctx.idempotencyKey ?? null,
+      registro_idempotencia: registroId,
+      persistencia: fim,
+      desfecho_pretendido: resposta,
+    },
+  };
 }
 
 function json(payload: unknown, status: number, corsHeaders: any) {
@@ -1953,7 +2088,10 @@ async function handleCloneCampaign(admin: any, access: JoseAccess, targetAccount
   });
   if (guard.decision === "block") {
     const resp = { ok: false, bloqueado: true, motivo: guard.reason };
-    await idem.complete(admin, registroId, "failed", resp);
+    const f = await finalizarReserva(admin, registroId, "failed", resp, {
+      access, conta, recurso: campaignId, tipoAcao, idempotencyKey, metaFoiAlterada: false,
+    });
+    if (!f.ok) return json(f.corpo, f.status, corsHeaders);
     return json(resp, 409, corsHeaders);
   }
   if (guard.decision === "gate") {
@@ -1968,7 +2106,10 @@ async function handleCloneCampaign(admin: any, access: JoseAccess, targetAccount
     }).select().maybeSingle();
     try { if (ap) await sendApprovalWhatsApp(admin, { user_id: access.tenantId, agent_id: null, approval: ap }); } catch { /* best-effort */ }
     const resp = { ok: false, aguardando_aprovacao: true, approval_id: ap?.id ?? null, motivo: guard.reason };
-    await idem.complete(admin, registroId, "failed", resp);
+    const f = await finalizarReserva(admin, registroId, "failed", resp, {
+      access, conta, recurso: campaignId, tipoAcao, idempotencyKey, metaFoiAlterada: false,
+    });
+    if (!f.ok) return json(f.corpo, f.status, corsHeaders);
     return json(resp, 202, corsHeaders);
   }
 
@@ -2007,14 +2148,22 @@ async function handleCloneCampaign(admin: any, access: JoseAccess, targetAccount
     }
 
     const resp = { success: true, ...result };
-    await idem.complete(admin, registroId, "succeeded", resp);
+    const f = await finalizarReserva(admin, registroId, "succeeded", resp, {
+      access, conta, recurso: campaignId, tipoAcao, idempotencyKey, metaFoiAlterada: true,
+    });
     await registrarAuditoria(admin, access, conta, campaignId, tipoAcao, params, null, "executado", guard.reason, idempotencyKey, result);
+    if (!f.ok) return json(f.corpo, f.status, corsHeaders);
     return json(resp, 200, corsHeaders);
   } catch (err: any) {
     console.error("[apollo-agent] Clone error:", err?.message || err);
     const resp = { success: false, error: err?.message || "Erro ao clonar campanha" };
-    await idem.complete(admin, registroId, "failed", resp);
+    // O clone pode ter sido criado na Meta antes da excecao (a Copy API cria
+    // campanha + conjuntos + anuncios): tratamos como possivelmente alterada.
+    const f = await finalizarReserva(admin, registroId, "failed", resp, {
+      access, conta, recurso: campaignId, tipoAcao, idempotencyKey, metaFoiAlterada: true,
+    });
     await registrarAuditoria(admin, access, conta, campaignId, tipoAcao, params, null, "falha_meta", guard.reason, idempotencyKey, resp);
+    if (!f.ok) return json(f.corpo, f.status, corsHeaders);
     return json(resp, 502, corsHeaders);
   }
 }

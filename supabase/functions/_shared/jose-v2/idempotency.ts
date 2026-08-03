@@ -26,12 +26,64 @@ export type IdempotencyOutcome =
   | { estado: "conflito_de_payload" }
   | { estado: "indisponivel"; detalhe: string };
 
+/**
+ * Serialização CANÔNICA recursiva.
+ *
+ * A versão anterior usava `JSON.stringify(payload, Object.keys(payload).sort())`.
+ * O segundo argumento do stringify é um REPLACER ARRAY, e ele filtra chaves em
+ * TODOS os níveis — não apenas no topo. Consequência real: com o payload
+ * { campaignId, actionType, actionParams }, as chaves internas de actionParams
+ * (budget, daily_budget, ...) NÃO estavam na lista e eram DESCARTADAS do hash.
+ * Ou seja, `budget=100` e `budget=200` geravam a MESMA chave — a idempotência
+ * deixava passar como "repetição" duas ordens de gasto diferentes.
+ *
+ * Regras desta canonicalização:
+ *   - objetos: chaves ordenadas, recursivamente;
+ *   - arrays: ORDEM PRESERVADA (ordem é semântica em lista de anúncios/públicos);
+ *   - escalares preservados, com distinção de tipo (o número 1 != a string "1");
+ *   - undefined em objeto é omitido; em array vira null (igual ao JSON);
+ *   - ciclos viram marcador explícito em vez de estourar.
+ */
+function canonicalize(valor: unknown, vistos = new WeakSet<object>()): string {
+  if (valor === null) return "null";
+  const t = typeof valor;
+
+  if (t === "number") return Number.isFinite(valor as number) ? JSON.stringify(valor) : '"__nao_finito__"';
+  if (t === "boolean") return valor ? "true" : "false";
+  if (t === "string") return JSON.stringify(valor);
+  if (t === "bigint") return `"__bigint__${String(valor)}"`;
+  if (t === "undefined" || t === "function" || t === "symbol") return "null";
+
+  const obj = valor as object;
+  if (vistos.has(obj)) return '"__ciclo__"';
+  vistos.add(obj);
+
+  try {
+    if (Array.isArray(valor)) {
+      // Ordem preservada de propósito.
+      return `[${valor.map((v) => canonicalize(v, vistos)).join(",")}]`;
+    }
+    if (valor instanceof Date) return JSON.stringify(valor.toISOString());
+
+    const entradas = Object.keys(valor as Record<string, unknown>)
+      .filter((k) => (valor as Record<string, unknown>)[k] !== undefined)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonicalize((valor as Record<string, unknown>)[k], vistos)}`);
+    return `{${entradas.join(",")}}`;
+  } finally {
+    vistos.delete(obj);
+  }
+}
+
 /** Hash estável do payload, para detectar reuso de chave com corpo diferente. */
 export async function hashPayload(payload: unknown): Promise<string> {
-  const canon = JSON.stringify(payload ?? null, Object.keys(payload ?? {}).sort());
+  const canon = canonicalize(payload ?? null);
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canon));
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
+
+/** Exposto só para teste: permite verificar a forma canônica diretamente. */
+export const _canonicalizeParaTeste = canonicalize;
 
 export async function begin(
   admin: any,
@@ -89,19 +141,45 @@ export async function begin(
   }
 }
 
+export type CompleteResultado =
+  | { ok: true }
+  | { ok: false; motivo: "erro_banco" | "nenhuma_linha" | "excecao"; detalhe: string };
+
+/**
+ * Finaliza a reserva. NÃO pode falhar em silêncio: se a persistência do
+ * resultado não confirmar, quem chamou precisa saber — senão o registro fica
+ * eternamente 'in_progress' e toda repetição daquela chave passa a devolver
+ * 409 "em andamento", travando a ação para sempre sem ninguém perceber.
+ *
+ * A atualização é CONDICIONAL a `status='in_progress'`: só quem reservou
+ * finaliza. Um retorno atrasado não sobrescreve um desfecho já gravado.
+ */
 export async function complete(
   admin: any,
   registroId: string,
   status: "succeeded" | "failed",
   resposta: unknown,
-): Promise<void> {
+): Promise<CompleteResultado> {
   try {
-    await admin
+    const { data, error } = await admin
       .from("jose_action_idempotency")
       .update({ status, response: resposta ?? null, completed_at: new Date().toISOString() })
-      .eq("id", registroId);
-  } catch (_e) {
-    // Não deixa a gravação do resultado derrubar a resposta ao cliente; o
-    // registro fica 'in_progress' e a chave permanece queimada (fail-closed).
+      .eq("id", registroId)
+      .eq("status", "in_progress")   // transição única
+      .select("id");
+
+    if (error) {
+      console.error(`[idempotency] FALHA ao finalizar ${registroId}: ${error.message ?? error.code}`);
+      return { ok: false, motivo: "erro_banco", detalhe: String(error.message ?? error.code) };
+    }
+    if (!data || (data as any[]).length === 0) {
+      // Já finalizado por outro caminho, ou id inexistente.
+      console.warn(`[idempotency] finalizacao de ${registroId} nao alterou nenhuma linha (ja finalizada?)`);
+      return { ok: false, motivo: "nenhuma_linha", detalhe: "registro ja finalizado ou inexistente" };
+    }
+    return { ok: true };
+  } catch (e) {
+    console.error(`[idempotency] EXCECAO ao finalizar ${registroId}: ${String((e as any)?.message || e)}`);
+    return { ok: false, motivo: "excecao", detalhe: String((e as any)?.message || e) };
   }
 }
