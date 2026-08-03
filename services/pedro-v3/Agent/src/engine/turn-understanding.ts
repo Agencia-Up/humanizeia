@@ -485,7 +485,7 @@ export function isStoreInfoTurn(v: ValidatedUnderstanding | null): boolean {
 //    precedência); subjectValue que CONFLITA com o claim escrito torna o entendimento INVÁLIDO (kind=conflict, zero mídia);
 //    inferência (typo, sem claim exato) só vira candidato se CONFIRMADA por stock_search/catálogo. vehicle_photos_resolve
 //    NUNCA confirma o modelo sozinho (knownModels só vem de stock_search/vehicle_details/oferta/identidade/seleção). ──
-export type TargetResolutionSource = "turn_ordinal" | "turn_offer_reference" | "turn_explicit_model" | "carryover_selected" | "carryover_presented" | "single_offer" | "ad_reference" | "ambiguous" | "none";
+export type TargetResolutionSource = "turn_ordinal" | "turn_offer_reference" | "turn_explicit_model" | "carryover_selected" | "carryover_presented" | "single_offer" | "current_stock_exact" | "ad_reference" | "ambiguous" | "none";
 export type TargetResolution =
   | { readonly kind: "resolved"; readonly vehicleKey: string; readonly source: TargetResolutionSource; readonly candidateVehicleKeys: readonly string[]; readonly subjectModel: string | null }
   | { readonly kind: "ambiguous"; readonly candidateVehicleKeys: readonly string[]; readonly subjectModel: string | null }

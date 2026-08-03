@@ -1404,6 +1404,82 @@ async function main(): Promise<void> {
     check("[G11] atraso de autoria nao vira instabilidade", !has(r.outbox, INSTABILIDADE), `${r.degradationKind}|${r.outbox}`);
   }
 
+  // [G12] Incidente real WA (Lucas, 01/08): a LLM entendeu o pedido de
+  // fotos e buscou um unico veiculo, mas finalizou dizendo "aqui estao as
+  // fotos" sem chamar vehicle_photos_resolve nem materializar send_media.
+  // O resultado exato da busca atual resolve a chave; ele NAO encerra a cadeia.
+  {
+    const c = conv();
+    const block = "Deixar eu ver as fotos pfv";
+    let falseFinals = 0;
+    const responder: BrainResponder = (_frame, observations) => {
+      const u: TurnUnderstanding = {
+        ...U("request_photos"),
+        requestedCapabilities: ["send_photos", "stock_search"],
+        evidence: [
+          { capability: "send_photos", quote: "ver as fotos" },
+          { capability: "stock_search", quote: "as fotos" },
+        ],
+      };
+      const stock = observations.find((o) => o.ok && o.tool === "stock_search") as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      const photos = observations.find((o) => o.ok && o.tool === "vehicle_photos_resolve") as { ok: true; data: { vehicleKey: string; photoIds: string[] } } | undefined;
+      if (!stock) return qU({ tool: "stock_search", input: { marca: "Audi", modelo: "A3", anos: [2020] } }, u);
+      if (!photos && falseFinals === 0) {
+        falseFinals += 1;
+        return finU([txt("Aqui estao as fotos do Audi A3 2020 que voce pediu.")], "photos_sent_without_media", u);
+      }
+      if (!photos) return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: stock.data.items[0].vehicleKey } } }, u);
+      return {
+        kind: "final", understanding: u,
+        decision: {
+          reasonCode: "photos_sent", reasonSummary: "fotos resolvidas e enviadas", confidence: 0.95,
+          responsePlan: { guidance: "g", draft: { parts: [txt("Aqui estao as fotos do Audi A3 2020 que voce pediu.")] } },
+          proposedEffects: [reply, { kind: "send_media", planId: "photos", order: 1, onSuccess: [], vehicleKey: photos.data.vehicleKey, photoIds: photos.data.photoIds } as ProposedEffectPlan],
+          memoryMutations: [], stateMutations: [],
+        } as AgentBrainDecision,
+      } as AgentBrainStep;
+    };
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "ambiguous", responder, undefined, { brainMaxSteps: 5 });
+    check("[G12] reproduziu a autoria falsa antes da correcao", falseFinals === 1, `falseFinals=${falseFinals}`);
+    check("[G12] busca exata atual resolve a chave sem inventar foco", r.exec.filter((tool) => tool === "stock_search").length === 1, r.exec.join(","));
+    check("[G12] vehicle_photos_resolve executa exatamente uma vez", r.exec.filter((tool) => tool === "vehicle_photos_resolve").length === 1, r.exec.join(","));
+    check("[G12] send_media materializado para a mesma chave", r.hasMedia && r.mediaKey === AUDI_A3.vehicleKey, `${r.mediaKey}`);
+    check("[G12] frase sem midia nunca foi publicada como sucesso", r.committed && r.responseSource !== "technical_fallback" && !has(r.outbox, INSTABILIDADE), `${r.responseSource}|${r.outbox}`);
+  }
+
+  // [G12b] O inverso tambem e contrato: se a busca atual encontra mais de um
+  // veiculo, a engine nao escolhe comercialmente qual deles recebera fotos.
+  // Ela apenas impede a falsa afirmacao de envio; a propria LLM esclarece o
+  // alvo usando as opcoes reais retornadas pela tool.
+  {
+    const c = conv();
+    const block = "Deixar eu ver as fotos dos Jeeps pfv";
+    let falseFinals = 0;
+    const responder: BrainResponder = (_frame, observations) => {
+      const u: TurnUnderstanding = {
+        ...U("request_photos"),
+        requestedCapabilities: ["send_photos", "stock_search"],
+        evidence: [
+          { capability: "send_photos", quote: "ver as fotos" },
+          { capability: "stock_search", quote: "dos Jeeps" },
+        ],
+      };
+      const stock = observations.find((o) => o.ok && o.tool === "stock_search") as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      const responseDenied = observations.some((o) => !o.ok && o.tool === "response");
+      if (!stock) return qU({ tool: "stock_search", input: { marca: "Jeep" } }, u);
+      if (!responseDenied) {
+        falseFinals += 1;
+        return finU([txt("Aqui estao as fotos dos Jeeps que voce pediu.")], "photos_sent_without_target", u);
+      }
+      return finU([txt("Encontrei estas opcoes. De qual voce quer ver as fotos?"), offer(stock.data.items.map((v) => v.vehicleKey))], "clarify_photo_target", u);
+    };
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "ambiguous", responder, undefined, { brainMaxSteps: 4 });
+    check("[G12b] autoria falsa com alvo ambiguo foi rejeitada", falseFinals === 1, `falseFinals=${falseFinals}`);
+    check("[G12b] engine nao escolheu nem resolveu fotos por conta propria", r.exec.filter((tool) => tool === "vehicle_photos_resolve").length === 0, r.exec.join(","));
+    check("[G12b] LLM esclareceu usando as opcoes reais", r.committed && has(r.outbox, "Compass") && has(r.outbox, "Renegade"), `${r.responseSource}|${r.outbox}`);
+    check("[G12b] ambiguidade nao vira fallback tecnico", r.responseSource !== "technical_fallback" && !has(r.outbox, INSTABILIDADE), `${r.degradationKind}|${r.outbox}`);
+  }
+
   // SEÇÃO H — TESTE DE CONTRATO (exigido pelo Codex): AUTORIDADE FACTUAL ÚNICA.
   // O v3 tinha TRÊS validações decidindo se um veículo está aterrado, e elas DIVERGIAM. Foi essa divergência que
   // produziu o absurdo do smoke real: um deny afirmando "NENHUM veículo foi aterrado nesta conversa ainda"

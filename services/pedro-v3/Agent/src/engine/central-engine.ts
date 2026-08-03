@@ -1338,10 +1338,12 @@ function photoOperationalPostcondition(args: {
   readonly photoTargetResolved: boolean;
   readonly photoLookupStatus: PhotoLookupStatus;
   readonly proposedEffects: readonly ProposedEffectPlan[];
+  readonly composed: RenderedResponse;
   readonly adVehicleIdentity?: string | null;
 }): string | null {
   const sentMedia = args.proposedEffects.some((effect) => effect.kind === "send_media");
   const currentPhotoAct = args.photoIntentDeclared || args.photoRequested;
+  const claimsPhotoSent = textPromisesPhoto(args.composed.text);
 
   // `send_media` já atravessou `groundProposedMediaEffects` antes desta
   // pós-condição. Essa é a autoridade factual única: a mesma vehicleKey precisa
@@ -1360,8 +1362,15 @@ function photoOperationalPostcondition(args: {
 
   // Ambiguidade real admite esclarecimento. A engine não escolhe um veículo e
   // não força uma consulta incapaz de resolver a escolha do lead.
-  if (args.photoTargetAmbiguous || args.photoTargetKind === "conflict") return null;
+  if (args.photoTargetAmbiguous || args.photoTargetKind === "conflict") {
+    return claimsPhotoSent
+      ? "O texto afirma que as fotos foram enviadas, mas o alvo ainda e ambiguo e nenhum send_media foi materializado. Esclareca qual veiculo o lead quer ver; nao escolha por conta propria e nao afirme envio."
+      : null;
+  }
   if (!args.photoTargetResolved) {
+    if (claimsPhotoSent) {
+      return "O texto afirma que as fotos foram enviadas, mas ainda nao existe uma vehicleKey inequivoca e nenhum send_media foi materializado. Resolva o alvo com os fatos do turno ou peca esclarecimento; nao afirme envio.";
+    }
     if (!args.adVehicleIdentity) return null;
     return `O understanding reconheceu request_photos para o anúncio "${args.adVehicleIdentity}", mas ainda não existe uma vehicleKey inequívoca e aterrada. Para atender o pedido, use stock_search com a identidade atual do anúncio; se a identidade realmente for insuficiente, esclareça o alvo sem afirmar envio ou indisponibilidade.`;
   }
@@ -2355,6 +2364,22 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const resolveTargetWithAd = (): TargetResolution => {
         const base = resolveTarget();
         if (base.kind === "resolved") return base;
+        // A LLM decidiu buscar o carro para atender o pedido de fotos. Quando a
+        // busca do PROPRIO turno retorna exatamente uma chave (match exato), o
+        // resultado factual resolve o alvo sem a engine escolher comercialmente.
+        // Candidato de familia e listas com 2+ itens continuam exigindo que a
+        // LLM esclareca/selecione; nunca promovemos um carro por conveniencia.
+        const validated = brainVU();
+        const photoActDeclared = validated?.fromBrain === true
+          && validated.trusted
+          && validated.understanding.primaryIntent === "request_photos"
+          && validated.understanding.requestedCapabilities.includes("send_photos");
+        const latestStock = [...facts].reverse().find((fact) => fact.tool === "stock_search");
+        if (photoActDeclared && latestStock?.ok && latestStock.data.matchKind !== "family_candidate" && latestStock.data.items.length === 1) {
+          const vehicle = latestStock.data.items[0];
+          return { kind: "resolved", vehicleKey: vehicle.vehicleKey, source: "current_stock_exact", candidateVehicleKeys: [vehicle.vehicleKey], subjectModel: vehicle.modelo ?? null };
+        }
+
         const normLead = normalizeText(leadMessage);
         const pronounAttributeTurn = /\b(?:ele|dele|desse|deste|esse|este)\b/.test(normLead)
           && ATTR_QUESTION_RX.test(normLead)
