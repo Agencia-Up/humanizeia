@@ -290,8 +290,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   const [ruTransferEnabled, setRuTransferEnabled] = useState(true);
   const [ruSellerRespMin, setRuSellerRespMin] = useState(10);
   const [ruWindowCustom, setRuWindowCustom] = useState(false);
-  const [ruWindowStart, setRuWindowStart] = useState('10:11');
-  const [ruWindowEnd, setRuWindowEnd] = useState('19:29');
+  const [ruTransferWeek, setRuTransferWeek] = useState<ResponseWeekPlan>(() => buildResponseWeekPreset('business_hours'));
 
   // QR Code states
   const [qrCode, setQrCode] = useState<string | null>(null);
@@ -697,9 +696,13 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       setRuTransferEnabled(arT.enabled !== false);
       setRuSellerRespMin(Number(arT.seller_response_min) > 0 ? Number(arT.seller_response_min) : 10);
       const arW: any = arT.window;
-      setRuWindowCustom(!!arW);
-      setRuWindowStart(arW?.start || '10:11');
-      setRuWindowEnd(arW?.end || '19:29');
+      setRuWindowCustom(!!arW && arW.enabled !== false);
+      setRuTransferWeek(readResponseWeekPlan({
+        responseSchedule: arW,
+        legacyStart: arW?.start || '10:11',
+        legacyEnd: arW?.end || '19:29',
+        legacyDays: [1, 2, 3, 4, 5, 6],
+      }));
     } else {
       setName('Agente IA');
       setAgentType('generic');
@@ -726,7 +729,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       setCustomGerenteMsg(false); setTemplateGerenteMsg(DEFAULT_MSG_GERENTE);
       setRuFollowupEnabled(true); setRuT1(5); setRuT2(8); setRuT3(12); setRuT3Transfers(true);
       setRuTransferEnabled(true); setRuSellerRespMin(10);
-      setRuWindowCustom(false); setRuWindowStart('10:11'); setRuWindowEnd('19:29');
+      setRuWindowCustom(false); setRuTransferWeek(buildResponseWeekPreset('business_hours'));
       setQrCode(null);
       setIsInstanceConnected(false);
       stopPolling();
@@ -781,7 +784,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
         transfer: {
           enabled: ruTransferEnabled,
           seller_response_min: Math.max(1, Math.round(Number(ruSellerRespMin)) || 10),
-          window: ruWindowCustom ? { enabled: true, start: ruWindowStart, end: ruWindowEnd } : null,
+          window: ruWindowCustom ? serializeResponseScheduleV2(true, ruTransferWeek) : null,
         },
       };
     })(),
@@ -846,6 +849,19 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       toast({
         title: 'Revise os horários da IA',
         description: responseScheduleErrors[0],
+        variant: 'destructive',
+      });
+      return;
+    }
+    const transferScheduleErrors = validateResponseWeekPlan(
+      ruTransferEnabled && ruWindowCustom,
+      ruTransferWeek,
+      'rodízio',
+    );
+    if (transferScheduleErrors.length > 0) {
+      toast({
+        title: 'Revise os horários do rodízio',
+        description: transferScheduleErrors[0],
         variant: 'destructive',
       });
       return;
@@ -1028,14 +1044,20 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                     <Input type="number" min={1} value={ruSellerRespMin} onChange={e => setRuSellerRespMin(Number(e.target.value))} />
                     <p className="text-[11px] text-muted-foreground mt-1">Tempo que cada vendedor da fila tem para responder "Ok" antes do lead passar para o próximo.</p>
                   </div>
-                  <div className="flex items-center justify-between pt-1">
-                    <Label className="text-sm">Horário de repasse personalizado</Label>
-                    <Switch checked={ruWindowCustom} onCheckedChange={setRuWindowCustom} />
-                  </div>
-                  {ruWindowCustom ? <div className="grid grid-cols-2 gap-3">
-                    <div><Label className="text-xs">Início</Label><Input type="time" value={ruWindowStart} onChange={e => setRuWindowStart(e.target.value)} /></div>
-                    <div><Label className="text-xs">Fim</Label><Input type="time" value={ruWindowEnd} onChange={e => setRuWindowEnd(e.target.value)} /></div>
-                  </div> : <p className="text-[11px] text-muted-foreground">Usando o horário padrão do sistema. Ative para definir um horário próprio (dentro do horário comercial).</p>}
+                  <AgentResponseScheduleEditor
+                    enabled={ruWindowCustom}
+                    week={ruTransferWeek}
+                    onEnabledChange={setRuWindowCustom}
+                    onWeekChange={setRuTransferWeek}
+                    title="Horários do rodízio entre vendedores"
+                    description="Defina em quais dias e horários um lead sem confirmação pode passar para o próximo vendedor."
+                    toggleAriaLabel="Usar agenda semanal personalizada no rodízio"
+                    disabledStatusLabel="Horário padrão"
+                    disabledDescription="O rodízio usa o horário padrão do sistema (segunda a sábado). Ative a agenda para configurar cada dia, inclusive domingos e feriados operacionais."
+                    enabledFooter="Fora destes horários, o lead permanece com o vendedor atual e o prazo fica rearmado para a próxima abertura. A transferência inicial e a transferência manual continuam disponíveis. Fuso: São Paulo (UTC−3)."
+                    presetOptions={['business_hours', 'always']}
+                    contentIdPrefix="transfer-rotation-schedule"
+                  />
                 </div> : <p className="text-[11px] text-muted-foreground">Com a transferência desligada, o agente atende sozinho: não repassa por qualificação, nem por inatividade, nem faz rodízio. A transferência manual no portal continua disponível.</p>}
               </div>
             </div>}

@@ -188,7 +188,11 @@ export function serializeResponseScheduleV2(
   };
 }
 
-export function validateResponseWeekPlan(enabled: boolean, week: ResponseWeekPlan): string[] {
+export function validateResponseWeekPlan(
+  enabled: boolean,
+  week: ResponseWeekPlan,
+  activityLabel = 'atendimento',
+): string[] {
   if (!enabled) return [];
   const errors: string[] = [];
   let openDays = 0;
@@ -217,7 +221,7 @@ export function validateResponseWeekPlan(enabled: boolean, week: ResponseWeekPla
     }
   }
 
-  if (openDays === 0) errors.unshift('Defina pelo menos um dia de atendimento ou desligue a restrição de horário.');
+  if (openDays === 0) errors.unshift(`Defina pelo menos um dia de ${activityLabel} ou desligue a restrição de horário.`);
   return errors;
 }
 
