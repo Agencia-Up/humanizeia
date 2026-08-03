@@ -308,6 +308,9 @@ const ALL_SELLERS = '__all_sellers__'; // filtro "todos" do dropdown de vendedor
 /* ── Componente Principal ──────────────────────────────────────────── */
 export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], readOnly = false, focusLeadId = null, focusPhone = null, unified = false }: AgentInboxTabProps) {
   const { toast } = useToast();
+  // Deep-link do CRM: aplica o foco inicial uma unica vez. O parametro continua
+  // na URL para permitir recarregar/compartilhar o link, mas nao pode reabrir o
+  // mesmo lead a cada mudanca normal de conversa.
   const lastFocusedLeadRef = useRef<string | null>(null);
 
   // Agents
@@ -717,10 +720,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
     const focusPhoneCanonical = phoneCanonical(focusPhone);
     const focusKey = focusLeadId || focusPhoneCanonical;
     if (!focusKey || loadingLeads || leads.length === 0) return;
-    if (lastFocusedLeadRef.current === focusKey && (
-      selectedLead?.id === focusLeadId
-      || (!!focusPhoneCanonical && phoneCanonical(selectedLead?.remote_jid) === focusPhoneCanonical)
-    )) return;
+    if (lastFocusedLeadRef.current === focusKey) return;
     const lead = leads.find(l => (
       (!!focusLeadId && l.id === focusLeadId)
       || (!!focusPhoneCanonical && phoneCanonical(l.remote_jid) === focusPhoneCanonical)
