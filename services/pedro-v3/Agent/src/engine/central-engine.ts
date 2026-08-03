@@ -566,6 +566,22 @@ function toolCallSignature(call: CentralQueryCall): string {
   return `${call.tool}:${JSON.stringify(norm)}`;
 }
 
+// Pedidos de faixa/alternativas precisam deixar uma memoria estruturada da
+// oferta. Sem isso, texto livre pode sair correto, mas o proximo "tem outro?"
+// nao tem como saber quais veiculos ja foram mostrados.
+function requiresStructuredOfferList(leadMessage: string): boolean {
+  const norm = normalizeText(leadMessage);
+  return /\bmais\s+op|\boutr[ao]s?\b|\bmais\s+carr|\bmais\s+algum|\btem\s+outr|\btem\s+mais\b/.test(norm)
+    || /\bate\s+\d|\br\$\s*\d|\b\d{2,3}\s*mil\b|\balgum\s+carro\b|\b(?:carro|veiculo)s?\b/.test(norm);
+}
+
+function confirmsMoreOptions(leadMessage: string, state: ConversationState): boolean {
+  const answer = normalizeText(leadMessage).trim();
+  if (!/^(?:sim|s|pode|quero|claro|ok|ta bom|vamos)\b/.test(answer)) return false;
+  const previousAgent = [...(state.recentTurns ?? [])].reverse().find((turn) => turn.role === "agent")?.text ?? "";
+  return /\boutr[ao]s?\b|\bmais\s+op|\bmais\s+carr/.test(normalizeText(previousAgent));
+}
+
 export function enrichStockSearchCall(
   call: QueryCall,
   options: {
@@ -620,7 +636,11 @@ export function enrichStockSearchCall(
     // keys que VIU no resultado da busca — escondendo os 2 Compass nunca exibidos ("não temos outros" falso).
     const shown = new Set(options.previousVehicleKeys.filter((key): key is string => typeof key === "string" && key.length > 0));
     const brainExcludes = brainExcludeInput.filter((k) => shown.has(k));
-    const excludeList = !options.llmOwnsFilters && options.moreOptions ? [...shown] : brainExcludes;
+    // "Mais opcoes" e uma restricao objetiva do pedido atual: o resultado novo
+    // nao pode repetir o que ja foi mostrado. Isso vale tambem no central_active
+    // (llmOwnsFilters=true). A LLM continua dona dos filtros comerciais; o engine
+    // somente aplica a memoria estruturada da oferta para impedir repeticao.
+    const excludeList = options.moreOptions ? [...shown] : brainExcludes;
     excludeKeys = excludeList.length > 0 ? excludeList : undefined;
   } else {
     // Legado/shadow (comportamento antigo): honra o excludeKeys do cérebro e une as keys da última oferta em "mais opções".
@@ -728,6 +748,7 @@ function authorFromBrainDraft(args: {
   readonly sensitiveAnswerKinds?: readonly ("cpf" | "birthDate")[];
   readonly photoRecallLabel?: string | null;            // memória factual: a LLM precisa nomear o veículo lembrado
   readonly proposedPrimaryIntent?: string | null;       // candidato da LLM usado só por validadores de segurança, nunca autoriza tool/efeito
+  readonly requireOfferList?: boolean;                   // busca ampla/faixa/alternativas: memoria estruturada obrigatoria
 }): SingleAuthorResult {
   const draft = args.finalDecision.responsePlan.draft;
   // ⭐RD1-2 (2026-07-13, autoria-LLM exclusiva): em central_active (requireBrain/llmFirst) as guardas de ESTILO/QUALIDADE
@@ -749,6 +770,14 @@ function authorFromBrainDraft(args: {
       ? `Devolva 'draft' com parts estruturadas (text/message_break/vehicle_ref/money_ref/vehicle_offer_list). Não escreva km/cor/câmbio/ano/preço em texto livre.${structuralHint}`
       : `Saída estruturada inválida. Devolva FINAL com 'draft.parts' não vazio usando apenas parts suportadas (text/message_break/vehicle_ref/money_ref/vehicle_offer_list). A redação e a condução continuam sendo suas e devem seguir o prompt do portal.${structuralHint}`;
     return { ok: false, feedback };
+  }
+  if (args.requireOfferList
+      && args.facts.some((fact) => fact.ok && fact.tool === "stock_search" && fact.data.items.length > 0)
+      && !draft.parts.some((part) => part.type === "vehicle_offer_list")) {
+    return {
+      ok: false,
+      feedback: "A stock_search encontrou veiculos para um pedido de faixa, alternativas ou outros. Devolva UMA part vehicle_offer_list com somente as vehicleKeys desses fatos; nao descreva a lista em texto livre e nao prometa consultar depois.",
+    };
   }
   // A abertura continua sendo autoria da LLM. RD1-2: em central_active a APRESENTAÇÃO é ADVISORY (o prompt do portal +
   // a apresentação pertence ao prompt do portal); o engine não nega mais a omissão. Guarda legada só no replay.
@@ -2103,6 +2132,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const handoffCapabilityAvailable = args.handoff?.enabled === true && args.handoff.available === true
         && args.crmWriteEnabled === true && leadId != null;
       let frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnFacts, extractedSlotMutations: extractedSlots, currentTurnIntent, adVehicleHint, adImageUrls: effectiveAdContext?.imageUrls ?? [], adGenericEntry: isOpeningTurn && adGenericEntry, firstContactNoCommercialTarget, specificAdEntry, disengagementOnly: llmFirst ? false : disengagedActionable, acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState), selectedOfferThisTurn: false, handoffAvailable: handoffCapabilityAvailable, catalog: prepared.tenantCatalog });
+      const moreOptionsSignal = frame.signals.mentionsMoreOptions || confirmsMoreOptions(leadMessage, contextState);
       // O turno do lead já é entregue integralmente ao cérebro. O engine não
       // constrói advisories, próxima pergunta, ordem de funil ou instrução de
       // agendamento para competir com a LLM. Fatos de anúncio, memória,
@@ -2720,7 +2750,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           const acceptedStepDecision = llmFirst && !stepUnderstandingTrusted
             ? withoutUntrustedSemanticPayload(step.decision)
             : step.decision;
-          const authored = authorFromBrainDraft({ finalDecision: acceptedStepDecision, leadMessage, facts, identities, ctx: authoringContext(), proposedPrimaryIntent: acceptedBrainPrimaryIntent(), turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, adVehicleIdentity: adVehicleHint ?? null, searchExpectedThisTurn: llmFirst && brainNeedsStockFact(), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, qualifiedHandoffReadyFor, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
+          const authored = authorFromBrainDraft({ finalDecision: acceptedStepDecision, leadMessage, facts, identities, ctx: authoringContext(), proposedPrimaryIntent: acceptedBrainPrimaryIntent(), requireOfferList: llmFirst && (requiresStructuredOfferList(leadMessage) || moreOptionsSignal), turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, adVehicleIdentity: adVehicleHint ?? null, searchExpectedThisTurn: llmFirst && (brainNeedsStockFact() || moreOptionsSignal), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, qualifiedHandoffReadyFor, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
             if (authored.ok) {
               finalDecision = acceptedStepDecision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
@@ -2976,7 +3006,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         });
         const execCall = enrichStockSearchCall(semanticallyScopedCall, {
           popular: frame.signals.mentionsPopular === true,
-          moreOptions: frame.signals.mentionsMoreOptions,
+          moreOptions: moreOptionsSignal,
           previousVehicleKeys: shownVehicleKeys,  // INC3: conjunto CUMULATIVO apresentado (clampa o excludeKeys do cérebro)
           constraints: searchScopeThisTurn(),   // compatibilidade legado: no central_active não governa a chamada
           wantsMotorcycle,                       // F2.29: só libera moto se o lead pediu moto explicitamente
@@ -3177,7 +3207,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             const acceptedFinalDecision = llmFirst && !finalStepUnderstandingTrusted
               ? withoutUntrustedSemanticPayload(finalStep.decision)
               : finalStep.decision;
-            const authored = authorFromBrainDraft({ finalDecision: acceptedFinalDecision, leadMessage, facts, identities, ctx: authoringContext(), proposedPrimaryIntent: acceptedBrainPrimaryIntent(), turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, adVehicleIdentity: adVehicleHint ?? null, searchExpectedThisTurn: false, noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, qualifiedHandoffReadyFor, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
+            const authored = authorFromBrainDraft({ finalDecision: acceptedFinalDecision, leadMessage, facts, identities, ctx: authoringContext(), proposedPrimaryIntent: acceptedBrainPrimaryIntent(), requireOfferList: llmFirst && (requiresStructuredOfferList(leadMessage) || moreOptionsSignal), turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, adVehicleIdentity: adVehicleHint ?? null, searchExpectedThisTurn: llmFirst && (brainNeedsStockFact() || moreOptionsSignal), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, qualifiedHandoffReadyFor, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
             if (authored.ok) {
               finalDecision = acceptedFinalDecision;
               authoredDecision = authored.decision;
