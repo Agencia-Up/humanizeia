@@ -119,28 +119,58 @@ Deno.serve(async (req) => {
       runId = await abrirRun(admin, config.user_id, "daily_report", tentativa, leaseToken);
 
       // ── 2) PRÉ-REQUISITOS (antes de gastar qualquer chamada) ─────────────
-      // ATENCAO: NAO usar .single()/.maybeSingle() aqui. Um tenant pode ter
-      // VARIAS contas Meta ativas (a Icom tem 10) e ambos estouram com
-      // "multiple rows returned" — o `data` volta null e o tenant era
-      // silenciosamente pulado. O relatorio diario da Icom estava quebrado por
-      // isso, sem ninguem perceber. Escolha DETERMINISTICA da primeira conta,
-      // mesmo criterio de getMetaTokenForUser no apollo-agent.
-      const { data: contas, error: contaErr } = await admin
-        .from("ad_accounts")
-        .select("account_id, access_token_encrypted")
-        .eq("user_id", config.user_id)
-        .eq("platform", "meta")
-        .eq("is_active", true)
-        .order("created_at", { ascending: true })
-        .limit(1);
-      if (contaErr) {
-        console.error("[jose-cron-runner] erro lendo ad_accounts de", config.user_id, contaErr.message ?? contaErr.code);
+      // A CONTA E A QUE O DONO SELECIONOU, E SO ELA.
+      //
+      // Antes isto era `order(created_at).limit(1)` — "a conta mais antiga
+      // ativa". Com 10 contas na Icom, acertava por coincidencia de ordenacao,
+      // e bastava integrar uma conta mais antiga para o Jose passar a analisar
+      // a conta errada em silencio. Nao ha mais fallback algum: sem selecao, ou
+      // com credencial doente, o Jose NAO roda com outra conta.
+      //
+      // IMPLANTACAO GRADUAL: o rigor vale primeiro so para os tenants da
+      // allowlist (JOSE_EXACT_ACCOUNT_ENFORCEMENT_TENANT_IDS). Quem esta fora
+      // continua rodando — mas nunca por escolha arbitraria: fora da allowlist
+      // usamos a selecao se existir e, na falta dela, so seguimos quando o
+      // tenant tem UMA UNICA conta ativa (nao ha o que escolher). Com mais de
+      // uma e sem selecao, paramos com motivo claro em vez de adivinhar.
+      let account: { account_id: string; access_token_encrypted: string | null } | null = null;
+      let motivoConta: string | null = null;
+
+      if (!config.selected_ad_account_id) {
+        motivoConta = "conta_do_jose_nao_selecionada";
+      } else {
+        const { data: conta, error: contaErr } = await admin
+          .from("ad_accounts")
+          .select("account_id, access_token_encrypted, connection_id, is_active, meta_connections(health_status, last_error_code, last_error_subcode)")
+          .eq("id", config.selected_ad_account_id)   // id EXATO
+          .eq("user_id", config.user_id)             // isolamento por tenant
+          .eq("platform", "meta")
+          .eq("is_active", true)
+          .single();
+
+        if (contaErr) {
+          // PGRST116 aqui = a conta selecionada sumiu, foi desativada ou e de
+          // outro tenant. Nao existe "pega outra".
+          motivoConta = String(contaErr.code ?? "") === "PGRST116"
+            ? "conta_selecionada_indisponivel"
+            : `erro_lendo_conta:${contaErr.code ?? contaErr.message}`;
+        } else {
+          const saude = (conta as any)?.meta_connections?.health_status ?? "never_validated";
+          const cod = (conta as any)?.meta_connections?.last_error_code ?? null;
+          const sub = (conta as any)?.meta_connections?.last_error_subcode ?? null;
+          if (!conta?.access_token_encrypted) {
+            motivoConta = "conta_selecionada_sem_token";
+          } else if (saude !== "connected") {
+            // 190/460 vira "reconecte", nao "erro generico" nem retry cego.
+            motivoConta = `credencial_${saude}` + (cod ? `:${cod}${sub ? "/" + sub : ""}` : "");
+          } else {
+            account = conta as any;
+          }
+        }
       }
-      const account = (contas || [])[0] ?? null;
 
       const faltando: string[] = [];
-      if (!account) faltando.push("conta_meta_ativa");
-      else if (!account.access_token_encrypted) faltando.push("token_meta");
+      if (motivoConta) faltando.push(motivoConta);
       if (config.send_daily_report && !config.whatsapp_report_number) faltando.push("numero_destinatario");
 
       if (faltando.length > 0) {
@@ -183,11 +213,30 @@ Deno.serve(async (req) => {
       const sucesso = response.ok && corpoOk;
 
       if (!sucesso) {
-        const motivo = !response.ok
-          ? `http_${response.status}`
-          : `corpo_invalido:${String(data?.error || "sem_conteudo_util").slice(0, 200)}`;
+        // "http_500" sozinho nao diz nada a quem for investigar. O que importa
+        // esta no CORPO: foi a Meta que recusou o token (190/460), foi falta de
+        // permissao, foi outra coisa. Preservamos isso — sanitizado, com o
+        // token removido caso a mensagem da Meta o ecoe.
+        const sanitizar = (s: string) =>
+          s.replace(/EAA[A-Za-z0-9]{20,}/g, "<TOKEN>")
+           .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer <TOKEN>")
+           .slice(0, 300);
 
-        const podeRepetir = tentativa < MAX_ATTEMPTS;
+        const detalhe = sanitizar(String(
+          data?.error?.message ?? data?.error ?? data?.detalhe ?? raw ?? "sem_conteudo_util",
+        ));
+        const codigoMeta = data?.error?.code ?? data?.code ?? null;
+        const subMeta = data?.error?.error_subcode ?? data?.error_subcode ?? null;
+
+        // Token invalidado nao e falha transitoria: repetir nao resolve.
+        const credencialMorta = Number(codigoMeta) === 190;
+        const motivo = credencialMorta
+          ? `credencial_expirada:190${subMeta ? "/" + subMeta : ""}:${detalhe}`
+          : !response.ok
+            ? `http_${response.status}:${detalhe}`
+            : `corpo_invalido:${detalhe}`;
+
+        const podeRepetir = tentativa < MAX_ATTEMPTS && !credencialMorta;
         const espera = BACKOFF_MIN[Math.min(tentativa - 1, BACKOFF_MIN.length - 1)];
         await finalizar(admin, config, {
           status: podeRepetir ? "retrying" : "failed",
