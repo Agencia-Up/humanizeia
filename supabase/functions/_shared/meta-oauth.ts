@@ -739,8 +739,14 @@ async function handlePost(req: Request) {
     // injetar credencial por aqui. Se um consumidor interno precisar, ele
     // chama com a service key — e nunca a partir do browser.
     case "connect_with_token":
+      if (!isServiceRole(req)) {
+        return jsonResponse({ ok: false, error: "acao_restrita_ao_service_role" }, 403);
+      }
       return handleConnectWithToken(req, body.access_token, body.account_id);
     case "save_account":
+      if (!isServiceRole(req)) {
+        return jsonResponse({ ok: false, error: "acao_restrita_ao_service_role" }, 403);
+      }
       return handleSaveAccount(req, body);
     case "save_selected":
       return handleSaveSelected(req, body);
