@@ -369,9 +369,27 @@ async function handleGetCallback(req: Request, url: URL) {
 
     if (insertError) throw insertError;
 
+    // O callback NAO pode terminar deixando o token so na sessao. Registra a
+    // credencial e renova as contas ja integradas deste tenant -- e so deste.
+    const admin = adminClient();
+    const connectionId = await upsertConnection(admin, payload.user_id, accessToken, expiresIn);
+    const renovacao = await refreshIntegratedAccounts(
+      admin, payload.user_id, connectionId, accessToken, accountData.ad_accounts,
+    );
+    if (renovacao.erro) {
+      // Falha aqui e operacional e precisa ser vista: a sessao existe, mas as
+      // contas do cliente continuam com a credencial velha.
+      console.error("[meta-oauth] falha renovando contas integradas:", renovacao.erro);
+      return redirectResponse(withQuery(payload.return_to, {
+        meta_error: "falha_renovando_contas_integradas",
+        meta_oauth_session: data.id,
+      }));
+    }
+
     return redirectResponse(withQuery(payload.return_to, {
       meta_oauth_session: data.id,
       meta_accounts: String(accountData.ad_accounts.length),
+      meta_renovadas: String(renovacao.renovadas),
     }));
   } catch (callbackError) {
     console.error("[meta-oauth] Callback failed", callbackError);
@@ -435,6 +453,114 @@ async function handleConnectWithToken(req: Request, accessToken: string, account
     ...accountData,
     accounts: accountData.ad_accounts,
   });
+}
+
+/**
+ * Só o service_role pode usar os caminhos que aceitam token cru. Comparação em
+ * tempo constante para não virar oráculo por timing.
+ */
+function isServiceRole(req: Request): boolean {
+  const chave = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  const bearer = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!chave || !bearer || bearer.length !== chave.length) return false;
+  let diff = 0;
+  for (let i = 0; i < chave.length; i++) diff |= chave.charCodeAt(i) ^ bearer.charCodeAt(i);
+  return diff === 0;
+}
+
+/** Cliente com o JWT do chamador: as RPCs resolvem tenant por auth.uid(). */
+function userClient(req: Request) {
+  return createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_ANON_KEY")!,
+    { global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } } },
+  );
+}
+
+/** sha256 hex — identifica a credencial sem nunca expor o valor. */
+async function tokenFingerprint(token: string): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Registra/atualiza a CREDENCIAL do tenant e devolve o id da conexao.
+ *
+ * A saude do token pertence a conexao, nao a cada linha de ad_accounts: a Icom
+ * tem 10 contas e apenas 2 credenciais. Aqui a conexao ja nasce validada --
+ * chegamos neste ponto porque fetchFullAccountData respondeu, ou seja, a Meta
+ * aceitou o token agora.
+ */
+async function upsertConnection(
+  admin: any, userId: string, accessToken: string, expiresIn: number,
+): Promise<string | null> {
+  const fp = await tokenFingerprint(accessToken);
+  const expiresAt = expiresIn > 0 ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
+
+  const { data, error } = await admin
+    .from("meta_connections")
+    .upsert({
+      user_id: userId,
+      access_token_encrypted: accessToken,
+      token_fingerprint: fp,
+      token_expires_at: expiresAt,
+      health_status: "connected",
+      last_validation_at: new Date().toISOString(),
+      last_error_code: null, last_error_subcode: null, last_error_message: null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id,token_fingerprint" })
+    .select("id")
+    .single();
+
+  if (error) {
+    console.error("[meta-oauth] falha registrando conexao:", error.code ?? error.message);
+    return null;
+  }
+  return data?.id ?? null;
+}
+
+/**
+ * RENOVA a credencial das contas JA INTEGRADAS deste tenant.
+ *
+ * Este e o defeito que fazia "reconectar o Facebook" nao consertar nada: o
+ * callback gravava o token novo SOMENTE em meta_oauth_sessions e nunca tocava
+ * ad_accounts. O token so chegava na conta se a pessoa passasse de novo pelo
+ * picker. Resultado: dava para reconectar com sucesso e o token morto (190/460)
+ * continuar valendo para o Jose, com o selo verde.
+ *
+ * Renova APENAS o que ja estava integrado (is_active) e que aparece nesta
+ * autorizacao. NAO integra conta nova -- isso continua sendo decisao explicita
+ * do dono em save_selected.
+ */
+async function refreshIntegratedAccounts(
+  admin: any, userId: string, connectionId: string | null,
+  accessToken: string, discovered: any[],
+): Promise<{ renovadas: number; erro: string | null }> {
+  const ids = (discovered || [])
+    .map((a: any) => String(a.account_id ?? a.id ?? "").replace(/^act_/, ""))
+    .filter(Boolean);
+  if (ids.length === 0) return { renovadas: 0, erro: null };
+
+  const agora = new Date().toISOString();
+  const { data, error } = await admin
+    .from("ad_accounts")
+    .update({
+      access_token_encrypted: accessToken,
+      connection_id: connectionId,
+      account_health_status: "connected",
+      last_account_check_at: agora,
+      last_account_check_error: null,
+      last_sync_at: agora,
+      updated_at: agora,
+    })
+    .eq("user_id", userId)          // isolamento por tenant
+    .eq("platform", "meta")
+    .eq("is_active", true)          // so renova o que ja estava integrado
+    .in("account_id", ids)
+    .select("id");
+
+  if (error) return { renovadas: 0, erro: error.message ?? String(error.code) };
+  return { renovadas: (data || []).length, erro: null };
 }
 
 async function saveAdAccount(
@@ -511,80 +637,64 @@ async function handleSaveAccount(req: Request, body: any) {
 // de uma vez. O usuário escolhe (checkboxes) o que integrar; nada mais é automático.
 async function handleSaveSelected(req: Request, body: any) {
   const userId = await getAuthenticatedUser(req);
-  if (!userId) return jsonResponse({ error: "Unauthorized" }, 401);
+  if (!userId) return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
 
-  const accessToken = body?.access_token;
-  const accounts = Array.isArray(body?.accounts) ? body.accounts : [];
-  const pixels = Array.isArray(body?.pixels) ? body.pixels : [];
-  const pages = Array.isArray(body?.pages) ? body.pages : [];
-  if (!accessToken) return jsonResponse({ error: "access_token obrigatorio" }, 400);
-  if (accounts.length === 0 && pixels.length === 0 && pages.length === 0) {
-    return jsonResponse({ error: "Selecione ao menos um item para integrar" }, 400);
+  // Token vindo do navegador e recusado sempre: o cliente nunca e fonte de
+  // credencial. O token desta integracao sai da propria sessao, no servidor.
+  if (body?.access_token) {
+    return jsonResponse({ ok: false, error: "access_token_nao_aceito_do_frontend" }, 400);
+  }
+  const sessionId = body?.session_id;
+  if (!sessionId) return jsonResponse({ ok: false, error: "session_id obrigatorio" }, 400);
+
+  const norm = (x: unknown) => String(x ?? "").replace(/^act_/, "");
+  const accountIds: string[] = Array.isArray(body?.account_ids) ? body.account_ids.map(norm).filter(Boolean) : [];
+  const pixelIds: string[] = Array.isArray(body?.pixel_ids) ? body.pixel_ids.map((x: unknown) => String(x)).filter(Boolean) : [];
+  const pageIds: string[] = Array.isArray(body?.page_ids) ? body.page_ids.map((x: unknown) => String(x)).filter(Boolean) : [];
+  const selectForJose = body?.select_for_jose ? norm(body.select_for_jose) : null;
+
+  // TUDO OU NADA: trava a sessao, valida contra a descoberta dela, grava
+  // credencial + contas + selecao do Jose e consome — numa transacao so.
+  const { data, error } = await userClient(req).rpc("consume_meta_oauth_session", {
+    p_session_id: sessionId,
+    p_account_ids: accountIds,
+    p_pixel_ids: pixelIds,
+    p_page_ids: pageIds,
+    p_select_for_jose: selectForJose,
+  });
+
+  if (error) {
+    console.error("[meta-oauth] consume_meta_oauth_session falhou:", error.code ?? error.message);
+    return jsonResponse({ ok: false, error: "falha_consumindo_sessao", detalhe: error.code ?? null }, 500);
   }
 
+  const res = data as any;
+  if (!res?.ok) {
+    // Replay e conflito explicito; o resto e 4xx com motivo legivel.
+    const status = res?.erro === "sessao_ja_consumida" ? 409
+      : res?.erro === "sessao_de_outro_usuario" ? 403
+      : res?.erro === "sessao_expirada" || res?.erro === "sessao_inexistente" ? 404
+      : 422;
+    return jsonResponse({ ok: false, error: res?.erro ?? "falha_desconhecida", itens: res?.itens ?? null }, status);
+  }
+
+  // Metadados apenas. Nunca o token.
   const admin = adminClient();
-  const { data: profile } = await admin.from("profiles").select("organization_id").eq("id", userId).maybeSingle();
-  const orgId = profile?.organization_id || null;
-  const now = new Date().toISOString();
-  const saved = { accounts: 0, pixels: 0, pages: 0 };
-  const errors: string[] = [];
-
-  for (const a of accounts) {
-    const r = await saveAdAccount(userId, {
-      account_id: String(a.account_id ?? a.id ?? "").replace("act_", ""),
-      account_name: a.name ?? a.account_name ?? `act_${a.account_id ?? a.id ?? ""}`,
-      currency: a.currency || "BRL",
-      timezone: a.timezone_name || a.timezone || "America/Sao_Paulo",
-      access_token: accessToken,
-    });
-    if (r.error) errors.push(`conta ${a.name ?? a.id}: ${r.error}`);
-    else saved.accounts++;
-  }
-
-  for (const px of pixels) {
-    const pixelId = String(px.id ?? px.pixel_id ?? "");
-    if (!pixelId) continue;
-    const { error } = await admin.from("meta_pixels").upsert({
-      user_id: userId,
-      pixel_id: pixelId,
-      pixel_name: px.name ?? px.pixel_name ?? null,
-      access_token_encrypted: accessToken,
-      is_active: true,
-      updated_at: now,
-    }, { onConflict: "user_id,pixel_id" });
-    if (error) errors.push(`pixel ${px.name ?? pixelId}: ${error.message}`);
-    else saved.pixels++;
-  }
-
-  for (const pg of pages) {
-    const pageId = String(pg.id ?? pg.page_id ?? "");
-    if (!pageId) continue;
-    const { error } = await admin.from("meta_pages").upsert({
-      user_id: userId,
-      organization_id: orgId,
-      page_id: pageId,
-      page_name: pg.name ?? pg.page_name ?? null,
-      category: pg.category ?? null,
-      fan_count: pg.fan_count ?? 0,
-      picture_url: pg.picture_url ?? null,
-      access_token_encrypted: accessToken,
-      is_active: true,
-      updated_at: now,
-    }, { onConflict: "user_id,page_id" });
-    if (error) errors.push(`pagina ${pg.name ?? pageId}: ${error.message}`);
-    else saved.pages++;
-  }
-
-  // Devolve a 1a conta salva pro selo do front virar na hora (mesma rede de seguranca do save_account).
   let account: any = null;
-  if (accounts[0]) {
-    const acctId = String(accounts[0].account_id ?? accounts[0].id ?? "").replace("act_", "");
-    const { data: acc } = await admin.from("ad_accounts").select("*")
-      .eq("user_id", userId).eq("platform", "meta").eq("account_id", acctId).maybeSingle();
+  if (accountIds[0]) {
+    const { data: acc } = await admin.from("ad_accounts")
+      .select("id, account_id, account_name, platform, is_active, currency, timezone, last_sync_at")
+      .eq("user_id", userId).eq("platform", "meta").eq("account_id", accountIds[0]).maybeSingle();
     account = acc || null;
   }
 
-  return jsonResponse({ ok: true, saved, errors, account });
+  return jsonResponse({
+    ok: true,
+    saved: { accounts: res.contas, pixels: res.pixels, pages: res.paginas },
+    errors: [],
+    jose_ad_account_id: res.jose_ad_account_id ?? null,
+    account,
+  });
 }
 
 async function handleConsumeSession(req: Request, sessionId: string) {
@@ -594,19 +704,25 @@ async function handleConsumeSession(req: Request, sessionId: string) {
 
   const { data, error } = await adminClient()
     .from("meta_oauth_sessions")
-    .select("*")
+    .select("id, payload, consumed_at, expires_at")   // NUNCA seleciona o token
     .eq("id", sessionId)
-    .eq("user_id", userId)
+    .eq("user_id", userId)                            // isolamento por tenant
     .gt("expires_at", new Date().toISOString())
     .maybeSingle();
 
   if (error) return jsonResponse({ error: error.message }, 400);
   if (!data) return jsonResponse({ error: "Sessao OAuth expirada ou nao encontrada" }, 404);
 
-  return jsonResponse({
-    token: data.access_token_encrypted,
-    ...(data.payload || {}),
-  });
+  // Sessao ja consumida nao lista de novo: o token dela ja virou integracao.
+  if (data.consumed_at) {
+    return jsonResponse({ error: "sessao_ja_consumida", consumed_at: data.consumed_at }, 409);
+  }
+
+  // O access_token NAO volta para o navegador. Antes voltava aqui e o front o
+  // reenviava no save_selected -- o token cru fazia uma viagem de ida e volta
+  // pelo cliente. Agora o front so carrega o session_id.
+  const { token: _descartado, ...semToken } = (data.payload || {}) as Record<string, unknown>;
+  return jsonResponse({ session_id: data.id, ...semToken });
 }
 
 async function handlePost(req: Request) {
@@ -618,6 +734,10 @@ async function handlePost(req: Request) {
       return handleAuthorize(body.redirect_uri, body.state);
     case "callback":
       return handlePostCallback(req, body.code, body.redirect_uri);
+    // Estes dois recebiam access_token cru do navegador. Ficam restritos ao
+    // service_role: nenhum usuario autenticado (nem o dono da conta) pode
+    // injetar credencial por aqui. Se um consumidor interno precisar, ele
+    // chama com a service key — e nunca a partir do browser.
     case "connect_with_token":
       return handleConnectWithToken(req, body.access_token, body.account_id);
     case "save_account":
