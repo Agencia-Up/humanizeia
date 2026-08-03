@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { loadV3FeedbackReport } from './v3FeedbackReports';
 import { Button } from '@/components/ui/button';
 import { FileText, Loader2, Download, CheckCircle2, Clock, AlertTriangle, Lightbulb, Send } from 'lucide-react';
 
@@ -16,6 +17,7 @@ interface Relatorio {
   status: string;
   enviado_em: string | null;
   resumo: any;
+  v3?: boolean;
 }
 
 const QORDER = ['1_alto', '2_medio', '3_baixo', '4_nao_lead', 'sem'] as const;
@@ -32,6 +34,7 @@ const STATUS: Record<string, { label: string; cls: string; icon: typeof CheckCir
   gerado:   { label: 'Gerado',   cls: 'bg-amber-500/15 text-amber-700 border-amber-500/30 dark:text-amber-300',       icon: Clock },
   pendente: { label: 'Pendente', cls: 'bg-muted text-muted-foreground border-border/40',          icon: Clock },
   falhou:   { label: 'Falhou',   cls: 'bg-rose-500/15 text-rose-700 border-rose-500/30 dark:text-rose-300',          icon: AlertTriangle },
+  processado: { label: 'Processado', cls: 'bg-sky-500/15 text-sky-700 border-sky-500/30 dark:text-sky-300', icon: CheckCircle2 },
 };
 
 function fmtData(d: string): string {
@@ -48,23 +51,18 @@ export function RelatoriosHistoricoTab() {
     const totalRecebidos = rows.reduce((acc, r) => acc + (Number(r.resumo?.leads_recebidos ?? r.resumo?.leads_analisados) || 0), 0);
     const totalAnalisados = rows.reduce((acc, r) => acc + (Number(r.resumo?.leads_analisados) || 0), 0);
     const totalPendentes = rows.reduce((acc, r) => acc + (Number(r.resumo?.pendentes_analise) || 0), 0);
-    const enviados = rows.filter((r) => r.status === 'enviado').length;
+    const processados = rows.filter((r) => r.status === 'processado' || r.status === 'enviado').length;
     const falhas = rows.filter((r) => r.status === 'falhou').length;
     const pendentes = rows.filter((r) => r.status === 'pendente' || r.status === 'gerado').length;
     const ultimo = rows[0]?.data_ref ? fmtData(rows[0].data_ref) : '-';
-    return { totalRecebidos, totalAnalisados, totalPendentes, enviados, falhas, pendentes, ultimo };
+    return { totalRecebidos, totalAnalisados, totalPendentes, processados, falhas, pendentes, ultimo };
   }, [rows]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data, error } = await (supabase as any).from('feedback_relatorios')
-        .select('id, data_ref, loja, status, enviado_em, resumo')
-        .order('data_ref', { ascending: false })
-        .order('created_at', { ascending: false })
-        .limit(90);
-      if (error) throw error;
-      setRows(data || []);
+      const report = await loadV3FeedbackReport(90);
+      setRows((report.historico || []) as Relatorio[]);
     } catch (e: any) {
       toast({ title: 'Erro ao carregar relatórios', description: e?.message, variant: 'destructive' });
     } finally {
@@ -74,6 +72,10 @@ export function RelatoriosHistoricoTab() {
   useEffect(() => { load(); }, [load]);
 
   const baixar = async (id: string) => {
+    if (rows.find((r) => r.id === id)?.v3) {
+      toast({ title: 'Dados do Pedro v3', description: 'Este registro é uma leitura operacional dos eventos e receipts do v3; ainda não existe PDF para ele.' });
+      return;
+    }
     setBaixando(id);
     try {
       const { data, error } = await supabase.functions.invoke('feedback-relatorio-download', { body: { relatorio_id: id } });
@@ -95,7 +97,7 @@ export function RelatoriosHistoricoTab() {
         </div>
         <div>
           <h3 className="text-base font-semibold text-foreground leading-tight">Relatórios de atendimento</h3>
-          <p className="text-xs text-muted-foreground">O histórico do que a IA gerou e enviou. Clique pra baixar o PDF de cada dia.</p>
+          <p className="text-xs text-muted-foreground">Histórico operacional do Pedro v3: eventos, decisões, entregas e falhas por dia.</p>
         </div>
       </div>
 
@@ -107,7 +109,7 @@ export function RelatoriosHistoricoTab() {
               Linha do tempo gerencial
             </div>
             <p className="mt-2 text-sm text-muted-foreground">
-              Ultimo relatorio: <span className="font-semibold text-foreground">{resumoGeral.ultimo}</span>. Use esta tela para conferir se o PDF foi gerado, enviado e quais dias precisam revisao.
+              Último registro: <span className="font-semibold text-foreground">{resumoGeral.ultimo}</span>. Use esta tela para conferir o processamento do v3 e quais dias precisam revisão.
             </p>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -117,8 +119,8 @@ export function RelatoriosHistoricoTab() {
               <div className="text-[10px] text-muted-foreground">{resumoGeral.totalAnalisados} analisados</div>
             </div>
             <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/10 p-3">
-              <div className="flex items-center gap-1 text-[11px] text-emerald-700 dark:text-emerald-200"><Send className="h-3 w-3" /> Enviados</div>
-              <div className="mt-1 text-lg font-semibold text-emerald-700 dark:text-emerald-300">{resumoGeral.enviados}</div>
+              <div className="flex items-center gap-1 text-[11px] text-emerald-700 dark:text-emerald-200"><Send className="h-3 w-3" /> Processados</div>
+              <div className="mt-1 text-lg font-semibold text-emerald-700 dark:text-emerald-300">{resumoGeral.processados}</div>
             </div>
             <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-3">
               <div className="text-[11px] text-amber-700 dark:text-amber-200">Pendentes</div>
@@ -193,15 +195,17 @@ export function RelatoriosHistoricoTab() {
                       </div>
                     )}
                   </div>
-                  <Button
-                    variant="outline" size="sm"
-                    onClick={() => baixar(r.id)}
-                    disabled={baixando === r.id}
-                    className="gap-1.5 shrink-0"
-                  >
-                    {baixando === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                    Baixar PDF
-                  </Button>
+                  {!r.v3 && (
+                    <Button
+                      variant="outline" size="sm"
+                      onClick={() => baixar(r.id)}
+                      disabled={baixando === r.id}
+                      className="gap-1.5 shrink-0"
+                    >
+                      {baixando === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                      Baixar PDF
+                    </Button>
+                  )}
                 </div>
               </div>
             );
