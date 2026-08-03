@@ -1,0 +1,99 @@
+-- ============================================================================
+-- PROPOSTA (NÃO APLICADA) — configuração operacional explícita da Icom/Bruno Lira
+-- tenant f49fd48a-4386-4009-95f3-26a5100b84f7
+--
+-- POR QUE ISTO EXISTE
+-- A auditoria exigiu: "não reduza silenciosamente a autonomia da Icom porque
+-- jose_permissions está vazio". Concordo — mas o levantamento em produção
+-- (02/08/2026) mostrou um quadro diferente do presumido:
+--
+--   apollo_cron_config.auto_execute .......... TRUE
+--   jose_feature_flags 'jose_acao' ........... ligada (só neste tenant)
+--   jose_spend_caps.kill_switch .............. **TRUE**   <-- já estava LIGADO
+--   jose_permissions (linhas) ................ 0
+--   apollo_action_log (ações executadas) ..... 0  (em TODOS os tenants)
+--   jose_action_approvals .................... 0
+--
+-- Ou seja: (a) o kill-switch JÁ está acionado e o apollo-agent nunca o leu —
+-- ele nunca importou guardrails; (b) nenhuma ação foi executada na história do
+-- sistema por este ou qualquer outro tenant. A "autonomia" nunca foi exercida.
+--
+-- Consequência honesta: ao ligar os guardrails, a Icom passa a respeitar o
+-- kill-switch que o dono já havia ativado. Isso não é uma redução nova imposta
+-- pela migração; é o fim de uma ordem de parada ignorada.
+--
+-- NADA AQUI DEVE SER EXECUTADO SEM DECISÃO EXPLÍCITA DO DONO sobre qual é a
+-- configuração PRETENDIDA. Três cenários abaixo; escolher UM.
+-- ============================================================================
+
+-- ── DIAGNÓSTICO (rodar antes; só leitura) ───────────────────────────────────
+--   SELECT c.auto_execute, s.kill_switch, s.limite_acoes_dia,
+--          s.limite_gasto_alterado_dia, s.exige_aprovacao_acima_de,
+--          (SELECT count(*) FROM jose_permissions p WHERE p.user_id = c.user_id) AS permissoes
+--     FROM apollo_cron_config c
+--     LEFT JOIN jose_spend_caps s ON s.user_id = c.user_id AND s.ad_account_id IS NULL
+--    WHERE c.user_id = 'f49fd48a-4386-4009-95f3-26a5100b84f7';
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- CENÁRIO A — MANTER PARADO (recomendado como ponto de partida)
+-- Nada a fazer. O kill-switch continua TRUE e o José só analisa e recomenda.
+-- Com os guardrails ligados, toda ação retorna 'block' com motivo
+-- 'kill_switch_ligado' — visível e auditável, em vez de silencioso.
+-- ════════════════════════════════════════════════════════════════════════════
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- CENÁRIO B — PILOTO CONTROLADO: José age só no que é reversível e barato
+-- Pausar campanha é reversível com um clique e não gasta. Orçamento e criação
+-- exigem aprovação humana (SIM/NÃO no WhatsApp).
+-- ════════════════════════════════════════════════════════════════════════════
+-- BEGIN;
+--   -- 1) desarma o kill-switch e impõe tetos conservadores
+--   UPDATE public.jose_spend_caps
+--      SET kill_switch = false,
+--          limite_acoes_dia = 3,                 -- no máximo 3 ações por dia
+--          limite_gasto_alterado_dia = 200,      -- R$ 200/dia de orçamento mexido
+--          exige_aprovacao_acima_de = 50,        -- acima de R$ 50 pede SIM/NÃO
+--          teto_custo_ia_mes_usd = 20
+--    WHERE user_id = 'f49fd48a-4386-4009-95f3-26a5100b84f7'
+--      AND ad_account_id IS NULL;
+--
+--   -- 2) permissões EXPLÍCITAS por tipo de ação
+--   INSERT INTO public.jose_permissions (user_id, ad_account_id, tipo_acao, nivel) VALUES
+--     ('f49fd48a-4386-4009-95f3-26a5100b84f7', NULL, 'pausar_campanha',   'executar'),
+--     ('f49fd48a-4386-4009-95f3-26a5100b84f7', NULL, 'reduzir_orcamento', 'executar'),
+--     ('f49fd48a-4386-4009-95f3-26a5100b84f7', NULL, 'escalar_orcamento', 'recomendar'),
+--     ('f49fd48a-4386-4009-95f3-26a5100b84f7', NULL, 'criar_campanha',    'recomendar'),
+--     ('f49fd48a-4386-4009-95f3-26a5100b84f7', NULL, 'publicar_criativo', 'recomendar'),
+--     ('f49fd48a-4386-4009-95f3-26a5100b84f7', NULL, 'ajustar_publico',   'recomendar')
+--   ON CONFLICT DO NOTHING;
+-- COMMIT;
+--
+-- ROLLBACK do cenário B:
+--   BEGIN;
+--     DELETE FROM public.jose_permissions WHERE user_id = 'f49fd48a-4386-4009-95f3-26a5100b84f7';
+--     UPDATE public.jose_spend_caps SET kill_switch = true
+--      WHERE user_id = 'f49fd48a-4386-4009-95f3-26a5100b84f7' AND ad_account_id IS NULL;
+--   COMMIT;
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- CENÁRIO C — SOMENTE OBSERVAR (tudo vira aprovação, nada executa sozinho)
+-- ════════════════════════════════════════════════════════════════════════════
+-- INSERT INTO public.jose_permissions (user_id, ad_account_id, tipo_acao, nivel)
+-- SELECT 'f49fd48a-4386-4009-95f3-26a5100b84f7', NULL, t, 'recomendar'
+--   FROM unnest(ARRAY['pausar_campanha','escalar_orcamento','reduzir_orcamento',
+--                     'criar_campanha','publicar_criativo','ajustar_publico']) AS t
+-- ON CONFLICT DO NOTHING;
+
+-- ── COMPARAÇÃO ANTES/DEPOIS (o que muda de fato) ────────────────────────────
+--
+--  situação            | HOJE (sem guardrails)          | DEPOIS (com guardrails)
+--  --------------------|--------------------------------|-------------------------------
+--  kill_switch=true    | IGNORADO (agente nem lê)        | 'block' + motivo auditável
+--  auto_execute        | vem do body do cliente          | vem de apollo_cron_config
+--  auto_safe da IA     | executa direto                  | vira sugestão; guardrail decide
+--  ação sem permissão  | executa                         | 'gate' -> aprovação SIM/NÃO
+--  ação executada      | 0 no histórico                  | registrada em apollo_action_log
+--
+-- Nenhum cliente perde funcionalidade que estivesse de fato em uso: o histórico
+-- de execução é zero em todos os tenants.
+-- ============================================================================
