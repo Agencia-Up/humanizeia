@@ -40,7 +40,7 @@ import {
   adFingerprintOf, buildOperationalContext, buildGroundedFleet, carryForwardProof, compactGroundedFleet, deriveSendMediaAvailability,
   evaluateAdIdentityProof, resolveAdConfirmation, type AdIdentityProof, type GroundedVehicleRef, type VehicleTargetRuntimeFacts,
 } from "../domain/operational-context.ts";
-import { detectCommercialConstraints, sufficientForStockSearch, canonicalBrand, describeConstraints, mergeActiveConstraints, constraintsToStockInput, detectCorrections, activeConstraintsFromStockInput, mentionsMotorcycle, deriveScopeFromHomogeneousOffer, detectSimilarityIntent, relaxToSimilar, type RelaxKind, type CommercialConstraints } from "./commercial-constraints.ts";
+import { detectCommercialConstraints, sufficientForStockSearch, canonicalBrand, describeConstraints, mergeActiveConstraints, constraintsToStockInput, detectCorrections, activeConstraintsFromStockInput, completeValidatedSearchScopeFromCurrentBlock, mentionsMotorcycle, deriveScopeFromHomogeneousOffer, detectSimilarityIntent, relaxToSimilar, type RelaxKind, type CommercialConstraints } from "./commercial-constraints.ts";
 import { applyMonetarySemanticsToCurrentConstraints, sanitizeStockSearchInputMoney } from "./monetary-semantics.ts";
 import { selectPhotos } from "./photo-selection.ts";
 import { resolveVehicleTypeFromTaxonomy } from "../adapters/read/vehicle-taxonomy.ts";
@@ -588,6 +588,21 @@ export function enrichStockSearchCall(
     // vindos de memória, regex ou anúncio. O preenchimento de lacunas permanece
     // apenas para os caminhos legado/replay que ainda dependem desta compatibilidade.
     readonly llmOwnsFilters?: boolean;
+    // Escopo factual já validado para ESTE turno. A LLM continua sendo a única
+    // autoridade para decidir SE chama stock_search; esta opção só garante que a
+    // consulta executada não omita nem contradiga critérios objetivos do lead
+    // (por exemplo, "automático"). O chamador deve derivá-lo da compreensão
+    // semântica do próprio cérebro: troca de assunto usa apenas o bloco atual;
+    // refinamento usa o escopo acumulado do mesmo assunto.
+    //
+    // Separado de `constraints` de propósito: `constraints` é compatibilidade
+    // legado e continua ignorado numa chamada LLM-first. Assim memória/regex não
+    // voltam a escolher filtros por conta própria.
+    readonly validatedTurnScope?: CommercialConstraints;
+    // Opt-in factual independente da taxonomia de carro. Não escolhe a busca;
+    // apenas impede que uma consulta por moto explicitamente pedida seja rodada
+    // com o default que exclui motos.
+    readonly validatedMotorcycleIntent?: boolean;
     // P0-B (audit Codex smoke): turno de SIMILARIDADE ("algo parecido") -> a busca ignora modelo/marca do cérebro e roda
     // só por tipo/preço (constraints já relaxado). Mercado por TIPO, não preso ao modelo do anúncio.
     // FOCO EXATO do anúncio (missão P0): o lead pediu ALTERNATIVA do carro do anúncio ("tem outro Compass?", "outro ano",
@@ -638,14 +653,37 @@ export function enrichStockSearchCall(
     if (call.input.anos == null && c.anos && c.anos.length > 0) (filled as { anos?: number[] }).anos = [...c.anos];
   }
   // INC3: DROPA o excludeKeys ORIGINAL do cérebro (nunca passa verbatim) — só entra o CLAMPADO (ou nada).
-  const { excludeKeys: _brainExcludeDropped, ...restInput } = call.input;
+  const { excludeKeys: _brainExcludeDropped, ...inputWithoutExclude } = call.input;
+  // Incidente WA 2026-08-02: a LLM decidiu corretamente chamar stock_search,
+  // mas omitiu `cambio:"automatic"` em três consultas e conservou `tipo:"hatch"`
+  // ao trocar HB20 por Onix. O estoque respondeu ao filtro errado e o agente
+  // afirmou ausência falsa. Quando há escopo validado, as dimensões comerciais
+  // propostas são substituídas COMO CONJUNTO pelo fato do turno; não fazemos
+  // fill parcial, pois ele preservaria exatamente o filtro stale que causou o
+  // incidente. Controles operacionais (broad/includeMotorcycles) permanecem da
+  // LLM e excludeKeys continua sujeito ao clamp objetivo acima.
+  const restInput: QueryCall["input"] = options.validatedTurnScope == null
+    ? inputWithoutExclude
+    : (() => {
+        const {
+          marca: _marca, modelo: _modelo, modelos: _modelos, tipo: _tipo,
+          precoMax: _precoMax, cambio: _cambio, combustivel: _combustivel,
+          hibrido: _hibrido, popular: _popular, anos: _anos,
+          ...controls
+        } = inputWithoutExclude;
+        return { ...controls, ...constraintsToStockInput(options.validatedTurnScope) };
+      })();
   const mergedInput: QueryCall["input"] = {
     ...restInput,
     ...filled,
     ...(!options.llmOwnsFilters && (options.popular || c?.popular) ? { popular: true } : {}),
     ...(excludeKeys ? { excludeKeys } : {}),
     // F2.29: só libera moto se o lead pediu moto OU o cérebro já marcou includeMotorcycles. Senão, DEFAULT exclui.
-    ...((!options.llmOwnsFilters && options.wantsMotorcycle) || call.input.includeMotorcycles === true ? { includeMotorcycles: true } : {}),
+    ...((!options.llmOwnsFilters && options.wantsMotorcycle)
+      || options.validatedMotorcycleIntent === true
+      || call.input.includeMotorcycles === true
+      ? { includeMotorcycles: true }
+      : {}),
   };
   // FOCO EXATO do anúncio (missão P0): alternativa pedida + sem ano do lead -> o ANO (do anúncio, seja do cérebro ou do
   // filled) SAI da chamada EXECUTADA. Preserva modelo/marca/excludeKeys. Não depende de retry.
@@ -2881,14 +2919,39 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         }
         // P0-4 (audit): "mais opções" -> o ENGINE enriquece excludeKeys com a UNIÃO das keys da última oferta (não
         // depende de a LLM lembrar); preserva tipo/câmbio/teto. A chamada EXECUTADA (não só a proposta) carrega os excludes.
+        // A engine só pode corrigir/completar filtros com critérios objetivos
+        // PRESENTES no bloco atual. Sem critério novo (ex.: "esse ainda tem?"
+        // vindo de anúncio), a LLM pode fazer uma segunda busca mais ampla depois
+        // de o alvo exato voltar vazio; reinjetar o anúncio nessa segunda chamada
+        // criaria um loop da mesma busca. Em refinamento, o escopo acumulado segue
+        // válido; em troca de assunto, somente o bloco atual governa.
+        const currentObjectiveSearchScope = currentConstraintsForTurn();
+        const hasCurrentObjectiveSearchScope = sufficientForStockSearch(currentObjectiveSearchScope);
+        const validatedSearchScope = completeValidatedSearchScopeFromCurrentBlock({
+          validatedScope: topicChangeThisTurn()
+            ? currentObjectiveSearchScope
+            : effectiveSearchScopeThisTurn(),
+          proposedInput: semanticallyScopedCall.tool === "stock_search" ? semanticallyScopedCall.input : null,
+          block: leadMessage,
+        });
         const execCall = enrichStockSearchCall(semanticallyScopedCall, {
           popular: frame.signals.mentionsPopular === true,
           moreOptions: frame.signals.mentionsMoreOptions,
           previousVehicleKeys: shownVehicleKeys,  // INC3: conjunto CUMULATIVO apresentado (clampa o excludeKeys do cérebro)
-          constraints: searchScopeThisTurn(),   // ⭐F2.75: escopo DO TURNO (troca de direção não herda anúncio); só preenche lacunas
+          constraints: searchScopeThisTurn(),   // compatibilidade legado: no central_active não governa a chamada
           wantsMotorcycle,                       // F2.29: só libera moto se o lead pediu moto explicitamente
           enforceShownClamp: llmFirst,           // INC3: clampa só no central_active; shadow/legado mantém a união antiga
-          llmOwnsFilters: llmFirst,               // chamada direta: memória/regex/anúncio nunca acrescentam filtros omitidos pela LLM
+          llmOwnsFilters: llmFirst,
+          // LLM-first: o cérebro escolheu USAR a tool e declarou a relação
+          // semântica do turno. A engine apenas preserva a fidelidade dos filtros
+          // objetivos: troca de assunto usa o bloco atual; refinamento mantém o
+          // escopo daquele assunto. Nunca força uma chamada nem escolhe resposta.
+          validatedTurnScope: llmFirst
+            && hasCurrentObjectiveSearchScope
+            && sufficientForStockSearch(validatedSearchScope)
+            ? validatedSearchScope
+            : undefined,
+          validatedMotorcycleIntent: llmFirst && wantsMotorcycle,
         });
         if (call.tool === "stock_search") stockProposedVsExecuted.push({ proposed: call.input, executed: execCall.input, topicChange: topicChangeThisTurn(), source: "brain_loop" });
         // Missão P0 (audit Codex smoke): DEDUP SEMÂNTICO NO LOOP. Se ESTA busca (filtro ENRIQUECIDO) já foi executada neste

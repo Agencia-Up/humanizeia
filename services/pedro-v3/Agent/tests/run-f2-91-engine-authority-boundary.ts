@@ -13,6 +13,7 @@ import type { ProposedDecision, QueryResult, RenderedResponse, TurnDecision } fr
 import type { VehicleFact } from "../src/domain/types.ts";
 import { buildTenantCatalog } from "../src/engine/catalog-utils.ts";
 import { enrichStockSearchCall } from "../src/engine/central-engine.ts";
+import { completeValidatedSearchScopeFromCurrentBlock } from "../src/engine/commercial-constraints.ts";
 import { PolicyEngine, hasDeny } from "../src/engine/policy-engine.ts";
 import { responseAuthorityProfile } from "../src/engine/response-authority.ts";
 import { assertToolExecutionAuthority } from "../src/engine/tool-authority.ts";
@@ -238,7 +239,7 @@ async function main(): Promise<void> {
     },
   );
   const llmOwnedInput = llmOwnedSearch.input as Record<string, unknown>;
-  check("[F7] chamada direta executa somente os filtros comerciais declarados pela LLM",
+  check("[F7] chamada direta ignora constraints legado nao validados",
     llmOwnedInput.tipo === "suv"
       && llmOwnedInput.marca == null
       && llmOwnedInput.modelo == null
@@ -254,6 +255,76 @@ async function main(): Promise<void> {
     JSON.stringify(llmOwnedInput.excludeKeys));
   check("[F9] loop ativo declara explicitamente a autoridade da LLM sobre filtros",
     /llmOwnsFilters:\s*llmFirst/.test(centralSource));
+  const validatedCurrentSearch = enrichStockSearchCall(
+    { tool: "stock_search", input: { tipo: "hatch", modelo: "Onix", broad: true } },
+    {
+      popular: false,
+      moreOptions: false,
+      previousVehicleKeys: [],
+      constraints: { marca: "Hyundai", modelos: ["HB20"], tipo: "hatch" },
+      enforceShownClamp: true,
+      llmOwnsFilters: true,
+      validatedTurnScope: { modelos: ["Onix"], cambio: "automatic" },
+    },
+  );
+  const validatedCurrentInput = validatedCurrentSearch.input as Record<string, unknown>;
+  check("[F9a] escopo validado preserva criterio explicito omitido pela LLM",
+    validatedCurrentInput.modelo === "Onix" && validatedCurrentInput.cambio === "automatic",
+    JSON.stringify(validatedCurrentInput));
+  check("[F9b] troca validada remove filtro stale sem reintroduzir memoria legado",
+    validatedCurrentInput.tipo == null
+      && validatedCurrentInput.marca == null
+      && validatedCurrentInput.broad === true,
+    JSON.stringify(validatedCurrentInput));
+  const validatedRefinement = enrichStockSearchCall(
+    { tool: "stock_search", input: { modelo: "Polo" } },
+    {
+      popular: false,
+      moreOptions: false,
+      previousVehicleKeys: [],
+      enforceShownClamp: true,
+      llmOwnsFilters: true,
+      validatedTurnScope: { marca: "Volkswagen", modelos: ["Polo"], precoMax: 70000, cambio: "automatic" },
+    },
+  ).input as Record<string, unknown>;
+  check("[F9c] refinamento validado conserva o escopo objetivo do mesmo assunto",
+    validatedRefinement.marca === "volkswagen"
+      && validatedRefinement.modelo === "Polo"
+      && validatedRefinement.precoMax === 70000
+      && validatedRefinement.cambio === "automatic",
+    JSON.stringify(validatedRefinement));
+  check("[F9d] loop ativo liga explicitamente o escopo factual sem forcar a tool",
+    /validatedTurnScope:\s*llmFirst\s*&&\s*hasCurrentObjectiveSearchScope\s*&&\s*sufficientForStockSearch\(validatedSearchScope\)/.test(centralSource));
+  const completedLiteralIdentity = completeValidatedSearchScopeFromCurrentBlock({
+    validatedScope: { cambio: "automatic" },
+    proposedInput: { modelo: "Onix", tipo: "hatch" },
+    block: "Onix? Preciso automatico",
+  });
+  check("[F9e] modelo novo proposto pela LLM so completa a lacuna quando esta no bloco atual",
+    JSON.stringify(completedLiteralIdentity.modelos) === JSON.stringify(["Onix"])
+      && completedLiteralIdentity.tipo == null
+      && completedLiteralIdentity.cambio === "automatic",
+    JSON.stringify(completedLiteralIdentity));
+  const rejectedStaleIdentity = completeValidatedSearchScopeFromCurrentBlock({
+    validatedScope: { cambio: "automatic" },
+    proposedInput: { marca: "Hyundai", modelo: "HB20", tipo: "hatch" },
+    block: "Preciso automatico",
+  });
+  check("[F9f] identidade herdada ausente no bloco nao atravessa a troca de assunto",
+    rejectedStaleIdentity.marca == null
+      && rejectedStaleIdentity.modelos == null
+      && rejectedStaleIdentity.tipo == null
+      && rejectedStaleIdentity.cambio === "automatic",
+    JSON.stringify(rejectedStaleIdentity));
+  const validatedIdentityWins = completeValidatedSearchScopeFromCurrentBlock({
+    validatedScope: { modelos: ["Onix"], cambio: "automatic" },
+    proposedInput: { modelo: "HB20" },
+    block: "Troquei o HB20 pelo Onix automatico",
+  });
+  check("[F9g] identidade objetiva validada vence proposta conflitante da LLM",
+    JSON.stringify(validatedIdentityWins.modelos) === JSON.stringify(["Onix"])
+      && validatedIdentityWins.cambio === "automatic",
+    JSON.stringify(validatedIdentityWins));
   check("[F10] engine não cria nem renomeia handoff no fluxo ativo",
     !/const forcedHandoffReason/.test(centralSource)
       && !/photoSafeEffects\.map\(\(effect\) => effect\.kind === \"handoff\"/.test(centralSource));

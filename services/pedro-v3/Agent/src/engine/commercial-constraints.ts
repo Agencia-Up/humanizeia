@@ -10,7 +10,7 @@
 // Reusa computeTurnFrame (modelo/tipo/orçamento/câmbio) + detecção de MARCA por sinônimo (volks->volkswagen). PURO.
 // ============================================================================
 import { computeTurnFrame } from "./explicit-search.ts";
-import { normalizeText } from "./catalog-utils.ts";
+import { normalizeText, normalizedTermInText } from "./catalog-utils.ts";
 import type { ClaimExtractor, QueryInputMap, TurnInterpretation } from "../domain/decision.ts";
 import type { FrameSignals } from "../domain/agent-brain.ts";
 import type { ActiveSearchConstraints } from "../domain/conversation-state.ts";
@@ -272,6 +272,40 @@ export function activeConstraintsFromStockInput(input: Record<string, unknown> |
   if (Array.isArray(input.anos)) { const anos = input.anos.filter((y): y is number => typeof y === "number" && y >= 1990 && y <= 2035); if (anos.length > 0) c.anos = anos; }
   if (input.popular === true) c.popular = true;
   return c;
+}
+
+// Completa o escopo factual do turno com identidade comercial que a PROPRIA
+// LLM colocou na chamada, mas somente quando essa identidade aparece
+// literalmente no bloco atual. Isso cobre modelos novos/recem-renomeados que o
+// catalogo local ainda nao reconhece, sem transformar a chamada em uma segunda
+// fonte irrestrita de verdade.
+//
+// Regra de autoridade:
+// - dimensoes objetivas ja extraidas/validadas do bloco sempre vencem;
+// - somente lacunas de marca/modelo podem ser preenchidas pela proposta;
+// - cada valor proposto precisa estar literalmente no bloco atual;
+// - tipo, preco, cambio, combustivel, ano e popular nunca sao copiados daqui:
+//   seus parsers objetivos sao a autoridade e, assim, um filtro herdado/stale
+//   da LLM nao sobrevive a uma troca de assunto.
+//
+// A funcao nao decide chamar stock_search e nao amplia resultado. Ela apenas
+// garante fidelidade entre a consulta que a LLM escolheu e o pedido atual.
+export function completeValidatedSearchScopeFromCurrentBlock(args: {
+  readonly validatedScope: CommercialConstraints;
+  readonly proposedInput: Record<string, unknown> | null | undefined;
+  readonly block: string;
+}): CommercialConstraints {
+  const next: CommercialConstraints = { ...args.validatedScope };
+  const proposed = activeConstraintsFromStockInput(args.proposedInput);
+
+  if ((!next.modelos || next.modelos.length === 0) && proposed.modelos?.length) {
+    const literalModels = proposed.modelos.filter((model) => normalizedTermInText(args.block, model));
+    if (literalModels.length > 0) next.modelos = literalModels;
+  }
+  if (!next.marca && proposed.marca && normalizedTermInText(args.block, proposed.marca)) {
+    next.marca = proposed.marca;
+  }
+  return next;
 }
 
 // Rótulo humano curto do constraint (p/ recuperação honesta: "Não achei Volkswagen até 50 mil agora"). PURO.

@@ -32,7 +32,7 @@ const AD_SCOPE: CommercialConstraints = { tipo: "suv", marca: "peugeot", modelos
 // Estoque: automáticos variados (do mais barato ao mais caro) + o Peugeot 2008 do anúncio.
 const STOCK: VehicleFact[] = [
   { vehicleKey: "bndv:gol", marca: "Volkswagen", modelo: "Gol", ano: 2019, preco: 42000, km: 80000, cambio: "Automatico", cor: "Prata", tipo: "hatch" },
-  { vehicleKey: "bndv:onix", marca: "Chevrolet", modelo: "Onix", ano: 2021, preco: 58000, km: 40000, cambio: "Automatico", cor: "Branco", tipo: "hatch" },
+  { vehicleKey: "bndv:onix", marca: "Chevrolet", modelo: "Onix Plus", ano: 2021, preco: 58000, km: 40000, cambio: "Automatico", cor: "Branco", tipo: "sedan" },
   { vehicleKey: "bndv:2008", marca: "Peugeot", modelo: "2008", ano: 2021, preco: 68990, km: 35000, cambio: "Automatico", cor: "Preto", tipo: "suv" },
   { vehicleKey: "bndv:compass", marca: "Jeep", modelo: "Compass", ano: 2022, preco: 119000, km: 30000, cambio: "Automatico", cor: "Cinza", tipo: "suv" },
 ];
@@ -160,6 +160,54 @@ async function main(): Promise<void> {
   // [A8] self-heal: após A2 (troca), o próximo turno "tem outros?" herda o escopo ESTREITO, não reintroduz o anúncio.
   //      (provado por [A6]: o activeSearchConstraints persistido já é o estreito; o próximo turno parte dele.)
   check("[A8] próximo turno herda escopo estreito (self-heal do A6)", !!na && na.marca == null && na.tipo == null, JSON.stringify(na));
+
+  // [B] Incidente real WA 2026-08-02: a LLM decidiu consultar, mas perdeu
+  // "automatico" no input e conservou "hatch" ao trocar HB20 por Onix. O
+  // executor deve ser fiel aos criterios objetivos do bloco sem decidir chamar
+  // a tool por conta propria.
+  const b1 = await runTurn(
+    { tipo: "hatch", marca: "hyundai", modelos: ["HB20"] },
+    "Onix? Preciso automatico",
+    // Evidence precisa ser um trecho literal do bloco; em producao a LLM pode
+    // citar apenas a parte que prova a capability, sem concatenar frases.
+    ev({ isTopicChange: true }, "Preciso automatico"),
+    { tipo: "hatch", modelo: "Onix" },
+  );
+  check("[B1] troca HB20->Onix remove tipo e marca stale da chamada da LLM",
+    b1.executed.tipo == null && b1.executed.marca == null,
+    JSON.stringify(b1.executed));
+  check("[B1b] criterio automatico escrito pelo lead chega a consulta executada",
+    b1.executed.modelo === "Onix" && b1.executed.cambio === "automatic",
+    JSON.stringify(b1.executed));
+  check("[B1c] Onix Plus automatico sedan nao e escondido pelo hatch antigo",
+    b1.resultKeys.includes("bndv:onix"),
+    JSON.stringify(b1.resultKeys));
+
+  const b2 = await runTurn(
+    null,
+    "O que voce tem de hatch automatico?",
+    ev({ isTopicChange: true }, "hatch automatico"),
+    { tipo: "hatch" },
+  );
+  check("[B2] busca ampla tambem preserva cambio explicito omitido pela LLM",
+    b2.executed.tipo === "hatch" && b2.executed.cambio === "automatic",
+    JSON.stringify(b2.executed));
+  check("[B2b] resultado respeita simultaneamente carroceria e cambio",
+    JSON.stringify(b2.resultKeys) === JSON.stringify(["bndv:gol"]),
+    JSON.stringify(b2.resultKeys));
+
+  const b3 = await runTurn(
+    { marca: "volkswagen", modelos: ["Gol"], precoMax: 50000 },
+    "Pode ser automatico",
+    ev({ isTopicChange: false }, "automatico"),
+    { modelo: "Gol" },
+  );
+  check("[B3] refinamento mantem o mesmo alvo e acrescenta o criterio atual",
+    b3.executed.marca === "volkswagen"
+      && b3.executed.modelo === "Gol"
+      && b3.executed.precoMax === 50000
+      && b3.executed.cambio === "automatic",
+    JSON.stringify(b3.executed));
 
   console.log(`\n== F2.75: ${ok} OK | ${fail} FALHA ==`);
   if (fail > 0) { console.error("FALHAS:\n - " + fails.join("\n - ")); process.exit(1); }

@@ -300,7 +300,12 @@ async function main(): Promise<void> {
       return fin([txt("Temos sim! Olha:"), offer([POP2]), txt("Quer ver as fotos?")]);
     });
     const st = c.exec.find((x) => x.tool === "stock_search");
-    check("[15] executa o stock_search(modelo=onix) escolhido pela LLM", (st?.input as { modelo?: string })?.modelo === "onix" && c.committed, JSON.stringify(st?.input ?? null));
+    // A fidelidade do contrato e semantica: o escopo validado pode conservar a
+    // grafia do bloco ("Onix") em vez da caixa usada pela proposta ("onix").
+    // O modelo nao pode desaparecer nem ser trocado por outro.
+    check("[15] executa o stock_search(modelo=onix) escolhido pela LLM",
+      (st?.input as { modelo?: string })?.modelo?.toLowerCase() === "onix" && c.committed,
+      JSON.stringify(st?.input ?? null));
     check("[15] responde Onix (não o assunto anterior)", has(c.outbox, "Onix"), `text="${c.outbox}"`);
   }
   // 16) "não quero foto agora": acolhe e segue -> sem media, sem technical_fallback.
