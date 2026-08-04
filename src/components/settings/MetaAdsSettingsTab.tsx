@@ -28,6 +28,9 @@ export function MetaAdsSettingsTab() {
     saveSelectedAssets,
     selectConnectedAccount,
     disconnectAccount,
+    joseState,
+    testConnection,
+    isCheckingHealth,
   } = useMetaConnection();
 
   const [showAddAnother, setShowAddAnother] = useState(false);
@@ -112,10 +115,25 @@ export function MetaAdsSettingsTab() {
             </div>
             {isLoading ? (
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-            ) : connectedAccount ? (
+            ) : joseState.estado === 'connected' ? (
               <Badge className="bg-success/20 text-success border-success/30">
                 <CheckCircle className="h-3 w-3 mr-1" />
                 Conectado
+              </Badge>
+            ) : joseState.estado === 'expired' ? (
+              <Badge variant="destructive">
+                <XCircle className="h-3 w-3 mr-1" />
+                Sessão expirada — reconecte
+              </Badge>
+            ) : joseState.estado === 'no_account_selected' ? (
+              <Badge variant="secondary">
+                <XCircle className="h-3 w-3 mr-1" />
+                {connectedAccounts.length > 0 ? 'Escolha a conta do JOSÉ' : 'Não conectado'}
+              </Badge>
+            ) : connectedAccounts.length > 0 ? (
+              <Badge variant="secondary">
+                <XCircle className="h-3 w-3 mr-1" />
+                Conexão não validada
               </Badge>
             ) : (
               <Badge variant="secondary">
@@ -129,22 +147,32 @@ export function MetaAdsSettingsTab() {
           {/* PRECEDÊNCIA: se o Facebook acabou de voltar com ativos pra escolher
               (hasDetectedAssets), o PICKER manda — mesmo já estando conectado.
               Senão a tela "Conectado" esconderia os checkboxes e "conectava direto". */}
-          {!hasDetectedAssets && connectedAccount && !showAddAnother ? (
+          {!hasDetectedAssets && connectedAccounts.length > 0 && !showAddAnother ? (
             <div className="space-y-4">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <p className="text-sm text-muted-foreground">
-                  <b className="text-foreground">{connectedAccounts.length}</b> conta(s) integrada(s).
-                  A marcada (●) é a que o <b className="text-foreground">JOSÉ</b> usa nas análises — clique em outra pra trocar.
+                  <b className="text-foreground">{connectedAccounts.length}</b> conta(s) integrada(s) na Logos.
+                  {connectedAccount ? (
+                    <> A marcada (●) é a que o <b className="text-foreground">JOSÉ</b> usa — clique em outra pra trocar.</>
+                  ) : (
+                    <> <b className="text-foreground">Nenhuma escolhida para o JOSÉ ainda</b> — clique numa delas.</>
+                  )}
                 </p>
-                <Button variant="outline" size="sm" onClick={() => setShowAddAnother(true)}>
-                  <ExternalLink className="h-4 w-4 mr-2" />
-                  Conectar outra conta
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => testConnection()} disabled={isCheckingHealth}>
+                    {isCheckingHealth ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                    Testar conexão
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setShowAddAnother(true)}>
+                    <ExternalLink className="h-4 w-4 mr-2" />
+                    Conectar outra conta
+                  </Button>
+                </div>
               </div>
 
               <div className="space-y-2 max-h-80 overflow-y-auto">
                 {connectedAccounts.map((acc) => {
-                  const ativa = acc.id === connectedAccount.id;
+                  const ativa = acc.id === connectedAccount?.id;
                   return (
                     <div
                       key={acc.id}
