@@ -203,9 +203,17 @@ Deno.test("13 - consume_session nao devolve access_token", async () => {
   assert(!/select\("\*"\)/.test(consume), "nao selecionar * (traria o token)");
 });
 
-Deno.test("13b - save_selected recusa token vindo do navegador", async () => {
+Deno.test("13b - save_selected recusa credencial real vinda do navegador", async () => {
   const src = await ler("_shared/meta-oauth.ts");
+  // Aceita o uuid da sessao (referencia), recusa qualquer coisa que nao seja uuid
+  // (isto e, uma credencial de verdade).
+  assertStringIncludes(src, "if (legado && !UUID_RE.test(legado))");
   assertStringIncludes(src, "access_token_nao_aceito_do_frontend");
+  // e consume_session devolve o ID da sessao, nao o token
+  assertStringIncludes(src, "token: data.id");
+  const consume = src.slice(src.indexOf("async function handleConsumeSession"),
+                            src.indexOf("async function handlePost(req"));
+  assert(!/token:\s*data\.access_token_encrypted/.test(consume), "voltou a devolver o token cru");
 });
 
 Deno.test("13c - o front nao guarda nem envia token", async () => {
@@ -295,6 +303,9 @@ Deno.test("16 - connect_with_token e save_account exigem service_role", async ()
     assertStringIncludes(c, "isServiceRole(req)");
     assertStringIncludes(c, "acao_restrita_ao_service_role");
   }
+  // credencial de verdade vinda do navegador continua recusada em save_selected
+  assertStringIncludes(src, "legado && !UUID_RE.test(legado)");
+  assertStringIncludes(src, "access_token_nao_aceito_do_frontend");
   // comparacao em tempo constante
   assertStringIncludes(src, "diff |= chave.charCodeAt(i) ^ bearer.charCodeAt(i)");
 });

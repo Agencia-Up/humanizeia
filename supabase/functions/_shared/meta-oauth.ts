@@ -641,16 +641,31 @@ async function handleSaveSelected(req: Request, body: any) {
 
   // Token vindo do navegador e recusado sempre: o cliente nunca e fonte de
   // credencial. O token desta integracao sai da propria sessao, no servidor.
-  if (body?.access_token) {
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const legado = String(body?.access_token ?? "");
+
+  // Credencial de verdade vinda do navegador continua RECUSADA. O painel antigo
+  // manda de volta o uuid da sessao neste mesmo campo (ver handleConsumeSession):
+  // isso e uma referencia, nao um segredo, e e aceito.
+  if (legado && !UUID_RE.test(legado)) {
     return jsonResponse({ ok: false, error: "access_token_nao_aceito_do_frontend" }, 400);
   }
-  const sessionId = body?.session_id;
+
+  const sessionId = body?.session_id ?? (UUID_RE.test(legado) ? legado : null);
   if (!sessionId) return jsonResponse({ ok: false, error: "session_id obrigatorio" }, 400);
 
   const norm = (x: unknown) => String(x ?? "").replace(/^act_/, "");
-  const accountIds: string[] = Array.isArray(body?.account_ids) ? body.account_ids.map(norm).filter(Boolean) : [];
-  const pixelIds: string[] = Array.isArray(body?.pixel_ids) ? body.pixel_ids.map((x: unknown) => String(x)).filter(Boolean) : [];
-  const pageIds: string[] = Array.isArray(body?.page_ids) ? body.page_ids.map((x: unknown) => String(x)).filter(Boolean) : [];
+  // O painel implantado manda os OBJETOS (accounts/pixels/pages); o novo manda
+  // so os IDs. Aceitamos os dois e extraimos sempre o identificador.
+  const ids = (novo: unknown, velho: unknown, extrai: (o: any) => unknown): string[] => {
+    if (Array.isArray(novo)) return novo.map((x) => String(x ?? "")).filter(Boolean);
+    if (Array.isArray(velho)) return velho.map((o) => String(extrai(o) ?? "")).filter(Boolean);
+    return [];
+  };
+  const accountIds: string[] = ids(body?.account_ids, body?.accounts,
+    (o) => o?.account_id ?? o?.id).map(norm).filter(Boolean);
+  const pixelIds: string[] = ids(body?.pixel_ids, body?.pixels, (o) => o?.id ?? o?.pixel_id);
+  const pageIds: string[] = ids(body?.page_ids, body?.pages, (o) => o?.id ?? o?.page_id);
   const selectForJose = body?.select_for_jose ? norm(body.select_for_jose) : null;
 
   // TUDO OU NADA: trava a sessao, valida contra a descoberta dela, grava
@@ -722,7 +737,11 @@ async function handleConsumeSession(req: Request, sessionId: string) {
   // reenviava no save_selected -- o token cru fazia uma viagem de ida e volta
   // pelo cliente. Agora o front so carrega o session_id.
   const { token: _descartado, ...semToken } = (data.payload || {}) as Record<string, unknown>;
-  return jsonResponse({ session_id: data.id, ...semToken });
+  // COMPATIBILIDADE: o painel implantado le `data.token` e o devolve depois em
+  // save_selected. Devolvemos aqui o ID DA SESSAO nesse campo -- e um uuid, nao
+  // uma credencial. O access_token continua sem sair do servidor, e o front
+  // novo usa `session_id`. Os dois contratos convivem ate o Rebuild.
+  return jsonResponse({ session_id: data.id, token: data.id, ...semToken });
 }
 
 async function handlePost(req: Request) {
@@ -743,11 +762,22 @@ async function handlePost(req: Request) {
         return jsonResponse({ ok: false, error: "acao_restrita_ao_service_role" }, 403);
       }
       return handleConnectWithToken(req, body.access_token, body.account_id);
-    case "save_account":
+    case "save_account": {
+      // O painel implantado usa este caminho para conta unica, mandando de volta
+      // o uuid da sessao no campo access_token. Nesse caso delegamos para o
+      // fluxo atomico. Credencial de verdade aqui continua so no service_role.
+      const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (UUID.test(String(body?.access_token ?? ""))) {
+        return handleSaveSelected(req, {
+          session_id: body.access_token,
+          account_ids: [String(body?.account_id ?? "").replace(/^act_/, "")],
+        });
+      }
       if (!isServiceRole(req)) {
         return jsonResponse({ ok: false, error: "acao_restrita_ao_service_role" }, 403);
       }
       return handleSaveAccount(req, body);
+    }
     case "save_selected":
       return handleSaveSelected(req, body);
     case "consume_session":
