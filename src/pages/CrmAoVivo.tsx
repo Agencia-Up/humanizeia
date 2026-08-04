@@ -6,6 +6,7 @@ import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { usePendingTransfers, formatPendingAge, type PendingTransfer } from '@/hooks/usePendingTransfers';
 import { Button } from '@/components/ui/button';
 import { CplTrafegoPago } from '@/components/crm/CplTrafegoPago';
+import { RotationAuditPanel } from '@/components/pedro/RotationAuditPanel';
 import {
   Activity,
   ArrowLeft,
@@ -1828,6 +1829,15 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
 
         {/* SIDEBAR — hidden for sellers */}
         {!isSeller && <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 20, minWidth: 0 }}>
+          <RotationAuditPanel
+            members={teamMembers}
+            transfers={transfers}
+            nextSeller={nextSeller}
+            agentId={agents.filter((agent: any) => agent.is_active !== false).length === 1 ? agents.find((agent: any) => agent.is_active !== false)?.id : null}
+            dateFilter={dateFilter}
+            customStart={customStart}
+            customEnd={customEnd}
+          />
           
           {/* PRÓXIMO DA FILA */}
           <section style={{ ...cardStyle, overflow: 'hidden' }}>
