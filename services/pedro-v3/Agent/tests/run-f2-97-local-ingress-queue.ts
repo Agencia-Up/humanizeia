@@ -26,7 +26,7 @@ function syntaxOk(source: string, fileName: string): boolean {
   return !(result.diagnostics ?? []).some((item) => item.category === ts.DiagnosticCategory.Error);
 }
 
-console.log("\n=== F2.96 — fila local durável do primeiro ingresso v3 ===\n");
+console.log("\n=== F2.97 — fila local durável do primeiro ingresso v3 ===\n");
 
 const repoRoot = resolve(import.meta.dirname, "../../../..");
 const webhookPath = join(repoRoot, "supabase/functions/pedro-webhook-v2/index.ts");
@@ -82,7 +82,7 @@ const migration = readFileSync(migrationPath, "utf8");
   check("[D3] worker compila", syntaxOk(worker, workerPath));
 }
 
-console.log(`\nF2.96: ${ok} OK / ${fail} FALHA\n`);
+console.log(`\nF2.97: ${ok} OK / ${fail} FALHA\n`);
 if (fail > 0) {
   for (const item of failures) console.error(` - ${item}`);
   process.exit(1);
