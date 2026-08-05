@@ -438,13 +438,30 @@ async function handleV2Followup(supabase: any, ctx: {
       .in("status", ["novo", "interessado"]).eq("id", lead.id).select("id");
     if (!updatedRows || updatedRows.length === 0) return; // outro runner ja tratou
 
+    // A equipe e uma MATRIZ: uma linha por (agente, vendedor), mais uma linha de
+    // IDENTIDADE por pessoa, com agent_id NULL. A linha de identidade nao e um
+    // posto de fila -- mas o fallback antigo derrubava o filtro de agente e a
+    // trazia junto. Como a ordenacao poe quem nunca recebeu em primeiro
+    // (nullsFirst), um cadastro recem-criado furava a fila inteira: foi assim
+    // que o Paulo (Icom), desativado no agente mas ativo na linha de
+    // identidade, recebeu lead depois de desligado.
+    //
+    // Agora o fallback continua existindo (tenant com vendedores em OUTRO
+    // agente segue atendido), mas nunca abre mao de duas exigencias: vinculo a
+    // um agente de verdade e nao estar removido.
     let { data: teamMembers } = await supabase.from("ai_team_members").select("*")
       .eq("user_id", lead.user_id).eq("is_active", true).eq("agent_id", agentId)
+      .is("removed_at", null)
       .order("last_lead_received_at", { ascending: true, nullsFirst: true }).limit(50);
     if (!teamMembers || teamMembers.length === 0) {
       const { data: fb } = await supabase.from("ai_team_members").select("*")
         .eq("user_id", lead.user_id).eq("is_active", true)
+        .not("agent_id", "is", null)
+        .is("removed_at", null)
         .order("last_lead_received_at", { ascending: true, nullsFirst: true }).limit(50);
+      if (fb && fb.length > 0) {
+        console.warn(`[cron-lead-followup] tenant=${lead.user_id} sem vendedor no agente ${agentId}; usando ${fb.length} de outro(s) agente(s)`);
+      }
       teamMembers = fb;
     }
     const availableSellers = uniqueSellersByPhone(teamMembers || []);

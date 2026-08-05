@@ -182,7 +182,14 @@ export class SupabaseTransferStore implements TransferSagaStore {
     const params = new URLSearchParams();
     params.set("user_id", `eq.${tenantId}`);
     params.set("is_active", "eq.true");
+    // Vendedor removido nao volta para a fila mesmo com is_active=true: sem
+    // isto, bastava um desligamento deixar a flag para tras para o ex-vendedor
+    // voltar a receber.
+    params.set("removed_at", "is.null");
+    // Sem agente informado, exigimos ao menos vinculo a ALGUM agente: a linha
+    // de identidade (agent_id NULL) nao e posto de fila.
     if (agentId !== null) params.set("agent_id", `eq.${agentId}`);
+    else params.set("agent_id", "not.is.null");
     params.set("select", "id,name,whatsapp_number,is_active,agent_id,last_lead_received_at,total_leads_received");
     params.set("limit", "50");
     const rows = await this.#getRows("ai_team_members", params);
