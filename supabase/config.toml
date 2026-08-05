@@ -290,3 +290,8 @@ verify_jwt = false
 # Chamada pelo cliente LOGADO (tela de mensalidade em aberto) — exige JWT.
 [functions.subscription-invoice]
 verify_jwt = true
+
+# Replay interno da fronteira duravel do Pedro v3. O JWT service_role do cron
+# ainda e comparado com SUPABASE_SERVICE_ROLE_KEY dentro da funcao.
+[functions.pedro-v3-ingress-replay]
+verify_jwt = false

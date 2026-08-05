@@ -28,7 +28,7 @@ import { resolvePedroMediaContext } from "../_shared/pedro-v2/mediaContext_20260
 import { resolvePedroV3AdSemantic } from "../_shared/pedro-v2/pedroV3AdSemantic.ts";
 import { isAccountGrandfathered, resolveAiKey } from "../_shared/aiKeys.ts";
 
-const PEDRO_V2_BUILD = "2026-07-30-inactive-human-mode-v225";
+const PEDRO_V2_BUILD = "2026-08-05-local-ingress-queue-v226";
 
 function pickIncomingMessage(payload: any): any {
   if (Array.isArray(payload?.messages) && payload.messages.length > 0) return payload.messages[0];
@@ -1005,12 +1005,50 @@ Deno.serve(async (req) => {
       }, 503);
     }
 
+    // Fronteira LOCAL de durabilidade. Antes do primeiro I/O com o servico v3,
+    // a mesma transacao garante CRM, vinculo da conversa e replay do turno.
+    // Um timeout Supabase -> EasyPanel nao depende mais do retry da UAZAPI.
+    const { data: ingressQueue, error: ingressQueueError } = await supabase.rpc(
+      "pedro_v3_enqueue_ingress_v1",
+      { p_turn: bridgeTurn.turn },
+    );
+    if (ingressQueueError || ingressQueue?.ok !== true) {
+      console.error(
+        `[pedro-v3-only] local_ingress_enqueue_failed event=${bridgeTurn.turn.eventId} `
+        + `reason=${ingressQueueError?.message || ingressQueue?.reason || "unknown"}`,
+      );
+      return jsonResponse({
+        ok: false,
+        accepted: false,
+        reason: "v3_local_ingress_enqueue_failed",
+        build: PEDRO_V2_BUILD,
+      }, 503);
+    }
+    if (ingressQueue.status === "delivered") {
+      return jsonResponse({
+        ok: true,
+        accepted: true,
+        routed: "pedro_v3_durable_duplicate",
+        lead_id: ingressQueue.lead_id ?? null,
+        build: PEDRO_V2_BUILD,
+      });
+    }
+    if (ingressQueue.status === "cancelled") {
+      return jsonResponse({
+        ok: true,
+        accepted: true,
+        routed: "pedro_v3_ingress_cancelled",
+        lead_id: ingressQueue.lead_id ?? null,
+        build: PEDRO_V2_BUILD,
+      });
+    }
+
     const callBridge = (turn: typeof bridgeTurn.turn) => callPedroV3Bridge({
       serviceUrl,
       secret: bridgeSecret,
       turn,
-      // /turn apenas grava routing + inbox. Sem prova rápida de ingestão, o
-      // provedor deve repetir em vez de receber um HTTP 200 falso.
+      // /turn apenas grava routing + inbox. A fila local acima assume o replay
+      // caso esta tentativa rapida nao consiga provar o ingresso.
       timeoutMs: 8_000,
     });
     const needsEnrichment = provisionalMedia != null || bridgeTurn.turn.adReferral != null;
@@ -1056,17 +1094,32 @@ Deno.serve(async (req) => {
     });
 
     if (durable.kind !== "accepted") {
-      console.error(
-        `[pedro-v3-only] durable_ingest_not_proven result=${durable.initial.kind} `
+      console.warn(
+        `[pedro-v3-only] durable_ingest_queued result=${durable.initial.kind} `
         + `status=${durable.initial.serviceStatus ?? durable.initial.httpStatus ?? "none"}`,
       );
       return jsonResponse({
-        ok: false,
-        accepted: false,
-        reason: "v3_ingest_not_proven",
+        ok: true,
+        accepted: true,
+        queued: true,
+        reason: "v3_ingress_queued_for_replay",
         bridge: durable.initial.kind,
+        lead_id: ingressQueue.lead_id ?? null,
         build: PEDRO_V2_BUILD,
-      }, 503);
+      }, 202);
+    }
+
+    const { error: ingressAckError } = await supabase.rpc("pedro_v3_mark_ingress_delivered_v1", {
+      p_event_id: bridgeTurn.turn.eventId,
+      p_http_status: durable.initial.httpStatus,
+      p_service_status: durable.initial.serviceStatus,
+    });
+    if (ingressAckError) {
+      // O v3 ja confirmou a PK/eventId. Se este ACK falhar, o replay repete o
+      // mesmo evento e o v3 o recebe de forma idempotente.
+      console.error(
+        `[pedro-v3-bridge] local_ingress_ack_failed event=${bridgeTurn.turn.eventId} error=${ingressAckError.message}`,
+      );
     }
 
     if (durable.enrichment) {
@@ -1092,7 +1145,13 @@ Deno.serve(async (req) => {
     console.log(
       `[pedro-v3-bridge] durable_ingest=accepted status=${durable.initial.serviceStatus ?? durable.initial.httpStatus ?? "none"}`,
     );
-    return jsonResponse({ ok: true, accepted: true, routed: "pedro_v3_durable", build: PEDRO_V2_BUILD });
+    return jsonResponse({
+      ok: true,
+      accepted: true,
+      routed: "pedro_v3_durable",
+      lead_id: ingressQueue.lead_id ?? null,
+      build: PEDRO_V2_BUILD,
+    });
   }
   if (!_dryRun && typeof _waitUntil === "function") {
     if (PEDRO_V3_ONLY) {

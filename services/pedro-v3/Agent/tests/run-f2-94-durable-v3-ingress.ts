@@ -224,12 +224,13 @@ console.log("\n=== F2.94 — durable V3 ingress before ACK ===\n");
   const end = webhook.indexOf("if (!_dryRun && typeof _waitUntil", start);
   const activeBranch = start >= 0 && end > start ? webhook.slice(start, end) : "";
   check("[F1] ramo active existe para auditoria", activeBranch.length > 500);
-  check("[F2] primeira ingestão é awaited", activeBranch.includes("const durable = await bridgePedroV3BeforeAck"));
-  check("[F3] ausência de prova retorna 503", activeBranch.includes('reason: "v3_ingest_not_proven"') && activeBranch.includes("}, 503)"));
+  check("[F2] primeira ingestão externa é awaited", activeBranch.includes("const durable = await bridgePedroV3BeforeAck"));
+  check("[F3] fila local precede o bridge externo", activeBranch.indexOf('"pedro_v3_enqueue_ingress_v1"') < activeBranch.indexOf("const callBridge"));
   check("[F4] primeiro bridge não está encapsulado em waitUntil", !activeBranch.includes("_waitUntil((async"));
   check(
-    "[F5] HTTP 200 vem depois da validação durable",
-    activeBranch.indexOf('if (durable.kind !== "accepted")') < activeBranch.indexOf('routed: "pedro_v3_durable"'),
+    "[F5] timeout externo recebe ACK 202 somente depois da fila local",
+    activeBranch.indexOf('"pedro_v3_enqueue_ingress_v1"') < activeBranch.indexOf('reason: "v3_ingress_queued_for_replay"')
+      && activeBranch.includes("}, 202)"),
   );
   const transpiled = ts.transpileModule(webhook, {
     compilerOptions: {
