@@ -35,6 +35,7 @@
 
 import { logTransferFailure, resolveTransferFailures } from '../_shared/pedro-v2/logTransferFailure.ts';
 import { buildConversationBriefing } from '../_shared/transfer/buildBriefing.ts';
+import { evaluateOrphanRescue } from '../_shared/transfer/orphanRescueGuard.ts';
 
 // ─── Inline PostgREST client (sem imports externos) ─────────────────────────
 function createSupabaseClient(url: string, key: string) {
@@ -116,7 +117,29 @@ function createSupabaseClient(url: string, key: string) {
     };
     return builder;
   }
-  return { from(table: string) { return buildQuery(table); } };
+  return {
+    from(table: string) { return buildQuery(table); },
+    async rpc(functionName: string, args: Record<string, unknown>) {
+      try {
+        const res = await fetch(`${restBase}/rpc/${functionName}`, {
+          method: 'POST',
+          headers: baseHeaders,
+          body: JSON.stringify(args),
+        });
+        if (!res.ok) {
+          const errBody = await res.text();
+          return { data: null, error: { message: errBody, status: res.status } };
+        }
+        const contentType = res.headers.get('content-type') || '';
+        return {
+          data: contentType.includes('json') ? await res.json() : null,
+          error: null,
+        };
+      } catch (err: any) {
+        return { data: null, error: { message: err.message } };
+      }
+    },
+  };
 }
 
 // ─── CORS ───────────────────────────────────────────────────────────────────
@@ -342,10 +365,11 @@ Deno.serve(async (req) => {
   } else {
     const authUser = await getAuthUser(supabaseUrl, serviceKey, token);
     if (!authUser?.id) return json({ error: 'Token invalido' }, 401);
-    callerUserId = authUser.id;
-    const effectiveUserId = await resolveEffectiveUserId(supabase, callerUserId);
+    const authenticatedUserId = String(authUser.id);
+    callerUserId = authenticatedUserId;
+    const effectiveUserId = await resolveEffectiveUserId(supabase, authenticatedUserId);
     const targetOwner = requestedUserId || effectiveUserId;
-    const allowed = await canAccessLeadOwner(supabase, callerUserId, effectiveUserId, targetOwner);
+    const allowed = await canAccessLeadOwner(supabase, authenticatedUserId, effectiveUserId, targetOwner);
     if (!allowed) return json({ error: 'Sem permissao para resgatar leads deste dono' }, 403);
     scopeUserId = targetOwner; // chamada de usuario SEMPRE escopada
   }
@@ -380,7 +404,7 @@ Deno.serve(async (req) => {
     if (leadErr) throw leadErr;
 
     const report: any[] = [];
-    let rescued = 0, skippedPending = 0, noSeller = 0, noInstance = 0, sendFailed = 0;
+    let rescued = 0, skippedPending = 0, skippedProtected = 0, noSeller = 0, noInstance = 0, sendFailed = 0, claimFailed = 0;
     const recentTransfersByOwner = new Map<string, any[]>();
     let virtualTransferOffsetMs = 0;
 
@@ -400,24 +424,42 @@ Deno.serve(async (req) => {
     };
 
     for (const lead of (orphanLeads || [])) {
-      // 2. Pula se ja existe um transfer 'pending' (o timeout-checker cuida desse)
-      const { data: pend } = await supabase
+      // 2. Fonte de verdade do handoff: pending pertence ao timeout-checker;
+      //    confirmed significa que um humano ja assumiu e JAMAIS e orfao.
+      const { data: transfersForLead, error: transfersReadError } = await supabase
         .from('ai_lead_transfers')
-        .select('id')
+        .select('id,to_member_id,created_at,transfer_status,is_confirmed')
         .eq('lead_id', lead.id)
-        .eq('transfer_status', 'pending')
-        .eq('is_confirmed', false)
-        .limit(1);
-      if (pend && pend.length > 0) { skippedPending++; continue; }
+        .order('created_at', { ascending: false })
+        .limit(100);
+      if (transfersReadError) {
+        skippedProtected++;
+        report.push({
+          lead_id: lead.id,
+          lead_name: lead.lead_name,
+          acao: 'protegido',
+          motivo: 'transfer_read_error',
+          vendedor: null,
+        });
+        continue;
+      }
+      const initialEligibility = evaluateOrphanRescue(lead, transfersForLead || []);
+      if (!initialEligibility.eligible) {
+        if (initialEligibility.reason === 'pending_transfer') skippedPending++;
+        else skippedProtected++;
+        report.push({
+          lead_id: lead.id,
+          lead_name: lead.lead_name,
+          acao: 'protegido',
+          motivo: initialEligibility.reason,
+          vendedor: null,
+        });
+        continue;
+      }
 
       // 2.1 Quem foi o ultimo vendedor que recebeu esse lead (e ghostou)? Pra nao
       //     reenviar pro mesmo. Pega o to_member_id do transfer mais recente.
-      const { data: lastT } = await supabase
-        .from('ai_lead_transfers')
-        .select('to_member_id')
-        .eq('lead_id', lead.id)
-        .order('created_at', { ascending: false })
-        .limit(1).maybeSingle();
+      const lastT = (transfersForLead || [])[0] || null;
       const lastSellerId: string | undefined = lastT?.to_member_id || undefined;
 
       // 3. Vendedores ativos do dono (preferindo o mesmo agent_id; fallback = qualquer ativo)
@@ -473,7 +515,46 @@ Deno.serve(async (req) => {
       //    instancia ou o envio falha, registra a falha e NAO cria transfer
       //    (pra "reencaminhado" significar "vendedor avisado"). Uma falha num
       //    lead nao aborta o lote.
-      const instance = await resolveInstance(supabase, lead);
+      // A lista inicial pode ficar velha enquanto o lote e processado. Rele o
+      // lead e os handoffs imediatamente antes de qualquer notificacao externa.
+      const { data: freshLead, error: freshLeadError } = await supabase
+        .from('ai_crm_leads')
+        .select('id,user_id,agent_id,lead_name,summary,remote_jid,status,status_crm,assigned_to_id,created_at,vehicle_interest')
+        .eq('id', lead.id)
+        .eq('user_id', lead.user_id)
+        .maybeSingle();
+      const { data: freshTransfers, error: freshTransfersError } = await supabase
+        .from('ai_lead_transfers')
+        .select('id,to_member_id,created_at,transfer_status,is_confirmed')
+        .eq('lead_id', lead.id)
+        .order('created_at', { ascending: false })
+        .limit(100);
+      if (freshLeadError || freshTransfersError) {
+        skippedProtected++;
+        report.push({
+          lead_id: lead.id,
+          lead_name: lead.lead_name,
+          acao: 'protegido_antes_do_envio',
+          motivo: 'fresh_state_read_error',
+          vendedor: nextSeller.name,
+        });
+        continue;
+      }
+      const freshEligibility = evaluateOrphanRescue(freshLead, freshTransfers || []);
+      if (!freshEligibility.eligible) {
+        if (freshEligibility.reason === 'pending_transfer') skippedPending++;
+        else skippedProtected++;
+        report.push({
+          lead_id: lead.id,
+          lead_name: lead.lead_name,
+          acao: 'protegido_antes_do_envio',
+          motivo: freshEligibility.reason,
+          vendedor: nextSeller.name,
+        });
+        continue;
+      }
+
+      const instance = await resolveInstance(supabase, freshLead);
       if (!instance) {
         noInstance++;
         report.push({ lead_id: lead.id, lead_name: lead.lead_name, acao: 'sem_instancia', vendedor: nextSeller.name });
@@ -489,12 +570,12 @@ Deno.serve(async (req) => {
       // Mensagem RICA: telefone + carro de interesse SEMPRE; + a conversa real
       // (resumo do CRM + ultimas mensagens do WhatsApp via buildConversationBriefing,
       // que ja tem fallback se nao houver historico).
-      const phone = String(lead.remote_jid || '').replace(/\D/g, '');
-      const briefing = await buildConversationBriefing(supabase, lead);
+      const phone = String(freshLead.remote_jid || '').replace(/\D/g, '');
+      const briefing = await buildConversationBriefing(supabase, freshLead);
       // Carro: usa o campo estruturado; se vazio, tenta extrair do resumo
       // (formato "*VEICULO DE INTERESSE:* <modelo>"). Senao, "nao informado".
-      const carro = lead.vehicle_interest
-        || (String(lead.summary || '').match(/ve[íi]culo de interesse:?\*?\s*([^\n*]{2,80})/i)?.[1]?.trim())
+      const carro = freshLead.vehicle_interest
+        || (String(freshLead.summary || '').match(/ve[íi]culo de interesse:?\*?\s*([^\n*]{2,80})/i)?.[1]?.trim())
         || 'nao informado';
       const sellerMsg =
         `🚨 *LEAD REPASSADO PRA VOCE — JA ESTA NO SEU CRM*\n\n` +
@@ -518,29 +599,38 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Envio OK -> ATRIBUI o lead firme ao vendedor e joga numa coluna ATIVA do
-      // CRM ("Novo") pra ele ver e trabalhar na hora. Sao leads que ja ficaram
-      // parados, nao dependem mais do "Ok". A transferencia entra como CONFIRMADA
-      // pra o timeout-checker nao tirar o lead do vendedor depois.
-      const novaColuna = ['inativo', 'perdido', 'transferido', ''].includes(String(lead.status_crm || '').toLowerCase())
-        ? 'novo' : lead.status_crm;
-      await supabase.from('ai_lead_transfers').insert({
-        user_id: lead.user_id, lead_id: lead.id,
-        from_member_id: lastSellerId || null, to_member_id: nextSeller.id,
-        transfer_reason: 'orphan_rescue',
-        notes: 'Reencaminhado pelo resgate de leads orfaos (atribuido direto ao vendedor).',
-        transfer_status: 'confirmed', is_confirmed: true,
+      // Envio OK -> o banco rele e trava o lead, valida novamente todas as
+      // autoridades e faz transfer + CRM + fila na mesma transacao. Se alguem
+      // confirmou/atribuiu durante o envio, o claim falha fechado e nao
+      // sobrescreve o atendimento humano.
+      const { data: claimRows, error: claimError } = await supabase.rpc('claim_orphan_rescue', {
+        p_user_id: lead.user_id,
+        p_lead_id: lead.id,
+        p_to_member_id: nextSeller.id,
+        p_from_member_id: lastSellerId || null,
       });
+      const claim = Array.isArray(claimRows) ? claimRows[0] : claimRows;
+      if (claimError || claim?.claimed !== true) {
+        claimFailed++;
+        const claimReason = claimError ? 'claim_error' : (claim?.reason || 'claim_rejected');
+        report.push({
+          lead_id: lead.id,
+          lead_name: lead.lead_name,
+          acao: 'nao_reatribuido',
+          motivo: claimReason,
+          vendedor: nextSeller.name,
+        });
+        await logTransferFailure({
+          user_id: lead.user_id, reason_code: 'erro_tecnico', mode: 'pedro',
+          lead_id: lead.id, agent_id: lead.agent_id, lead_name: lead.lead_name, remote_jid: lead.remote_jid,
+          attempted_transfer: true, source: 'rescue-orphan-transfers',
+          reason_detail: `Notificacao enviada, mas claim atomico recusou a reatribuicao (${claimReason}). Atendimento humano existente foi preservado.`,
+        });
+        continue;
+      }
       // NAO mexe em arrived_at: o lead resgatado e uma RE-ATRIBUICAO de lead
       // antigo, nao um lead novo do trafego pago. Mexer no arrived_at jogaria ele
       // na contagem de trafego pago do dia e bagunçaria o custo por lead real.
-      await supabase.from('ai_crm_leads').update({
-        assigned_to_id: nextSeller.id,
-        status: 'em_atendimento',
-        status_crm: novaColuna,
-        last_interaction_at: new Date().toISOString(),
-      }).eq('id', lead.id);
-      await supabase.from('ai_team_members').update({ last_lead_received_at: new Date().toISOString() }).eq('id', nextSeller.id);
       await resolveTransferFailures({ user_id: lead.user_id, lead_id: lead.id, resolved_by: 'orphan-rescue' });
       addVirtualTransfer(recentTransfers, nextSeller.id, new Date(nowDate.getTime() + (++virtualTransferOffsetMs)).toISOString());
 
@@ -558,9 +648,11 @@ Deno.serve(async (req) => {
       orfaos_encontrados: (orphanLeads || []).length,
       reencaminhados: rescued,
       pulados_com_pending: skippedPending,
+      pulados_protegidos: skippedProtected,
       sem_vendedor: noSeller,
       sem_instancia: noInstance,
       falha_envio: sendFailed,
+      falha_claim: claimFailed,
       detalhe: report,
     });
   } catch (err: any) {
