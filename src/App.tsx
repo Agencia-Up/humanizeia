@@ -261,6 +261,7 @@ const MetaPixels = lazy(() => import("./pages/MetaPixels"));
 const Relatorios = lazy(() => import("./pages/Relatorios"));
 const MetaAudiences = lazy(() => import("./pages/MetaAudiences"));
 const WhatsAppCAPI = lazy(() => import("./pages/WhatsAppCAPI"));
+const WhatsAppMetaForms = lazy(() => import("./pages/WhatsAppMetaForms"));
 const SalomaoOrchestrator = lazy(() => import("./pages/SalomaoOrchestrator"));
 const FluxCRM = lazy(() => import("./pages/FluxCRM"));
 const CRMContacts = lazy(() => import("./pages/CRMContacts"));
@@ -413,6 +414,7 @@ const App = () => (
                 <Route path="/whatsapp/campaigns"   element={<ProtectedRoute><Lazy><WhatsAppBroadcast /></Lazy></ProtectedRoute>} />
                 <Route path="/whatsapp/groups"      element={<ProtectedRoute><Lazy><WhatsAppGroups /></Lazy></ProtectedRoute>} />
                 <Route path="/whatsapp/capi"        element={<ProtectedRoute><Lazy><WhatsAppCAPI /></Lazy></ProtectedRoute>} />
+                <Route path="/whatsapp/meta-forms"  element={<ProtectedRoute><Lazy><WhatsAppMetaForms /></Lazy></ProtectedRoute>} />
 
                 <Route path="/meta-pixels"          element={<ProtectedRoute><Lazy><MetaPixels /></Lazy></ProtectedRoute>} />
                 <Route path="/relatorios"           element={<ProtectedRoute><Lazy><Relatorios /></Lazy></ProtectedRoute>} />

@@ -53,7 +53,6 @@ import { ManagerFeedbackConfigCard } from '@/components/pedro/ManagerFeedbackCon
 import { CampanhaAnalytics } from '@/components/pedro/CampanhaAnalytics';
 import { QualificacaoResumo } from '@/components/pedro/QualificacaoResumo';
 import { AgentInboxTab } from '@/components/pedro/AgentInboxTab';
-import { MetaLeadFormsTab } from '@/components/pedro/MetaLeadFormsTab';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { usePendingTransfers, formatPendingAge } from '@/hooks/usePendingTransfers';
 import { FEATURES } from '@/config/features';
@@ -1309,6 +1308,8 @@ interface CrmAvancadoTabProps {
   // Sem esses props (Marcos / vendedor), o CRM usa o sub-menu interno (comportamento antigo).
   viewProp?: CrmView;
   onViewChange?: (v: CrmView) => void;
+  followupSignal?: number;
+  onFollowupActiveChange?: (active: boolean) => void;
 }
 
 export function CrmAvancadoTab({
@@ -1320,7 +1321,12 @@ export function CrmAvancadoTab({
   memberIdProp,
   sellerIsManagerProp,
   viewProp,
-  onViewChange
+  onViewChange,
+  // Follow-up IA subiu para a barra de topo do Pedro (fora deste componente).
+  // O estado e o modal continuam morando aqui; a barra so avisa "abre" pelo
+  // sinal e recebe de volta se esta ativo, para pintar o botao.
+  followupSignal,
+  onFollowupActiveChange
 }: CrmAvancadoTabProps) {
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -1484,6 +1490,15 @@ export function CrmAvancadoTab({
   // F1 Follow-up IA: modal de configuração (substitui o disparo direto do botão "Follow-ups")
   const [followupIAModalOpen, setFollowupIAModalOpen] = useState(false);
   const [isFollowupActive, setIsFollowupActive] = useState(false);
+  // Abre o modal quando a barra de topo pede. Ignora o primeiro render
+  // (undefined/0) pra nao abrir sozinho ao entrar na tela.
+  useEffect(() => {
+    if (followupSignal) setFollowupIAModalOpen(true);
+  }, [followupSignal]);
+  // Devolve o estado ligado/pausado pra barra de topo pintar o botao.
+  useEffect(() => {
+    onFollowupActiveChange?.(isFollowupActive);
+  }, [isFollowupActive, onFollowupActiveChange]);
   const [classifyLoading, setClassifyLoading] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [reassigning, setReassigning]       = useState<string | null>(null);
@@ -5434,29 +5449,8 @@ export function CrmAvancadoTab({
               )}
             </>
           )}
-          {/* Follow-up IA (reativação automática do agente Pedro): SÓ MASTER.
-              Vendedor não vê nem configura o follow-up automático do agente. */}
-          {!isMarcosCrm && !isSeller && (
-            <Button
-              variant="outline" size="sm"
-              onClick={() => setFollowupIAModalOpen(true)}
-              disabled={triggerLoading}
-              title={`Configurar reativação automática (Follow-up IA está ${isFollowupActive ? 'ATIVO' : 'PAUSADO'})`}
-              className={`h-9 shrink-0 gap-1.5 px-3 text-xs transition-all sm:h-7 sm:px-2.5 ${
-                isFollowupActive
-                  ? 'border-emerald-500/40 text-emerald-400 bg-emerald-500/5 hover:bg-emerald-500/10 hover:text-emerald-300'
-                  : 'border-zinc-500/30 text-zinc-400 hover:bg-zinc-500/10'
-              }`}
-            >
-              {triggerLoading ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Zap className={`h-3.5 w-3.5 ${isFollowupActive ? 'text-emerald-400 fill-emerald-400/20' : 'text-zinc-500'}`} />
-              )}
-              Follow-up IA
-              <span className={`h-1.5 w-1.5 rounded-full ${isFollowupActive ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'}`} />
-            </Button>
-          )}
+          {/* Follow-up IA saiu daqui: agora e botao da barra de topo do Pedro.
+              O estado e o modal continuam neste componente. */}
           {/* Modal de config do Follow-up IA. "Iniciar agora" chama o MOTOR DE
               REATIVACAO (pedro-auto-followup): dispara na coluna de inativos
               respeitando as regras do painel (horario, teto/dia, intervalo, pausa),
@@ -6930,7 +6924,6 @@ const MASTER_TABS = [
   { id: 'performance',  label: 'Performance',  icon: BarChart3,     emoji: '📊' },
   // "Painel ao Vivo" saiu do Pedro — virou item do sistema na sidebar (/dashboard-tv).
   { id: 'crm',          label: 'CRM Avançado', icon: NotebookPen,   emoji: '🗒️' },
-  { id: 'meta-forms',   label: 'Formulários Meta', icon: FileSpreadsheet, emoji: '📋' },
   { id: 'inbox-ia',     label: 'Conversas IA', icon: Inbox,         emoji: '📨' },
   // 'feedbacks-vendedor' != 'feedbacks' (esse é a sub-aba "Relatórios" da IA,
   // dentro do CRM). Ids distintos de propósito pra não colidir na URL ?tab=.
@@ -6972,6 +6965,11 @@ export default function PedroSDR() {
   // Nav unificada (master): a barra de abas de cima também escolhe o "view" do CRM
   // (Visão Geral / Lista / Diagnóstico). Passado como prop pro CrmAvancadoTab.
   const [crmView, setCrmView] = useState<CrmView>('pipeline');
+  // Follow-up IA subiu da toolbar do CRM para a barra de topo. O estado/modal
+  // continuam no CrmAvancadoTab; aqui so guardamos se esta ativo (pra pintar o
+  // botao) e um contador que serve de sinal pra ele abrir o modal.
+  const [followupSignal, setFollowupSignal] = useState(0);
+  const [followupActive, setFollowupActive] = useState(false);
 
   // Sincroniza activeTab → URL. Assim, mesmo se o ErrorBoundary remontar
   // a página, a URL ainda carrega o tab atual e o useEffect abaixo restaura.
@@ -7069,7 +7067,6 @@ export default function PedroSDR() {
                 { key: 'feedbacks',   emoji: '💬', label: 'Feedbacks',        tab: 'feedbacks-vendedor' },
                 { key: 'agente',      emoji: '🤖', label: 'Agente IA',        tab: 'agente' },
                 { key: 'inbox-ia',    emoji: '📨', label: 'Conversas IA',     tab: 'inbox-ia' },
-                { key: 'meta-forms',  emoji: '📋', label: 'Formulários Meta', tab: 'meta-forms' },
               ] as Array<{ key: string; emoji: string; label: string; tab: string; view?: CrmView }>).map(item => {
                 const active = item.view ? (activeTab === item.tab && crmView === item.view) : (activeTab === item.tab);
                 return (
@@ -7086,6 +7083,28 @@ export default function PedroSDR() {
                   </button>
                 );
               })}
+              {/* Follow-up IA — acao, nao aba. Fica no fim da barra, separado por
+                  uma divisoria. Leva pro CRM antes de abrir, porque o modal vive
+                  dentro do CrmAvancadoTab e so existe quando ele esta montado. */}
+              {!isSeller && (
+                <>
+                  <span aria-hidden className="mx-1 my-2 w-px shrink-0 self-stretch bg-border/60" />
+                  <button
+                    type="button"
+                    onClick={() => { handleTabChange('crm'); setFollowupSignal(n => n + 1); }}
+                    title={`Configurar reativação automática (Follow-up IA está ${followupActive ? 'ATIVO' : 'PAUSADO'})`}
+                    className={`flex min-h-10 shrink-0 items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-all sm:min-h-0 sm:py-1.5 ${
+                      followupActive
+                        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'
+                        : 'border-border/60 text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+                    }`}
+                  >
+                    <Zap className={`h-3.5 w-3.5 ${followupActive ? 'fill-emerald-400/20 text-emerald-400' : ''}`} />
+                    Follow-up IA
+                    <span className={`h-1.5 w-1.5 rounded-full ${followupActive ? 'animate-pulse bg-emerald-400' : 'bg-zinc-500'}`} />
+                  </button>
+                </>
+              )}
             </div>
             )}
             </div>
@@ -7111,15 +7130,14 @@ export default function PedroSDR() {
                 sellerIsManagerProp={isManager}
                 viewProp={!isSeller ? crmView : undefined}
                 onViewChange={!isSeller ? setCrmView : undefined}
+                followupSignal={followupSignal}
+                onFollowupActiveChange={setFollowupActive}
               />
             </TabsContent>
 
-            {/* Conversas IA — conversas do agente com pause/resume */}
-            {!isSeller && (
-              <TabsContent value="meta-forms" className="mt-0">
-                {user?.id && <MetaLeadFormsTab userId={user.id} />}
-              </TabsContent>
-            )}
+            {/* Formulários Meta saiu daqui: virou WhatsApp > Formulários Meta
+                (/whatsapp/meta-forms). Captura de formulário e integracao de
+                canal, nao aba do funil do Pedro. */}
 
             <TabsContent value="inbox-ia" className="mt-0 h-full">
               {inboxOwnerId && (
