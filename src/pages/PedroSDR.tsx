@@ -5289,10 +5289,12 @@ export function CrmAvancadoTab({
           {(view === 'pipeline' || view === 'leads') && (
             <>
               <Select value={dateFilter} onValueChange={v => setDateFilter(v as LeadDatePreset)}>
-                <SelectTrigger className="h-9 w-40 shrink-0 text-xs sm:h-7 sm:w-36" title="Filtra os leads por quando chegaram">
-                  <span className="flex items-center gap-1.5">
-                    <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" />
-                    <SelectValue placeholder="Período" />
+                <SelectTrigger className="h-9 w-auto min-w-[10rem] shrink-0 gap-2 rounded-xl border-border/70 bg-white/80 px-3 text-xs shadow-sm transition-colors hover:border-primary/50 hover:bg-primary/5 focus:ring-2 focus:ring-primary/30 data-[state=open]:border-primary/60 data-[state=open]:bg-primary/5 sm:h-8 dark:bg-background dark:hover:bg-primary/10" title="Filtra os leads por quando chegaram">
+                  <span className="flex items-center gap-1.5 truncate">
+                    <CalendarClock className="h-3.5 w-3.5 shrink-0 text-primary" />
+                    <span className="shrink-0 font-medium text-muted-foreground">Data</span>
+                    <span className="shrink-0 text-muted-foreground/40">·</span>
+                    <span className="truncate font-semibold text-foreground"><SelectValue placeholder="Período" /></span>
                   </span>
                 </SelectTrigger>
                 <SelectContent>
@@ -5321,6 +5323,28 @@ export function CrmAvancadoTab({
                 </div>
               )}
             </>
+          )}
+          {!isSeller && teamMembers.length > 0 && (view === 'pipeline' || view === 'leads') && (
+            <Select value={filterSeller} onValueChange={setFilterSeller}>
+              <SelectTrigger className="h-9 w-auto min-w-[10rem] shrink-0 gap-2 rounded-xl border-border/70 bg-white/80 px-3 text-xs shadow-sm transition-colors hover:border-primary/50 hover:bg-primary/5 focus:ring-2 focus:ring-primary/30 data-[state=open]:border-primary/60 data-[state=open]:bg-primary/5 sm:h-8 dark:bg-background dark:hover:bg-primary/10" title="Filtra os leads por vendedor responsável">
+                <span className="flex items-center gap-1.5 truncate">
+                  <Users className="h-3.5 w-3.5 shrink-0 text-primary" />
+                  <span className="shrink-0 font-medium text-muted-foreground">Vendedores</span>
+                  <span className="shrink-0 text-muted-foreground/40">·</span>
+                  <span className="truncate font-semibold text-foreground"><SelectValue placeholder="Todos" /></span>
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all" className="text-xs">Todos</SelectItem>
+                <SelectItem value="unassigned" className="text-xs text-muted-foreground">Sem vendedor</SelectItem>
+                {/* Só VENDEDORES de verdade no filtro: exclui gerente / gestor de trafego /
+                    funcionario sem funcao de vendedor (is_manager=true). O CRM e dos vendedores
+                    que trabalham os leads — mesma regra do activeBulkSellers. */}
+                {teamMembers.filter(m => m.active_in_system !== false && !m.is_manager).map(m => (
+                  <SelectItem key={m.id} value={m.id} className="text-xs">{m.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           )}
           {/* Botao rapido: filtra os leads SEM vendedor (aguardando direcionamento), com contagem.
               Aparece no Pedro E no Marcos (CrmAvancadoTab compartilhado). Toggle liga/desliga —
@@ -5367,23 +5391,6 @@ export function CrmAvancadoTab({
                 }`}>{perdidosIaCount}</span>
               )}
             </Button>
-          )}
-          {!isSeller && teamMembers.length > 0 && (view === 'pipeline' || view === 'leads') && (
-            <Select value={filterSeller} onValueChange={setFilterSeller}>
-              <SelectTrigger className="h-9 w-40 shrink-0 text-xs sm:h-7 sm:w-36">
-                <SelectValue placeholder="Vendedor" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all" className="text-xs">Todos</SelectItem>
-                <SelectItem value="unassigned" className="text-xs text-muted-foreground">Sem vendedor</SelectItem>
-                {/* Só VENDEDORES de verdade no filtro: exclui gerente / gestor de trafego /
-                    funcionario sem funcao de vendedor (is_manager=true). O CRM e dos vendedores
-                    que trabalham os leads — mesma regra do activeBulkSellers. */}
-                {teamMembers.filter(m => m.active_in_system !== false && !m.is_manager).map(m => (
-                  <SelectItem key={m.id} value={m.id} className="text-xs">{m.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
           )}
           {/* Fase 6 Feature C + M3: modo seleção pro disparo em massa (Pedro E Marcos) */}
           {(view === 'pipeline' || view === 'leads') && (
