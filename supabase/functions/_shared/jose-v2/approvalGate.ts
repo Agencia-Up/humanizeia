@@ -9,7 +9,8 @@
  * (jose-approval-handler) e pela resposta do WhatsApp.
  */
 
-import { resolvePedroInstance, sendPedroText } from "../pedro-v2/uazapiSender.ts";
+import { sendPedroText } from "../pedro-v2/uazapiSender.ts";
+import { resolveJoseSenderInstance } from "./joseSender.ts";
 import { phonesMatch, remoteJidToPhone, normalizeBrazilPhone } from "../pedro-v2/phone.ts";
 import { executeMetaAction } from "./metaActions.ts";
 
@@ -79,7 +80,10 @@ export async function sendApprovalWhatsApp(
   try {
     const numbers = await resolveApprovalNumbers(supabase, input.user_id);
     if (!numbers.length) return { sent: false, reason: "sem_numero" };
-    const instance = await resolvePedroInstance(supabase, { user_id: input.user_id, agent_id: input.agent_id || null });
+    const instance = await resolveJoseSenderInstance(supabase, {
+      user_id: input.user_id,
+      agent_id: input.agent_id || null,
+    });
     if (!instance) return { sent: false, reason: "sem_instancia" };
     await sendPedroText(instance, { to: numbers[0], text: formatApprovalMessage(input.approval) });
     try {
@@ -171,7 +175,11 @@ export async function handleApprovalReply(
 
     const reply = async (text: string) => {
       try {
-        const instance = input.instance || await resolvePedroInstance(supabase, { user_id: input.user_id, agent_id: input.agent_id || null });
+        const instance = await resolveJoseSenderInstance(supabase, {
+          user_id: input.user_id,
+          agent_id: input.agent_id || null,
+          preferred_instance_id: input.instance?.id || null,
+        });
         if (instance) await sendPedroText(instance, { to: fromPhone, text });
       } catch (_e) { /* ignore */ }
     };

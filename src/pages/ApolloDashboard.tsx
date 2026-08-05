@@ -954,16 +954,33 @@ function CronSettings() {
     setSenderInstanceId(config.report_sender_instance_id ?? '');
   }, [config]);
 
-  // Lista os números conectados que podem ENVIAR o relatório.
+  // Lista somente linhas institucionais de agentes ativos. Instancias de
+  // vendedores nunca aparecem como remetentes do Jose.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { data } = await (supabase as any)
-        .from('wa_instances')
-        .select('id, instance_name, friendly_name, phone_number, status')
-        .eq('status', 'connected');
+      const [{ data: agents }, { data }] = await Promise.all([
+        (supabase as any)
+          .from('wa_ai_agents')
+          .select('instance_id, instance_ids')
+          .eq('is_active', true),
+        (supabase as any)
+          .from('wa_instances')
+          .select('id, instance_name, friendly_name, phone_number, status, is_active, seller_member_id')
+          .eq('status', 'connected')
+          .eq('is_active', true)
+          .is('seller_member_id', null),
+      ]);
       if (cancelled) return;
-      setInstances((data || []).map((i: any) => ({
+      const agentInstanceIds = new Set<string>();
+      for (const agent of (agents || [])) {
+        if (agent.instance_id) agentInstanceIds.add(String(agent.instance_id));
+        for (const id of (Array.isArray(agent.instance_ids) ? agent.instance_ids : [])) {
+          if (id) agentInstanceIds.add(String(id));
+        }
+      }
+      const eligible = (data || []).filter((i: any) => agentInstanceIds.has(String(i.id)));
+      setInstances(eligible.map((i: any) => ({
         id: i.id,
         label: i.friendly_name || i.phone_number || i.instance_name || 'Número conectado',
       })));
@@ -1083,7 +1100,7 @@ function CronSettings() {
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="text-[11px] text-muted-foreground">Se não escolher, o José usa o primeiro número conectado.</p>
+                <p className="text-[11px] text-muted-foreground">Apenas linhas institucionais do agente podem enviar. Números de vendedores ficam sempre excluídos.</p>
               </div>
 
               <div className="flex items-center justify-between">

@@ -4,6 +4,7 @@ import { leadQualityByAd, leadMotivosByAd, formatMotivos, sellerFeedbackByAd } f
 import { buildAccess, canMutateAction, type JoseAccess } from "../_shared/jose-v2/authz.ts";
 import { checkGuardrails } from "../_shared/jose-v2/guardrails.ts";
 import { sendApprovalWhatsApp } from "../_shared/jose-v2/approvalGate.ts";
+import { resolveJoseSenderInstance } from "../_shared/jose-v2/joseSender.ts";
 import { resolveOwnedAdAccount, assertResourceBelongsToAccount } from "../_shared/jose-v2/ownership.ts";
 import * as idem from "../_shared/jose-v2/idempotency.ts";
 import { mapTipoAcao, estimateGastoAlterado, riscoDaAcao, orcamentoPlausivel } from "../_shared/jose-v2/actionTaxonomy.ts";
@@ -1660,27 +1661,24 @@ async function scheduleOutcomeChecks(admin: any, userId: string, executionLog: a
 // ── WhatsApp notifications ────────────────────────────────────────────────────
 
 async function sendCriticalWhatsApp(admin: any, userId: string, aiResult: any, enriched: any[], currencySymbol: string) {
-  // Busca instância WhatsApp ativa do usuário (wa_instances = UazAPI)
-  const { data: instance } = await admin
-    .from("wa_instances")
-    .select("api_url, instance_name, api_key_encrypted")
-    .eq("user_id", userId)
-    .eq("status", "connected")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .single();
-
-  if (!instance?.api_url || !instance?.instance_name) return;
-
   // Busca número destino e preferências do cron config
   const { data: cronCfg } = await admin
     .from("apollo_cron_config")
-    .select("send_whatsapp_on_critical, whatsapp_report_number")
+    .select("send_whatsapp_on_critical, whatsapp_report_number, report_sender_instance_id")
     .eq("user_id", userId)
     .single();
 
   if (!cronCfg?.send_whatsapp_on_critical) return;
   if (!cronCfg?.whatsapp_report_number) return;
+
+  const instance = await resolveJoseSenderInstance(admin, {
+    user_id: userId,
+    preferred_instance_id: cronCfg.report_sender_instance_id || null,
+  });
+  if (!instance) {
+    console.warn("[apollo-agent] alerta critico nao enviado: sem linha institucional elegivel", { userId });
+    return;
+  }
 
   const destPhone = cronCfg.whatsapp_report_number.replace(/\D/g, '');
   if (destPhone.length < 10) return;
@@ -2542,8 +2540,19 @@ async function handleSaveCronConfig(admin: any, userId: string, body: any, corsH
   nextRun.setHours(run_hour ?? 8, run_minute ?? 0, 0, 0);
   if (nextRun <= now) nextRun.setDate(nextRun.getDate() + 1);
 
-  try {
-    await admin.from("apollo_cron_config").upsert({
+  if (report_sender_instance_id) {
+    const selected = await resolveJoseSenderInstance(admin, {
+      user_id: userId,
+      preferred_instance_id: report_sender_instance_id,
+    });
+    if (!selected || String(selected.id) !== String(report_sender_instance_id)) {
+      return new Response(JSON.stringify({
+        error: "A linha escolhida nao e uma instancia institucional ativa do agente. Numeros de vendedores nunca podem enviar pelo Jose.",
+      }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+  }
+
+  const { error: saveError } = await admin.from("apollo_cron_config").upsert({
       user_id: userId,
       is_enabled: is_enabled ?? true,
       run_hour: run_hour ?? 8,
@@ -2559,7 +2568,13 @@ async function handleSaveCronConfig(admin: any, userId: string, body: any, corsH
       next_run_at: nextRun.toISOString(),
       updated_at: new Date().toISOString(),
     }, { onConflict: "user_id" });
-  } catch { /* ignore upsert error */ }
+
+  if (saveError) {
+    return new Response(JSON.stringify({ error: saveError.message || "Falha ao salvar agendamento" }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 
   return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
@@ -2862,22 +2877,14 @@ async function sendDailyReport(admin: any, userId: string, force = false): Promi
     `🤖 _Gerado automaticamente pelo José — LogosIA_`,
   ].filter((l) => l !== null);
 
-  // ── Instância que ENVIA: a escolhida pelo usuário; senão a primeira conectada ──
-  let inst: any = null;
-  if (cronCfg.report_sender_instance_id) {
-    const { data } = await admin.from("wa_instances")
-      .select("api_url, instance_name, api_key_encrypted")
-      .eq("id", cronCfg.report_sender_instance_id).eq("user_id", userId).maybeSingle();
-    inst = data;
-  }
-  if (!inst?.api_url) {
-    const { data } = await admin.from("wa_instances")
-      .select("api_url, instance_name, api_key_encrypted")
-      .eq("user_id", userId).eq("status", "connected")
-      .order("created_at", { ascending: false }).limit(1).maybeSingle();
-    inst = data;
-  }
-  if (!inst?.api_url || !inst?.instance_name) return { sent: false, reason: "sem_instancia_envio" };
+  // A linha que envia precisa ser institucional, estar conectada e pertencer a
+  // um agente de IA ativo. Celular de vendedor e inelegivel mesmo se estiver
+  // configurado por dado legado ou conectado mais recentemente.
+  const inst = await resolveJoseSenderInstance(admin, {
+    user_id: userId,
+    preferred_instance_id: cronCfg.report_sender_instance_id || null,
+  });
+  if (!inst) return { sent: false, reason: "sem_instancia_institucional_elegivel" };
 
   const apiUrl = String(inst.api_url).replace(/\/+$/, "");
   const headers = { "Content-Type": "application/json", token: inst.api_key_encrypted || "", apikey: inst.api_key_encrypted || "" };

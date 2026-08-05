@@ -9,7 +9,8 @@
 
 import { callAiGateway } from "./aiGateway.ts";
 import { resolveApprovalNumbers } from "./approvalGate.ts";
-import { resolvePedroInstance, sendPedroText } from "../pedro-v2/uazapiSender.ts";
+import { sendPedroText } from "../pedro-v2/uazapiSender.ts";
+import { resolveJoseSenderInstance } from "./joseSender.ts";
 
 async function gatherContext(admin: any, userId: string): Promise<string> {
   const partes: string[] = [];
@@ -63,7 +64,7 @@ export async function sendProactiveSummary(admin: any, userId: string): Promise<
     if (!numbers.length) return { sent: false, reason: "sem_numero" };
     const text = await buildProactiveSummary(admin, userId);
     if (!text) return { sent: false, reason: "sem_resumo" };
-    const instance = await resolvePedroInstance(admin, { user_id: userId, agent_id: null });
+    const instance = await resolveJoseSenderInstance(admin, { user_id: userId, agent_id: null });
     if (!instance) return { sent: false, reason: "sem_instancia" };
     await sendPedroText(instance, { to: numbers[0], text });
     return { sent: true };
