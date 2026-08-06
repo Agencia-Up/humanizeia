@@ -26,6 +26,13 @@ import { format, isToday, isYesterday } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { deriveSellerContactMetric, sellerMemberScope } from '@/lib/sellerContactMetric';
 import { mergeConversationMessages } from '@/lib/conversationMessageMerge';
+import {
+  bucketTransferAttempts,
+  toTransferTimelineAttempt,
+  transferCountdown,
+  type TransferTimelineAttempt,
+  type TransferTimelineRow,
+} from '@/lib/transferTimeline';
 
 /* ── Tipos ──────────────────────────────────────────────────────────── */
 interface Agent {
@@ -93,6 +100,7 @@ interface TransferSeller {
 }
 
 interface TransferInfo {
+  id: string;
   status: 'pending' | 'confirmed';
   createdAt: string;
   confirmedAt: string | null;
@@ -106,6 +114,7 @@ interface TransferInfo {
 }
 
 interface SellerContactStatusRow {
+  transfer_id: string | null;
   transfer_status: string | null;
   transfer_created_at: string | null;
   confirmed_at: string | null;
@@ -186,6 +195,32 @@ function fmtDur(ms: number): string {
   if (h < 24) return m ? `${h}h${String(m).padStart(2, '0')}` : `${h}h`;
   const d = Math.floor(h / 24);
   return `${d} dia${d > 1 ? 's' : ''}`;
+}
+
+function TransferCountdown({ attempt }: { attempt: TransferTimelineAttempt }) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [attempt.id, attempt.confirmationTimeoutAt, attempt.clockOffsetMs]);
+
+  const countdown = transferCountdown(attempt.confirmationTimeoutAt, nowMs, attempt.clockOffsetMs);
+  if (!countdown) return <span className="font-mono tabular-nums text-amber-100/70">--:--</span>;
+
+  const urgent = countdown.remainingMs > 0 && countdown.remainingMs <= 60_000;
+  return (
+    <span
+      className={`inline-flex items-center gap-1 font-mono font-bold tabular-nums transition-colors duration-300 ${
+        countdown.expired ? 'text-rose-300' : urgent ? 'text-orange-300' : 'text-amber-200'
+      }`}
+      aria-label={`Tempo restante para confirmar: ${countdown.label}`}
+    >
+      {urgent && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-orange-300" />}
+      {countdown.label}
+    </span>
+  );
 }
 
 function cleanPhone(value: string | null | undefined) {
@@ -360,6 +395,9 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   // Estado mais recente da transferencia do lead aberto. "pending" significa que
   // o vendedor ainda precisa confirmar; somente "confirmed" representa posse no CRM.
   const [transferInfo, setTransferInfo] = useState<TransferInfo | null>(null);
+  // Historico read-only de todas as tentativas. O cronometro usa exclusivamente
+  // confirmation_timeout_at persistido pelo motor de transferencia.
+  const [transferTimeline, setTransferTimeline] = useState<TransferTimelineAttempt[]>([]);
   const [transferRefreshKey, setTransferRefreshKey] = useState(0);
   // Modelo B: numero (instancia conectada) do PROPRIO vendedor atribuido, pra o follow-up do lead
   // do Pedro sair do numero dele (nao do numero da empresa). null = vendedor sem numero conectado.
@@ -876,25 +914,41 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   useEffect(() => {
     if (!selectedLead || selectedLead.origem === 'marcos' || selectedLead.semCrm || selectedLead.id.startsWith('conv:')) {
       setTransferInfo(null);
+      setTransferTimeline([]);
       return;
     }
     let cancelled = false;
     (async () => {
-      const { data, error } = await (supabase as any).rpc('get_lead_seller_contact_status', {
-        p_lead_id: selectedLead.id,
-      });
+      const [contactResult, timelineResult] = await Promise.all([
+        (supabase as any).rpc('get_lead_seller_contact_status', { p_lead_id: selectedLead.id }),
+        (supabase as any).rpc('get_lead_transfer_timeline', { p_lead_id: selectedLead.id }),
+      ]);
       if (cancelled) return;
-      if (error) {
-        console.error('[AgentInbox] seller contact metric failed', error);
+
+      if (timelineResult.error) {
+        console.error('[AgentInbox] transfer timeline failed', timelineResult.error);
+        setTransferTimeline([]);
+      } else {
+        const receivedAt = Date.now();
+        setTransferTimeline(
+          ((timelineResult.data || []) as TransferTimelineRow[])
+            .map((timelineRow) => toTransferTimelineAttempt(timelineRow, receivedAt))
+            .filter((attempt): attempt is TransferTimelineAttempt => attempt !== null),
+        );
+      }
+
+      if (contactResult.error) {
+        console.error('[AgentInbox] seller contact metric failed', contactResult.error);
         setTransferInfo(null);
         return;
       }
-      const row = ((data || []) as SellerContactStatusRow[])[0];
+      const row = ((contactResult.data || []) as SellerContactStatusRow[])[0];
       if (!row?.transfer_created_at) {
         setTransferInfo(null);
         return;
       }
       setTransferInfo({
+        id: row.transfer_id || `active:${selectedLead.id}`,
         status: row.transfer_status === 'confirmed' ? 'confirmed' : 'pending',
         createdAt: row.transfer_created_at as string,
         confirmedAt: row.confirmed_at ? row.confirmed_at as string : null,
@@ -963,6 +1017,8 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
     }
   }, [messages, resolvingMediaIds]);
 
+  const hasPendingTransferAttempt = transferTimeline.some((attempt) => attempt.status === 'pending');
+
   /* ── Polling para novas mensagens ──────────────────────────────── */
   useEffect(() => {
     if (pollingRef.current) clearInterval(pollingRef.current);
@@ -970,7 +1026,8 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
 
     pollingRef.current = setInterval(() => {
       fetchMessages(true);
-      if (transferInfo?.status === 'pending'
+      if (hasPendingTransferAttempt
+          || transferInfo?.status === 'pending'
           || (transferInfo?.status === 'confirmed' && !transferInfo.firstContactAt)) {
         setTransferRefreshKey(key => key + 1);
       }
@@ -979,7 +1036,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
-  }, [selectedLeadId, fetchMessages, transferInfo?.status, transferInfo?.firstContactAt]);
+  }, [selectedLeadId, fetchMessages, hasPendingTransferAttempt, transferInfo?.status, transferInfo?.firstContactAt]);
 
   /* ── Realtime como SINAL (Pedro V3 + wa_inbox) ─────────────────── */
   // O payload do evento NUNCA entra no estado nem é renderizado: serve só de
@@ -1631,8 +1688,6 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   const pendingTransferSeller = transferInfo?.status === 'pending' ? transferSellerName : null;
   // #3 — ultima atualizacao = mensagem mais recente (vendedor OU IA); lista ja ordenada asc.
   const lastActivityIso = messages.length ? messages[messages.length - 1].created_at : null;
-  // O indice continua servindo apenas para posicionar o divisor na timeline.
-  const firstPostIdx = transferAtMs != null ? messages.findIndex(m => new Date(m.created_at).getTime() >= transferAtMs) : -1;
   const sellerContactMetric = transferConfirmedAt && transferInfo
     ? deriveSellerContactMetric({
         confirmedAt: transferConfirmedAt,
@@ -1660,50 +1715,118 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
     : unified
       ? 'flex h-full min-h-0 flex-col overflow-hidden bg-[#0b141a] sm:border-y sm:border-[#1f2c34]'
       : 'flex flex-col h-[calc(100vh-210px)] bg-card rounded-xl border border-border/50 overflow-hidden';
-  const handoffCard = (transferAtMs != null && transferInfo?.status === 'confirmed' && transferConfirmedAt) ? (
-    <div className="flex justify-center my-3">
-      <div className="max-w-[88%] text-center bg-[#182229] rounded-xl px-4 py-2.5 shadow-sm border border-white/5">
-        <p className="text-[11px] text-[#8696a0] flex items-center justify-center gap-1.5">
-          <ArrowRight className="h-3 w-3" /> Transferido{transferSellerName ? ` para ${transferSellerName}` : ''}
-        </p>
-        <p className="text-[11px] text-emerald-300/90 mt-1 flex items-center justify-center gap-1">
-          <CheckCheck className="h-3 w-3" /> Vendedor confirmou (OK) · {format(new Date(transferConfirmedAt), "dd/MM 'às' HH:mm", { locale: ptBR })}
-        </p>
-        {sellerContactMetric?.state === 'contacted' ? (
-          <p className={`text-[11px] mt-0.5 font-semibold ${handoffColor}`}>
-            1º contato registrado · {fmtDur(handoffDelayMs as number)} depois do OK
-          </p>
-        ) : sellerContactMetric?.state === 'seller_disconnected' ? (
-          <p className="text-[11px] mt-0.5 text-amber-200/80">
-            Número do vendedor não conectado à Logos — contato fora da plataforma não pode ser medido
-          </p>
-        ) : sellerContactMetric?.state === 'checking' ? (
-          <p className="text-[11px] mt-0.5 text-[#8696a0]">
-            Verificando o 1º contato registrado...
-          </p>
-        ) : (
-          <p className={`text-[11px] mt-0.5 font-semibold ${handoffColor}`}>
-            Aguardando 1º contato · {fmtDur(handoffDelayMs as number)} desde o OK
-          </p>
-        )}
-        <p className="mt-1 text-[9px] text-[#667781]">
-          Mede mensagens enviadas pelo WhatsApp conectado do vendedor.
-        </p>
+  const visibleTransferTimeline = transferTimeline.length > 0
+    ? transferTimeline
+    : transferInfo
+      ? [{
+          id: transferInfo.id,
+          status: transferInfo.status,
+          createdAt: transferInfo.createdAt,
+          confirmationTimeoutAt: null,
+          confirmedAt: transferInfo.confirmedAt,
+          toMemberId: transferInfo.toMemberId,
+          sellerName: transferInfo.sellerName,
+          transferReason: null,
+          serverNow: null,
+          clockOffsetMs: 0,
+        } satisfies TransferTimelineAttempt]
+      : [];
+  const transferBuckets = bucketTransferAttempts(
+    visibleTransferTimeline,
+    messages.map((message) => message.created_at),
+  );
+
+  const renderTransferAttemptCard = (attempt: TransferTimelineAttempt) => {
+    const sellerName = attempt.sellerName
+      || (attempt.toMemberId ? sellerNameById.get(attempt.toMemberId) : null)
+      || 'Vendedor';
+    const isActiveTransfer = transferInfo?.id === attempt.id;
+    const isAutomaticAssignment = attempt.status === 'confirmed' && !attempt.confirmedAt;
+    const isAutomaticRescue = (attempt.transferReason || '').toLowerCase().includes('orphan_rescue');
+
+    return (
+      <div key={attempt.id} className="my-2 flex animate-in justify-center fade-in slide-in-from-bottom-1 duration-200">
+        <div className={`max-w-[88%] rounded-xl px-4 py-2.5 text-center shadow-sm ${
+          attempt.status === 'pending'
+            ? 'border border-amber-400/20 bg-amber-500/10'
+            : attempt.status === 'expired'
+              ? 'border border-rose-400/15 bg-[#1d2026]'
+              : 'border border-white/5 bg-[#182229]'
+        }`}>
+          {attempt.status === 'pending' ? (
+            <>
+              <p className="flex flex-wrap items-center justify-center gap-1.5 text-[11px] font-semibold text-amber-100">
+                <ArrowRight className="h-3 w-3" />
+                <span>Transferido para {sellerName}</span>
+                <span className="text-amber-100/45">-</span>
+                <TransferCountdown attempt={attempt} />
+              </p>
+              <p className="mt-1 flex items-center justify-center gap-1 text-[10px] text-amber-100/65">
+                <Clock className="h-3 w-3" /> Aguardando o OK do vendedor
+              </p>
+              {!attempt.confirmationTimeoutAt && (
+                <p className="mt-1 text-[9px] text-amber-100/45">Prazo ainda não registrado pelo motor.</p>
+              )}
+            </>
+          ) : attempt.status === 'expired' ? (
+            <>
+              <p className="flex items-center justify-center gap-1.5 text-[11px] text-[#8696a0]">
+                <ArrowRight className="h-3 w-3" /> Transferido para {sellerName}
+              </p>
+              <p className="mt-1 flex items-center justify-center gap-1 text-[11px] font-semibold text-rose-300/90">
+                <X className="h-3 w-3" />
+                {isAutomaticRescue ? 'Reatribuição automática encerrada' : `${sellerName} não confirmou`}
+              </p>
+              {attempt.confirmationTimeoutAt && (
+                <p className="mt-0.5 text-[9px] text-[#667781]">Prazo encerrado em {fmtTime(attempt.confirmationTimeoutAt)}</p>
+              )}
+            </>
+          ) : attempt.status === 'confirmed' ? (
+            <>
+              <p className="flex items-center justify-center gap-1.5 text-[11px] text-[#8696a0]">
+                <ArrowRight className="h-3 w-3" /> Transferido para {sellerName}
+              </p>
+              <p className="mt-1 flex items-center justify-center gap-1 text-[11px] text-emerald-300/90">
+                <CheckCheck className="h-3 w-3" />
+                {isAutomaticAssignment
+                  ? `Atribuído automaticamente · ${format(new Date(attempt.createdAt), "dd/MM 'às' HH:mm", { locale: ptBR })}`
+                  : `Vendedor confirmou (OK) · ${format(new Date(attempt.confirmedAt as string), "dd/MM 'às' HH:mm", { locale: ptBR })}`}
+              </p>
+              {isActiveTransfer && sellerContactMetric?.state === 'contacted' ? (
+                <p className={`mt-0.5 text-[11px] font-semibold ${handoffColor}`}>
+                  1º contato registrado · {fmtDur(handoffDelayMs as number)} depois {isAutomaticAssignment ? 'da atribuição' : 'do OK'}
+                </p>
+              ) : isActiveTransfer && sellerContactMetric?.state === 'seller_disconnected' ? (
+                <p className="mt-0.5 text-[11px] text-amber-200/80">
+                  Número do vendedor não conectado à Logos — contato fora da plataforma não pode ser medido
+                </p>
+              ) : isActiveTransfer && sellerContactMetric?.state === 'checking' ? (
+                <p className="mt-0.5 text-[11px] text-[#8696a0]">Verificando o 1º contato registrado...</p>
+              ) : isActiveTransfer && sellerContactMetric ? (
+                <p className={`mt-0.5 text-[11px] font-semibold ${handoffColor}`}>
+                  Aguardando 1º contato · {fmtDur(handoffDelayMs as number)} desde {isAutomaticAssignment ? 'a atribuição' : 'o OK'}
+                </p>
+              ) : null}
+              {isActiveTransfer && (
+                <p className="mt-1 text-[9px] text-[#667781]">Mede mensagens enviadas pelo WhatsApp conectado do vendedor.</p>
+              )}
+            </>
+          ) : (
+            <>
+              <p className="flex items-center justify-center gap-1.5 text-[11px] text-[#8696a0]">
+                <ArrowRight className="h-3 w-3" /> Transferido para {sellerName}
+              </p>
+              <p className="mt-1 text-[10px] text-[#667781]">Transferência encerrada</p>
+            </>
+          )}
+        </div>
       </div>
-    </div>
-  ) : null;
-  const pendingTransferCard = transferInfo?.status === 'pending' ? (
-    <div className="flex justify-center my-3">
-      <div className="max-w-[88%] rounded-xl border border-amber-400/20 bg-amber-500/10 px-4 py-2.5 text-center shadow-sm">
-        <p className="flex items-center justify-center gap-1.5 text-[11px] font-semibold text-amber-200">
-          <Clock className="h-3 w-3" /> Aguardando confirmação{pendingTransferSeller ? ` de ${pendingTransferSeller}` : ' do vendedor'}
-        </p>
-        <p className="mt-1 text-[10px] text-amber-100/65">
-          O lead ainda não foi atribuído ao vendedor no CRM.
-        </p>
-      </div>
-    </div>
-  ) : null;
+    );
+  };
+
+  const renderTransferBucket = (index: number) => (
+    transferBuckets[index]?.map((attempt) => renderTransferAttemptCard(attempt)) || null
+  );
 
   /* ── RENDER ──────────────────────────────────────────────────────── */
   return (
@@ -2212,8 +2335,11 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                     <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                   </div>
                 ) : messages.length === 0 ? (
-                  <div className="text-center py-12 text-muted-foreground text-xs">
-                    Nenhuma mensagem nesta conversa
+                  <div>
+                    {renderTransferBucket(0)}
+                    <div className="py-12 text-center text-xs text-muted-foreground">
+                      Nenhuma mensagem nesta conversa
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -2233,8 +2359,6 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                       // FASE 1: fase da IA = mensagens ANTES da transferencia confirmada.
                       const curIa = transferAtMs != null && new Date(msg.created_at).getTime() < transferAtMs;
                       const showIaHeader = transferAtMs != null && idx === 0 && curIa;
-                      // Cartao de handoff antes da 1a mensagem pos-transferencia.
-                      const showHandoff = transferAtMs != null && idx === firstPostIdx;
                       const album = (msg.media_list || []).filter(m => isRenderableMedia(m?.file || m?.url));
                       const mt = msg.message_type;
                       const isAudio = mt === 'audio' || mt === 'ptt' || mt === 'voice';
@@ -2261,7 +2385,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                               </span>
                             </div>
                           )}
-                          {showHandoff && handoffCard}
+                          {renderTransferBucket(idx)}
                         <div data-media-resolving={isResolvingMedia || undefined} className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
                           <div className={`${unified ? 'max-w-[88%] rounded-2xl px-3.5 py-2.5 sm:max-w-[76%] sm:px-4 lg:max-w-[68%]' : 'max-w-[78%] rounded-lg px-3 py-2'} ${zoomClasses.bubble} leading-relaxed shadow-md ${
                             isIa
@@ -2325,8 +2449,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                         </Fragment>
                       );
                     })}
-                    {transferAtMs != null && firstPostIdx === -1 && handoffCard}
-                    {pendingTransferCard}
+                    {renderTransferBucket(messages.length)}
                     <div ref={messagesEndRef} />
                   </div>
                 )}
