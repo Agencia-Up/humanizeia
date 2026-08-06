@@ -709,7 +709,10 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         // Painel ao Vivo: precisa estar ATIVO NO SISTEMA (active_in_system) E marcado
         // pra aparecer aqui (show_in_live, campo dedicado). O Gerente tem show_in_live=false
         // por padrão -> some do painel sem perder o acesso. Controlado na tela de Responsáveis.
-        const sellersList = ((sellersRes.data || []) as any[]).filter((s: any) => s.active_in_system !== false && s.show_in_live !== false) as Array<{ id: string; name: string; profile_picture: string | null; auth_user_id: string | null }>;
+        // removed_at: desligado NUNCA volta pra TV. O filtro dependia de a remoção
+        // tambem zerar active_in_system; se um dia alguem marcar so o removed_at,
+        // o ex-vendedor reaparecia na tela que fica exposta no salao.
+        const sellersList = ((sellersRes.data || []) as any[]).filter((s: any) => !s.removed_at && s.active_in_system !== false && s.show_in_live !== false) as Array<{ id: string; name: string; profile_picture: string | null; auth_user_id: string | null }>;
         // Fila do rodízio do botão "Transferir (próximo da fila)": SÓ vendedores
         // ATIVOS NO AGENTE DE IA (is_active=true) — igual ao rodízio AUTOMÁTICO do
         // Pedro (transferRouter / uazapi-webhook / bulk-transfer). Diferente dos

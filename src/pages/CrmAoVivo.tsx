@@ -885,7 +885,8 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     // O painel é da CONTA (não de um agente), então deduplica por telefone — senão o
     // vendedor aparece em dobro na "Fila de vendedores", nos dropdowns e nos KPIs.
     // Mantém a linha ATIVA (que carrega o histórico); cai pra qualquer uma se nenhuma ativa.
-    const base = teamMembers.filter(m => m.active_in_system !== false);
+    // removed_at: desligado nao aparece no ao vivo nem que a flag antiga tenha ficado para tras.
+    const base = teamMembers.filter(m => !m.removed_at && m.active_in_system !== false);
     const byPhone = new Map<string, any>();
     for (const m of base) {
       const k = sellerPhoneKey(m.whatsapp_number) || m.id;
@@ -897,7 +898,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   // Vendedores elegíveis ao RODÍZIO automático = espelha o backend (uazapi-webhook
   // só distribui pra quem tem is_active=true). Usado só na prévia "próximo vendedor".
   const distributionMembers = useMemo(
-    () => teamMembers.filter(m => m.is_active && m.active_in_system !== false && !!m.whatsapp_number),
+    () => teamMembers.filter(m => !m.removed_at && m.is_active && m.active_in_system !== false && !!m.whatsapp_number),
     [teamMembers],
   );
   // Exibição (dropdown de transferência manual, KPIs, stats) usa a lista do SISTEMA.
