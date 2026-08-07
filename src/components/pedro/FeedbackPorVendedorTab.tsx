@@ -8,7 +8,6 @@ import {
   CheckCircle2, ClipboardList, Target,
 } from 'lucide-react';
 import { ConfiancaAnaliseBadge } from './ConfiancaAnaliseBadge';
-import { loadV3FeedbackReport } from './v3FeedbackReports';
 
 // ── Feedbacks > Por vendedor ─────────────────────────────────────────────────
 // A visão que faltava: filtra por vendedor e mostra, conversa a conversa, COMO
@@ -188,8 +187,9 @@ export function FeedbackPorVendedorTab() {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const report = await loadV3FeedbackReport(30);
-      const arr: Conversa[] = report.conversas as Conversa[];
+      const { data, error } = await (supabase as any).rpc('feedback_relatorio_por_vendedor');
+      if (error) throw error;
+      const arr: Conversa[] = Array.isArray(data) ? data : [];
       setConvs(arr.filter((c) => c.vendedor_id)); // exclui "(sem vendedor)"
     } catch (e: any) {
       setConvs([]);
@@ -392,7 +392,7 @@ export function FeedbackPorVendedorTab() {
           {/* Resumo do vendedor */}
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
             {[
-              { lb: 'Índice operacional v3', v: atual.scoreMedio, cls: scoreCls(atual.scoreMedio), ic: Star },
+              { lb: 'Nota média', v: atual.scoreMedio, cls: scoreCls(atual.scoreMedio), ic: Star },
               { lb: 'Leads analisados', v: atual.analisados, cls: 'text-foreground', ic: Users },
               { lb: 'Leads bons', v: atual.bons, cls: 'text-sky-600 dark:text-sky-400', ic: Trophy },
               { lb: 'Bem atendidos', v: atual.bemAtendidos, cls: 'text-emerald-600 dark:text-emerald-400', ic: Star },

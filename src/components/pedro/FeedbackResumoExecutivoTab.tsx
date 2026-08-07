@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { loadV3FeedbackReport } from './v3FeedbackReports';
+import { supabase } from '@/integrations/supabase/client';
 import {
   AlertTriangle, BarChart3, CheckCircle2, ClipboardList, FileText, Loader2,
   PackageSearch, ShieldCheck, Sparkles, Target, TrendingUp, Users,
@@ -196,17 +196,26 @@ export function FeedbackResumoExecutivoTab() {
     setLoading(true);
     setErro(null);
     try {
-      const report = await loadV3FeedbackReport(30);
+      const [conv, prod, nepq, team, hist, status] = await Promise.all([
+        (supabase as any).rpc('feedback_relatorio_por_vendedor'),
+        (supabase as any).rpc('feedback_produtos_qualidade', { p_dias: 30 }),
+        (supabase as any).rpc('feedback_rollup_por_vendedor'),
+        (supabase as any).from('ai_team_members').select('id, name'),
+        (supabase as any).from('feedback_relatorios').select('id, data_ref, status, resumo').order('data_ref', { ascending: false }).limit(7),
+        (supabase as any).rpc('feedback_status_operacional'),
+      ]);
+      if (conv.error) throw conv.error;
+      if (prod.error) throw prod.error;
+      if (nepq.error) throw nepq.error;
+      if (hist.error) throw hist.error;
       const map: Record<string, string> = {};
-      for (const c of report.conversas) {
-        if (c?.vendedor_id && c?.vendedor_nome) map[String(c.vendedor_id)] = String(c.vendedor_nome);
-      }
-      setConversas(report.conversas as Conversa[]);
-      setProdutos(report.produtos as Produto[]);
-      setRollup(report.rollup as Rollup[]);
+      for (const m of (team.data || [])) map[m.id] = m.name;
+      setConversas(Array.isArray(conv.data) ? conv.data.filter((c: Conversa) => c.vendedor_id) : []);
+      setProdutos(Array.isArray(prod.data) ? prod.data : []);
+      setRollup(Array.isArray(nepq.data) ? nepq.data : []);
       setNomes(map);
-      setRelatorios(report.historico.slice(0, 7) as Relatorio[]);
-      setHealth(report.health as FeedbackHealth | null);
+      setRelatorios(hist.data || []);
+      setHealth(status?.error ? null : (status?.data || null));
     } catch (e: any) {
       setErro(e?.message || 'Nao foi possivel carregar o resumo executivo.');
     } finally {
@@ -369,7 +378,7 @@ export function FeedbackResumoExecutivoTab() {
           body={vendedorTreino
             ? `${vendedorTreino.risco} conversa(s) com risco e media ${vendedorTreino.media}.`
             : 'Ainda nao ha volume suficiente para apontar um vendedor.'}
-          proof={leitura.piorNepq ? `Ponto operacional mais fraco: ${dimFraca}.` : 'Use a aba Qualidade para abrir os indicadores quando houver dados.'}
+          proof={leitura.piorNepq ? `Ponto NEPQ mais fraco: ${dimFraca}.` : 'Use a aba Qualidade para abrir as dimensoes quando houver dados.'}
           action={prioridade?.acao_vendedor || prioridade?.proxima_pergunta_ideal || 'Treinar uma habilidade por vez: escuta, confirmacao de dados e proximo passo.'}
         />
         <DecisionCard

@@ -1,18 +1,19 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { loadV3FeedbackReport } from './v3FeedbackReports';
+import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import {
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer,
 } from 'recharts';
 import { Gauge, Loader2, AlertTriangle, TrendingUp, Users, Lightbulb, Target, BookOpen } from 'lucide-react';
 
-// ── Feedbacks > Qualidade operacional v3 ─────────────────────────────────────
-// Nível 1 (gestor): ranking com semáforo + KPIs da equipe. Nível 2: radar dos
-// sinais derivados dos eventos, decisões e receipts do Pedro v3.
+// ── Feedbacks > NEPQ / Desempenho (o "Power BI") ─────────────────────────────
+// Nível 1 (gestor): ranking com semáforo + KPIs da equipe + alerta de conflito
+// de rotulagem. Nível 2: radar das 12 dimensões NEPQ do vendedor escolhido.
+// Lê o rollup (feedback_rollup_por_vendedor). O drill-down conversa a conversa +
+// coaching verbatim fica na aba "Por vendedor".
 
 interface Rollup {
   vendedor_id: string;
-  vendedor_nome?: string | null;
   periodo: string;
   conversas: number;
   score_medio: number | null;
@@ -23,10 +24,10 @@ interface Rollup {
 }
 
 const DIMS: { cod: string; label: string }[] = [
-  { cod: 'A', label: 'Confianca' }, { cod: 'B1', label: 'Entradas' }, { cod: 'B2', label: 'Decisao' },
-  { cod: 'B3', label: 'Entrega' }, { cod: 'B4', label: 'Resultado' }, { cod: 'B5', label: 'Qualificacao' },
-  { cod: 'C', label: 'Estoque' }, { cod: 'D', label: 'Transferencia' }, { cod: 'E1', label: 'Disponibilidade' },
-  { cod: 'E2', label: 'Continuidade' }, { cod: 'E3', label: 'Falhas' }, { cod: 'E4', label: 'Ritmo' },
+  { cod: 'A', label: 'Conexão' }, { cod: 'B1', label: 'Situação' }, { cod: 'B2', label: 'Problema' },
+  { cod: 'B3', label: 'Solução' }, { cod: 'B4', label: 'Consequência' }, { cod: 'B5', label: 'Qualificação' },
+  { cod: 'C', label: 'Apresentação' }, { cod: 'D', label: 'Compromisso' }, { cod: 'E1', label: 'Tom' },
+  { cod: 'E2', label: 'Escuta' }, { cod: 'E3', label: 'Objeção' }, { cod: 'E4', label: 'Ritmo' },
 ];
 const QLABEL: Record<string, string> = { '1_alto': 'forte', '2_medio': 'bom', '3_baixo': 'difícil', '4_nao_lead': 'não era lead', sem: 'sem análise' };
 const VLABEL: Record<string, string> = {
@@ -35,7 +36,7 @@ const VLABEL: Record<string, string> = {
 };
 
 function semaforo(score: number | null): { dot: string; txt: string; label: string } {
-  if (score == null) return { dot: 'bg-muted-foreground/40', txt: 'text-muted-foreground', label: 'sem dados v3' };
+  if (score == null) return { dot: 'bg-muted-foreground/40', txt: 'text-muted-foreground', label: 'sem NEPQ' };
   if (score >= 70) return { dot: 'bg-emerald-400', txt: 'text-emerald-400', label: 'verde' };
   if (score >= 45) return { dot: 'bg-amber-400', txt: 'text-amber-400', label: 'amarelo' };
   return { dot: 'bg-rose-400', txt: 'text-rose-400', label: 'vermelho' };
@@ -63,16 +64,30 @@ export function FeedbackNepqTab() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const report = await loadV3FeedbackReport(30);
+      const [{ data: roll, error: e1 }, { data: team }, { data: convs }] = await Promise.all([
+        (supabase as any).rpc('feedback_rollup_por_vendedor'),
+        (supabase as any).from('ai_team_members').select('id, name'),
+        (supabase as any).rpc('feedback_relatorio_por_vendedor'), // só pra agregar confiança
+      ]);
+      if (e1) throw e1;
       const map: Record<string, string> = {};
-      for (const r of report.rollup) if (r?.vendedor_id && r?.vendedor_nome) map[String(r.vendedor_id)] = String(r.vendedor_nome);
+      for (const m of (team || [])) map[m.id] = m.name;
       setNomes(map);
-      setRows(Array.isArray(report.rollup) ? report.rollup as Rollup[] : []);
+      setRows(Array.isArray(roll) ? roll : []);
 
       // Agrega confiança por vendedor (NULL/legado não conta).
-      setParcialPorVendedor({});
+      const pmap: Record<string, { parciais: number; total: number }> = {};
+      for (const c of (Array.isArray(convs) ? convs : [])) {
+        const conf = (c as any)?.confianca_analise;
+        const vid = (c as any)?.vendedor_id;
+        if (!conf || !vid) continue;
+        const e = pmap[String(vid)] || (pmap[String(vid)] = { parciais: 0, total: 0 });
+        e.total += 1;
+        if (conf === 'media' || conf === 'baixa') e.parciais += 1;
+      }
+      setParcialPorVendedor(pmap);
     } catch (e: any) {
-      toast({ title: 'Erro ao carregar qualidade v3', description: e?.message, variant: 'destructive' });
+      toast({ title: 'Erro ao carregar NEPQ', description: e?.message, variant: 'destructive' });
     } finally {
       setLoading(false);
     }
@@ -139,13 +154,13 @@ export function FeedbackNepqTab() {
   const alertas = vendedoresBase.filter((v) => (v.taxa_conflito_rotulagem || 0) > 0);
 
   if (loading) {
-    return <div className="flex items-center justify-center py-12 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin mr-2" /> Carregando qualidade operacional v3...</div>;
+    return <div className="flex items-center justify-center py-12 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin mr-2" /> Carregando desempenho NEPQ...</div>;
   }
   if (!vendedoresBase.length) {
     return (
       <div className="text-center py-16 text-sm text-muted-foreground">
         <Gauge className="h-8 w-8 mx-auto mb-3 opacity-30" />
-        Ainda não há dados operacionais do v3 para montar o ranking.
+        Ainda não há dados NEPQ. Assim que as conversas forem analisadas, o ranking e o radar aparecem aqui.
       </div>
     );
   }
@@ -159,8 +174,8 @@ export function FeedbackNepqTab() {
           <Gauge className="h-4 w-4 text-indigo-400" />
         </div>
         <div className="min-w-0">
-          <h3 className="text-base font-semibold text-foreground leading-tight">Qualidade operacional do v3</h3>
-          <p className="text-xs text-muted-foreground">Sinais observáveis dos eventos, decisões e receipts do Pedro v3 · {mesLabel}.</p>
+          <h3 className="text-base font-semibold text-foreground leading-tight">Desempenho NEPQ da equipe</h3>
+          <p className="text-xs text-muted-foreground">Qualidade do atendimento por método NEPQ · {mesLabel}. Ranking mostra quem precisa de coaching primeiro.</p>
         </div>
       </div>
 
@@ -250,7 +265,7 @@ export function FeedbackNepqTab() {
           })}
           {semNepq.length > 0 && (
             <div className="mt-3 rounded-xl border border-border/50 bg-muted/20 p-3">
-              <div className="text-xs font-medium text-muted-foreground mb-2">Sem dados suficientes</div>
+              <div className="text-xs font-medium text-muted-foreground mb-2">Sem nota NEPQ suficiente</div>
               <div className="flex flex-wrap gap-2">
                 {semNepq.map((v) => (
                   <span key={v.vendedor_id} className="text-[11px] px-2 py-1 rounded-full border border-border/60 text-muted-foreground">
@@ -290,7 +305,7 @@ export function FeedbackNepqTab() {
                   <Radar dataKey="nota" stroke="#818cf8" fill="#818cf8" fillOpacity={0.35} />
                 </RadarChart>
               </ResponsiveContainer>
-              <p className="text-[10px] text-muted-foreground text-center">Cada eixo é um sinal operacional do v3 (0–4). Quanto mais preenchido, melhor o indicador.</p>
+              <p className="text-[10px] text-muted-foreground text-center">Cada eixo é uma dimensão NEPQ (0–4). Quanto mais preenchido, melhor o atendimento naquela etapa.</p>
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {radarData.map((d) => (
                   <div key={d.dim} className="rounded-lg bg-muted/25 px-2.5 py-2">
@@ -309,7 +324,7 @@ export function FeedbackNepqTab() {
             <div className="h-[300px] flex items-center justify-center text-center text-sm text-muted-foreground px-4">
               <div>
                 <Users className="h-7 w-7 mx-auto mb-2 opacity-30" />
-                {atual ? `${atual.nome} ainda não tem dados operacionais no v3 neste mês.` : 'Selecione um vendedor.'}
+                {atual ? `${atual.nome} ainda não tem conversa analisada pelo NEPQ neste mês.` : 'Selecione um vendedor.'}
               </div>
             </div>
           )}

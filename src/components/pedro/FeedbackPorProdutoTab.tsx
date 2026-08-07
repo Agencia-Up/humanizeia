@@ -5,7 +5,6 @@ import {
   TrendingUp, ScanEye, ArrowUp, ArrowDown, ChevronsUpDown, LayoutGrid, Table2, X, Sparkles, RotateCw,
   ShieldCheck, Lightbulb, Info,
 } from 'lucide-react';
-import { loadV3FeedbackReport } from './v3FeedbackReports';
 
 // ── Por produto × Tráfego (José) ──────────────────────────────────────────────
 // Cruza a QUALIDADE do lead (qualificado/pouco/ruim/nem-é-lead) com o PRODUTO da conversa
@@ -143,15 +142,19 @@ export function FeedbackPorProdutoTab() {
     try {
       const minIso = isoMenosDias(MAX_DIAS);
       const iniClamp = modo === 'custom' && ini < minIso ? minIso : ini;
+      const params = modo === 'custom'
+        ? { p_dias: null, p_ini: iniClamp, p_fim: fim }
+        : { p_dias: dias };
       // José: preset lê o PRÉ-CALCULADO (rápido); personalizado vai ao vivo (mais lento).
       const josePromise = modo === 'custom'
         ? (supabase as any).functions.invoke('feedback-jose-trafego', { body: { since: iniClamp, until: fim } }).then((r: any) => ({ data: r.data, error: r.error }))
         : (supabase as any).rpc('feedback_jose_trafego_periodo', { p_dias: dias });
-      const [v3, j] = await Promise.all([
-        loadV3FeedbackReport(modo === 'custom' ? Math.max(7, Math.min(MAX_DIAS, Math.ceil((new Date(fim).getTime() - new Date(iniClamp).getTime()) / 86400000))) : dias),
+      const [q, j] = await Promise.all([
+        (supabase as any).rpc('feedback_produtos_qualidade', params),
         josePromise,
       ]);
-      setRows(Array.isArray(v3.produtos) ? v3.produtos as Row[] : []);
+      if (q.error) throw q.error;
+      setRows(Array.isArray(q.data) ? q.data : []);
       const jd = j.error ? null : j.data;
       const carrosIa: Record<string, string> = {};
       if (Array.isArray(jd?.carros_ia)) for (const c of jd.carros_ia) if (c?.asset_key && c?.carro) carrosIa[c.asset_key] = c.carro;
