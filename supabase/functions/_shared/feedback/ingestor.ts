@@ -20,6 +20,8 @@ export interface Cobertura {
   audios_transcritos: number;
   audios_sem_transcricao: number;
   imagens_detectadas: number;
+  /** actor_source nao resolvido: nao entrou em papel nenhum. Opcional p/ nao quebrar leitores antigos. */
+  mensagens_sem_autoria?: number;
 }
 
 export interface LeadThread {
@@ -59,6 +61,29 @@ export function pushThreadDedup(arr: ThreadMessage[], msg: ThreadMessage): void 
     && Math.abs(new Date(m.timestamp).getTime() - t) < 120_000
     && normalizeFeedbackText(m.texto) === norm);
   if (!dup) arr.push(msg);
+}
+
+// ── Autoria da mensagem na era v3 ───────────────────────────────────────────
+// `wa_synced_messages.actor_source` é o ÚNICO lugar onde a autoria já vem resolvida para o WhatsApp
+// atual: cliente | ia_v3 | humano_manual | desconhecido.
+//
+// Antes desta função o analista só enxergava o vendedor pelo caminho v2 (`wa_inbox`); não havia fonte
+// v3 nenhuma para ele. Como a cobertura é contada em cima da thread
+// (`mensagens_vendedor_lidas = thread.filter(m => m.from === 'vendedor').length`), um lead que vive no
+// v3 dava ZERO — e o prompt de produção manda registrar falha com notas baixas quando o vendedor não
+// respondeu. Resultado medido: nota 0 e veredito `falha_atendimento` para conversa que ninguém leu.
+//
+// `desconhecido` (e qualquer valor novo que apareça amanhã) devolve null DE PROPÓSITO: mapeá-lo para
+// vendedor faria o vendedor levar nota por texto que não escreveu; mapeá-lo para IA o esconderia da
+// avaliação e reproduziria o zero. Não sabemos de quem é — então fica fora da thread e é contado à
+// parte, para a cobertura continuar honesta. Função PURA — ver ingestor.offline-test.ts.
+export function papelDeActorSource(actorSource: string | null | undefined): Papel | null {
+  switch (actorSource) {
+    case 'cliente': return 'cliente';
+    case 'humano_manual': return 'vendedor';
+    case 'ia_v3': return 'ia';
+    default: return null;
+  }
 }
 
 // Limite de tentativas e janela de re-tentativa pra transcricao com falha
@@ -159,6 +184,9 @@ export async function buildLeadThread(
   let audiosTotal = 0;
   let audiosTranscritos = 0;
   let imagensDetectadas = 0;
+  // Mensagens cuja autoria o WhatsApp nao resolveu (actor_source='desconhecido'). Ficam FORA da
+  // thread de proposito; contadas aqui para a cobertura dizer a verdade sobre o que NAO foi lido.
+  let mensagensSemAutoria = 0;
 
   if (leadSource === 'pedro') {
     const { data: lead } = await admin
@@ -374,6 +402,42 @@ export async function buildLeadThread(
     } catch (_e) { /* tenant sem V3 / erro transitório -> segue com as fontes antigas */ }
   }
 
+  // ── Conversa REAL da era v3 (cliente + VENDEDOR + IA numa fonte só) ────────
+  // `wa_synced_messages` é a única fonte onde a autoria já vem resolvida (`actor_source`). Sem este
+  // bloco o vendedor NÃO TINHA fonte v3 nenhuma: era lido só pelo `wa_inbox`, e um lead que vive no v3
+  // dava `mensagens_vendedor_lidas = 0` -> nota 0 e `falha_atendimento` para conversa que ninguém leu.
+  //
+  // Aditivo de propósito: as fontes antigas continuam, e o `pushThreadDedup` (mesmo papel + <120s +
+  // texto igual) impede que a mesma mensagem entre duas vezes quando ela existe nos dois lugares.
+  // Best-effort como os outros blocos v3: qualquer erro cai para o comportamento anterior.
+  if (phoneNat.length >= 10) {
+    try {
+      const { data: sync } = await admin
+        .from('wa_synced_messages')
+        .select('actor_source, content, message_type, wa_timestamp, created_at')
+        .eq('tenant_id', tenant)
+        .ilike('phone_canonical', `%${phoneNat}`)
+        .order('wa_timestamp', { ascending: true })
+        .limit(400);
+      for (const m of ((sync || []) as any[])) {
+        const papel = papelDeActorSource(m.actor_source);
+        // `desconhecido` e qualquer valor novo ficam FORA: não sabemos de quem é, e chutar autoria
+        // aqui é o que produz nota injusta. Contado à parte para a cobertura não mentir.
+        if (papel === null) { mensagensSemAutoria++; continue; }
+        const texto = String(m.content || '').trim();
+        if (!texto) continue;
+        const msg: ThreadMessage = {
+          from: papel,
+          texto,
+          timestamp: (m.wa_timestamp || m.created_at) as string,
+          canal: 'pedro',
+        };
+        if (papel === 'ia') pushThreadDedup(contexto, msg);
+        else pushThreadDedup(thread, msg);
+      }
+    } catch (_e) { /* tabela ausente / erro transitório -> segue com as fontes anteriores */ }
+  }
+
   const byTime = (a: ThreadMessage, b: ThreadMessage) =>
     new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
   thread.sort(byTime);
@@ -388,6 +452,7 @@ export async function buildLeadThread(
     audios_transcritos: audiosTranscritos,
     audios_sem_transcricao: Math.max(0, audiosTotal - audiosTranscritos),
     imagens_detectadas: imagensDetectadas,
+    mensagens_sem_autoria: mensagensSemAutoria,
   };
 
   return {
