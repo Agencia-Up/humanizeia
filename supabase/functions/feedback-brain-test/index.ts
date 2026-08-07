@@ -17,6 +17,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
   montarCamadaEspecialista, instrucaoContrato, CONTRATO_CHAVES_OBRIGATORIAS,
+  resolveFeedbackConfig,
   type BrainConfig,
 } from '../_shared/feedback/analista.ts';
 
@@ -85,12 +86,12 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
 
     // 2) Camada especialista: payload do teste (se veio) OU config salva OU padrão.
-    const { data: cfg } = await admin.from('feedback_config')
-      .select('framework, prompt_especialista')
-      .or(`tenant_id.eq.${tenant},tenant_id.is.null`)
-      .order('tenant_id', { ascending: false, nullsFirst: false }).limit(1).maybeSingle();
-    const promptPadrao = cfg?.prompt_especialista || '';
-    const framework = cfg?.framework || {};
+    // Resolve pela MESMA regra da análise real (merge tenant sobre global) — senão esta tela mentiria
+    // sobre o que a produção vai usar para um tenant cuja linha só tem feature_flags.
+    const { data: cfgRows } = await admin.from('feedback_config')
+      .select('tenant_id, nicho, framework, prompt_especialista')
+      .or(`tenant_id.eq.${tenant},tenant_id.is.null`);
+    const { promptEsp: promptPadrao, framework } = resolveFeedbackConfig(cfgRows, tenant);
 
     let brain: BrainConfig | null = null;
     if (body?.brain && typeof body.brain === 'object') {

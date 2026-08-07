@@ -298,6 +298,68 @@ function parseContrato(text: string): any {
   return r;
 }
 
+// ── Config do tenant × global. Função PURA (testável sem Deno/Supabase) — ver analista.offline-test.ts.
+//
+// A config de um tenant é um COMPLEMENTO da global, não um substituto. A leitura antiga pegava uma linha
+// só (tenant vencia a global inteira), então a linha que `feedback_config_admin_set` cria ao habilitar um
+// cliente — que grava apenas feature_flags/caps — apagava na prática o prompt especialista e os pesos:
+// `instrucaoContrato` (:130) não listava competência nenhuma para a LLM e `calcScore` (:189) devolvia 0
+// para toda conversa. Habilitar um cliente virava quebrar o relatório dele.
+//
+// Regra: o tenant vence APENAS onde preencheu de fato; onde não preencheu, herda. "Preencheu" é definido
+// pelo que o consumidor precisa, não por não-nulo superficial — um `framework` sem `competencias` é
+// inútil para o contrato e para a nota, então conta como não preenchido.
+//
+// `framework` é ATÔMICO de propósito: ou o do tenant, ou o da global, nunca a mistura. `competencias` é um
+// conjunto de PESOS coerente entre si; mesclar dois conjuntos produziria escala inválida e um contrato
+// incoerente com o que a LLM foi mandada avaliar.
+export type FeedbackConfigRow = {
+  readonly tenant_id?: string | null;
+  readonly nicho?: string | null;
+  readonly framework?: unknown;
+  readonly prompt_especialista?: string | null;
+};
+
+export type ResolvedFeedbackConfig = {
+  readonly nicho: string;
+  readonly framework: any;
+  readonly promptEsp: string;
+  /** Campos que caíram para a global. Observável no log — diagnostica config incompleta sem adivinhação. */
+  readonly herdadoDoGlobal: readonly string[];
+};
+
+const textoUtil = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
+/** Um framework só serve se tiver ao menos um peso em `competencias` — é o que :130 e :182 consomem. */
+const frameworkUtil = (v: unknown): boolean => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const comps = (v as Record<string, unknown>).competencias;
+  if (!comps || typeof comps !== 'object' || Array.isArray(comps)) return false;
+  return Object.keys(comps as Record<string, unknown>).length > 0;
+};
+
+export function resolveFeedbackConfig(
+  rows: readonly FeedbackConfigRow[] | null | undefined,
+  tenantId: string,
+): ResolvedFeedbackConfig {
+  const lista = Array.isArray(rows) ? rows : [];
+  const doTenant = lista.find((r) => r?.tenant_id === tenantId) ?? null;
+  const global = lista.find((r) => r?.tenant_id == null) ?? null;
+  const herdado: string[] = [];
+
+  const escolher = <T>(campo: string, doTen: unknown, doGlobal: unknown, util: (v: unknown) => boolean, padrao: T): T => {
+    if (util(doTen)) return doTen as T;
+    if (util(doGlobal)) { herdado.push(campo); return doGlobal as T; }
+    return padrao;
+  };
+
+  return {
+    nicho: escolher('nicho', doTenant?.nicho, global?.nicho, textoUtil, 'automotivo'),
+    framework: escolher('framework', doTenant?.framework, global?.framework, frameworkUtil, {} as any),
+    promptEsp: escolher('prompt_especialista', doTenant?.prompt_especialista, global?.prompt_especialista, textoUtil, ''),
+    herdadoDoGlobal: herdado,
+  };
+}
+
 export async function analisarLead(
   admin: SupabaseClient, llm: LlmCall,
   leadSource: 'pedro' | 'marcos', leadId: string, versaoThread = 'v1',
@@ -306,16 +368,17 @@ export async function analisarLead(
   if (!thread) return { status: 'falhou', motivo: 'lead nao encontrado' };
   const tenant = thread.tenant_id;
 
-  const { data: cfg } = await admin
+  // Config do tenant faz MERGE SOBRE a global (ver resolveFeedbackConfig). Antes lia UMA linha só, e a
+  // linha do tenant SUBSTITUÍA a global — tenant recém-habilitado pelo admin (que grava só feature_flags)
+  // rodava com prompt vazio e framework vazio, zerando a nota de todas as conversas dele.
+  const { data: cfgRows } = await admin
     .from('feedback_config')
-    .select('nicho, framework, prompt_especialista')
-    .or(`tenant_id.eq.${tenant},tenant_id.is.null`)
-    .order('tenant_id', { ascending: false, nullsFirst: false })
-    .limit(1)
-    .maybeSingle();
-  const nicho = cfg?.nicho || 'automotivo';
-  const framework = cfg?.framework || {};
-  const promptEsp = cfg?.prompt_especialista || '';
+    .select('tenant_id, nicho, framework, prompt_especialista')
+    .or(`tenant_id.eq.${tenant},tenant_id.is.null`);
+  const { nicho, framework, promptEsp, herdadoDoGlobal } = resolveFeedbackConfig(cfgRows, tenant);
+  if (herdadoDoGlobal.length) {
+    console.log(`[feedback:config] tenant=${tenant} herdou da global: ${herdadoDoGlobal.join(', ')}`);
+  }
 
   // Cérebro personalizado do tenant (camada de inteligência). Qualquer erro na
   // leitura -> segue com o padrão Logos (nunca bloqueia a análise).
