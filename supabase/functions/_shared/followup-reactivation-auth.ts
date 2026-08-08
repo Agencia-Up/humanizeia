@@ -106,6 +106,22 @@ export type ReactivationAuthDeps = {
   readonly resolveLeadOwner: (leadId: string) => Promise<string | null>;
 };
 
+/**
+ * VINCULO NAO E PERMISSAO.
+ *
+ * `resolve_billing_owner_user_id` MAPEIA o vendedor para o tenant do master:
+ * quando `profiles.role='seller'`, ela procura `ai_team_members.auth_user_id` e
+ * devolve o `user_id` do master. Usar so esse retorno como escopo deixaria
+ * QUALQUER vendedor autenticado operar a reativacao da conta inteira.
+ *
+ * Por isso o chamador humano precisa SER o proprio billing owner: o id do
+ * usuario tem de ser identico ao tenant resolvido. Vendedor cai em 403 antes de
+ * qualquer opcao do corpo ser considerada — inclusive `dry_run`.
+ */
+export function isBillingOwner(userId: string, tenantId: string): boolean {
+  return userId !== "" && tenantId !== "" && userId === tenantId;
+}
+
 export type ReactivationAuthInput = {
   readonly authorizationHeader: string | null | undefined;
   readonly body: Record<string, unknown> | null | undefined;
@@ -163,7 +179,6 @@ export async function authorizeReactivationRequest(
       return deny(401, "unauthorized", "token_verification_failed");
     }
     if (!userId) return deny(401, "unauthorized", "invalid_token");
-    caller = "user";
     let tenant: string | null = null;
     try {
       tenant = await deps.resolveTenantForUser(userId);
@@ -171,6 +186,11 @@ export async function authorizeReactivationRequest(
       return deny(403, "forbidden", "tenant_resolution_failed");
     }
     if (!tenant) return deny(403, "forbidden", "user_without_tenant");
+    // Vendedor resolve para o tenant do master (ver isBillingOwner). Estar
+    // VINCULADO a conta nao e permissao para operar o motor dela. Negado aqui,
+    // antes de qualquer opcao do corpo — inclusive dry_run.
+    if (!isBillingOwner(userId, tenant)) return deny(403, "forbidden", "user_is_not_billing_owner");
+    caller = "user";
     callerTenant = tenant;
   }
 
@@ -204,4 +224,62 @@ export async function authorizeReactivationRequest(
   if (!max.ok) return deny(400, "invalid_payload", "max_per_master_invalid");
 
   return { ok: true, caller, tenantScope, onlyLeadId, dryRun, maxPerMaster: max.value };
+}
+
+// ============================================================================
+// FRONTEIRA HTTP — o unico ponto de estrangulamento do handler real.
+//
+// `pedro-auto-followup/index.ts` chama ESTA funcao. Ela e quem decide entre
+// devolver uma resposta (preflight, negativa ou motor desligado) e chamar a
+// continuacao operacional. Uma requisicao negada nao alcanca `onAuthorized`
+// porque nao existe caminho de codigo que faca isso — nao e uma convencao que
+// o handler precise lembrar de respeitar.
+// ============================================================================
+
+export type ReactivationGuardEnv = {
+  readonly serviceRoleKey: string;
+  readonly anonKey?: string | null;
+  /** Valor cru da secret PEDRO_FF_AUTO_REACTIVATION. */
+  readonly flagRaw: string | null | undefined;
+  readonly corsHeaders: Record<string, string>;
+};
+
+const jsonResponse = (
+  bodyValue: unknown, status: number, cors: Record<string, string>,
+): Response => new Response(JSON.stringify(bodyValue), {
+  status, headers: { ...cors, "Content-Type": "application/json" },
+});
+
+export async function guardReactivationHttp(args: {
+  readonly request: Request;
+  readonly env: ReactivationGuardEnv;
+  readonly deps: ReactivationAuthDeps;
+  /** So roda quando a chamada esta autenticada, no escopo certo e com envio liberado. */
+  readonly onAuthorized: (scope: ReactivationScope) => Promise<Response>;
+}): Promise<Response> {
+  const cors = args.env.corsHeaders;
+  if (args.request.method === "OPTIONS") return new Response("ok", { headers: cors });
+
+  let body: Record<string, unknown> = {};
+  try { body = (await args.request.json()) as Record<string, unknown>; } catch { body = {}; }
+
+  const auth = await authorizeReactivationRequest(args.deps, {
+    authorizationHeader: args.request.headers.get("Authorization"),
+    body,
+    serviceRoleKey: args.env.serviceRoleKey,
+    anonKey: args.env.anonKey ?? null,
+  });
+  if (!auth.ok) {
+    console.warn(`[pedro-auto-followup] chamada negada: ${auth.reason}`);
+    return jsonResponse(auth.body, auth.status, cors);
+  }
+
+  const flagEnabled = reactivationFlagEnabled(args.env.flagRaw);
+  if (reactivationSendsBlocked({ flagEnabled, dryRun: auth.dryRun })) {
+    return jsonResponse(
+      { ok: true, disabled: true, reason: "PEDRO_FF_AUTO_REACTIVATION off", total_sent: 0 }, 200, cors,
+    );
+  }
+
+  return await args.onAuthorized(auth);
 }

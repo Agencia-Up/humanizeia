@@ -42,9 +42,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
-  authorizeReactivationRequest,
-  reactivationFlagEnabled,
-  reactivationSendsBlocked,
+  guardReactivationHttp,
+  type ReactivationScope,
 } from "../_shared/followup-reactivation-auth.ts";
 // isValidName -> em decisionLogic.ts (puro, testável offline). NÃO redefinir aqui.
 import { isValidName } from "../_shared/pedro-v2/decisionLogic.ts";
@@ -337,83 +336,24 @@ async function pickEligibleByRecency(supabase: any, rows: any[]): Promise<any> {
   return null;
 }
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
-
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-  );
-  const openaiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
-
-  let body: any = {};
-  try { body = await req.json(); } catch { body = {}; }
-
-  // ── AUTENTICACAO + AUTORIZACAO (HOTFIX P0) ────────────────────────────────
-  // Nada operacional pode rodar antes daqui: nem followup_ia_config, nem lead,
-  // nem instancia, nem OpenAI, nem fila/log, nem UazAPI. A funcao esta
-  // implantada com verify_jwt=false, entao o portao e este bloco.
-  //
-  // Antes do hotfix o handler nao lia o Authorization e ja usava service_role.
-  // O escopo tambem vinha do corpo sem conferencia: `only_user_id` ESTREITA a
-  // varredura, logo omiti-lo ALARGAVA para todos os tenants.
-  const auth = await authorizeReactivationRequest(
-    {
-      verifyUserToken: async (token) => {
-        const { data, error } = await supabase.auth.getUser(token);
-        if (error) return null;
-        return data?.user?.id ?? null;
-      },
-      resolveTenantForUser: async (userId) => {
-        const { data, error } = await supabase.rpc("resolve_billing_owner_user_id", { p_user_id: userId });
-        if (error) return null;
-        return (typeof data === "string" && data) ? data : null;
-      },
-      resolveLeadOwner: async (leadId) => {
-        // Consulta de OWNERSHIP (parte da autorizacao), nao de operacao: le so
-        // o dono, nao decide envio nem toca fila.
-        const { data, error } = await supabase
-          .from("ai_crm_leads").select("user_id").eq("id", leadId).maybeSingle();
-        if (error) return null;
-        return (data?.user_id as string | undefined) ?? null;
-      },
-    },
-    {
-      authorizationHeader: req.headers.get("Authorization"),
-      body,
-      serviceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-      anonKey: Deno.env.get("SUPABASE_ANON_KEY") ?? null,
-    },
-  );
-  if (!auth.ok) {
-    console.warn(`[pedro-auto-followup] chamada negada: ${auth.reason}`);
-    return new Response(JSON.stringify(auth.body), {
-      status: auth.status,
-      headers: { ...cors, "Content-Type": "application/json" },
-    });
-  }
-
-  // Opcoes ja validadas e presas ao tenant autorizado. `tenantScope` so e null
-  // para service_role sem only_user_id/only_lead_id — o caminho do cron.
-  const dryRun: boolean = auth.dryRun;
-  const onlyUserId: string | null = auth.tenantScope;
-  const onlyLeadId: string | null = auth.onlyLeadId;
-  const maxPerMaster: number = auth.maxPerMaster;
-
-  // ── KILL-SWITCH GLOBAL ────────────────────────────────────────────────────
-  // Depois do hotfix TODO envio real depende da flag: cron, body vazio,
-  // only_lead_id, only_user_id e chamada manual. `only_lead_id` NAO e mais
-  // excecao — ele e envio real e atravessava a trava desligada.
-  // `dry_run` continua liberado com a flag off (nao envia nem grava), mas ja
-  // passou por autenticacao e escopo de tenant acima.
-  // Semantica da secret preservada de proposito: liga so com "on".
-  const reactEnabled = reactivationFlagEnabled(Deno.env.get("PEDRO_FF_AUTO_REACTIVATION"));
-  if (reactivationSendsBlocked({ flagEnabled: reactEnabled, dryRun })) {
-    return new Response(
-      JSON.stringify({ ok: true, disabled: true, reason: "PEDRO_FF_AUTO_REACTIVATION off", total_sent: 0 }),
-      { headers: { ...cors, "Content-Type": "application/json" } },
-    );
-  }
+/**
+ * CONTINUACAO OPERACIONAL. So e alcancada por `guardReactivationHttp`, e so
+ * quando a chamada esta autenticada, presa ao tenant certo e com a flag ligada
+ * (ou em dry_run). Nao ha outro caminho de codigo ate aqui.
+ *
+ * `scope` ja vem validado: nada e relido do corpo da requisicao.
+ */
+async function runReactivationSweep(
+  supabase: any,
+  openaiKey: string,
+  scope: ReactivationScope,
+): Promise<Response> {
+  const dryRun: boolean = scope.dryRun;
+  // `tenantScope` so e null para service_role sem only_user_id/only_lead_id —
+  // o caminho do cron, que varre os tenants ativos.
+  const onlyUserId: string | null = scope.tenantScope;
+  const onlyLeadId: string | null = scope.onlyLeadId;
+  const maxPerMaster: number = scope.maxPerMaster;
 
   const now = new Date();
   const startOfDay = startOfBrasiliaDayUtc(now);
@@ -744,10 +684,54 @@ serve(async (req) => {
       { headers: { ...cors, "Content-Type": "application/json" } },
     );
   } catch (err: any) {
+    // O detalhe fica no log do servidor. A resposta e generica: `err.message`
+    // pode carregar mensagem do banco, URL interna ou payload do provider.
     console.error("[pedro-auto-followup] Erro geral:", err);
     return new Response(
-      JSON.stringify({ error: err?.message ?? "Erro interno" }),
+      JSON.stringify({ ok: false, error: "internal_error" }),
       { status: 500, headers: { ...cors, "Content-Type": "application/json" } },
     );
   }
+}
+
+serve(async (req) => {
+  // O cliente service_role e construido aqui, mas NENHUMA query roda antes do
+  // chokepoint — criar o objeto nao e efeito externo. A funcao esta implantada
+  // com verify_jwt=false, entao `guardReactivationHttp` e o portao real.
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+  );
+  const openaiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
+
+  return await guardReactivationHttp({
+    request: req,
+    env: {
+      serviceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+      anonKey: Deno.env.get("SUPABASE_ANON_KEY") ?? null,
+      flagRaw: Deno.env.get("PEDRO_FF_AUTO_REACTIVATION"),
+      corsHeaders: cors,
+    },
+    deps: {
+      verifyUserToken: async (token) => {
+        const { data, error } = await supabase.auth.getUser(token);
+        if (error) return null;
+        return data?.user?.id ?? null;
+      },
+      resolveTenantForUser: async (userId) => {
+        const { data, error } = await supabase.rpc("resolve_billing_owner_user_id", { p_user_id: userId });
+        if (error) return null;
+        return (typeof data === "string" && data) ? data : null;
+      },
+      resolveLeadOwner: async (leadId) => {
+        // Consulta de OWNERSHIP (parte da autorizacao), nao de operacao: le so
+        // o dono, nao decide envio nem toca fila.
+        const { data, error } = await supabase
+          .from("ai_crm_leads").select("user_id").eq("id", leadId).maybeSingle();
+        if (error) return null;
+        return (data?.user_id as string | undefined) ?? null;
+      },
+    },
+    onAuthorized: (scope) => runReactivationSweep(supabase, openaiKey, scope),
+  });
 });
