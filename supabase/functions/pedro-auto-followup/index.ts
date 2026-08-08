@@ -16,20 +16,36 @@
  *  9. Filtro por data: periodo_dias (NULL=todos).
  *  10. Quando o lead RESPONDE: tratado no webhook (fase C) — aqui so o disparo.
  *
- * SEGURANCA / TESTE:
+ * SEGURANCA / TESTE (revisto no hotfix P0 de autorizacao):
+ *  - TODA chamada exige `Authorization: Bearer <token>` valido — service_role
+ *    (cron/interno) ou usuario autenticado real. Anonimo e anon key = 401.
+ *    O usuario autenticado fica preso ao proprio tenant; cross-tenant = 403.
+ *  - TODO envio real depende de PEDRO_FF_AUTO_REACTIVATION='on'. Nenhum campo
+ *    do corpo atravessa a flag.
  *  - body.dry_run=true   -> faz tudo MENOS enviar/gravar. Retorna o que FARIA
  *                           (inclusive a mensagem gerada pela IA OpenAI). Ignora
  *                           horario/dias/intervalo/cap pra permitir preview.
- *  - body.only_user_id   -> restringe a 1 master (teste).
- *  - body.only_lead_id   -> dispara num lead especifico (teste real controlado),
- *                           pulando a fila. Ainda respeita is_active.
- *  - body.max_per_master -> nº de envios por master por execucao (default 1).
+ *                           Funciona com a flag desligada, mas ainda exige
+ *                           autenticacao e escopo de tenant.
+ *  - body.only_user_id   -> restringe a 1 master. Para usuario autenticado so
+ *                           vale o proprio tenant. Omitir NAO libera geral:
+ *                           usuario sempre fica no proprio tenant.
+ *  - body.only_lead_id   -> um lead especifico, pulando a fila. Precisa ser UUID,
+ *                           precisa pertencer ao tenant autorizado e ANCORA o
+ *                           escopo nesse tenant. NAO atravessa mais a flag.
+ *  - body.max_per_master -> nº de envios por master por execucao (default 1),
+ *                           validado e limitado por papel do chamador.
  *
  * Sem config (followup_ia_config) ou is_active=false => nao faz nada.
  */
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  authorizeReactivationRequest,
+  reactivationFlagEnabled,
+  reactivationSendsBlocked,
+} from "../_shared/followup-reactivation-auth.ts";
 // isValidName -> em decisionLogic.ts (puro, testável offline). NÃO redefinir aqui.
 import { isValidName } from "../_shared/pedro-v2/decisionLogic.ts";
 
@@ -330,23 +346,69 @@ serve(async (req) => {
   );
   const openaiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
 
-  // ── Parse opcoes (todas opcionais) ────────────────────────────────────────
   let body: any = {};
   try { body = await req.json(); } catch { body = {}; }
-  const dryRun: boolean = body?.dry_run === true;
-  const onlyUserId: string | null = body?.only_user_id || null;
-  const onlyLeadId: string | null = body?.only_lead_id || null;
-  const maxPerMaster: number = Math.max(1, Number(body?.max_per_master) || 1);
+
+  // ── AUTENTICACAO + AUTORIZACAO (HOTFIX P0) ────────────────────────────────
+  // Nada operacional pode rodar antes daqui: nem followup_ia_config, nem lead,
+  // nem instancia, nem OpenAI, nem fila/log, nem UazAPI. A funcao esta
+  // implantada com verify_jwt=false, entao o portao e este bloco.
+  //
+  // Antes do hotfix o handler nao lia o Authorization e ja usava service_role.
+  // O escopo tambem vinha do corpo sem conferencia: `only_user_id` ESTREITA a
+  // varredura, logo omiti-lo ALARGAVA para todos os tenants.
+  const auth = await authorizeReactivationRequest(
+    {
+      verifyUserToken: async (token) => {
+        const { data, error } = await supabase.auth.getUser(token);
+        if (error) return null;
+        return data?.user?.id ?? null;
+      },
+      resolveTenantForUser: async (userId) => {
+        const { data, error } = await supabase.rpc("resolve_billing_owner_user_id", { p_user_id: userId });
+        if (error) return null;
+        return (typeof data === "string" && data) ? data : null;
+      },
+      resolveLeadOwner: async (leadId) => {
+        // Consulta de OWNERSHIP (parte da autorizacao), nao de operacao: le so
+        // o dono, nao decide envio nem toca fila.
+        const { data, error } = await supabase
+          .from("ai_crm_leads").select("user_id").eq("id", leadId).maybeSingle();
+        if (error) return null;
+        return (data?.user_id as string | undefined) ?? null;
+      },
+    },
+    {
+      authorizationHeader: req.headers.get("Authorization"),
+      body,
+      serviceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+      anonKey: Deno.env.get("SUPABASE_ANON_KEY") ?? null,
+    },
+  );
+  if (!auth.ok) {
+    console.warn(`[pedro-auto-followup] chamada negada: ${auth.reason}`);
+    return new Response(JSON.stringify(auth.body), {
+      status: auth.status,
+      headers: { ...cors, "Content-Type": "application/json" },
+    });
+  }
+
+  // Opcoes ja validadas e presas ao tenant autorizado. `tenantScope` so e null
+  // para service_role sem only_user_id/only_lead_id — o caminho do cron.
+  const dryRun: boolean = auth.dryRun;
+  const onlyUserId: string | null = auth.tenantScope;
+  const onlyLeadId: string | null = auth.onlyLeadId;
+  const maxPerMaster: number = auth.maxPerMaster;
 
   // ── KILL-SWITCH GLOBAL ────────────────────────────────────────────────────
-  // O caminho AUTOMATICO (cron, body vazio) SO dispara quando
-  // PEDRO_FF_AUTO_REACTIVATION = 'on'. Enquanto a flag estiver desligada, o
-  // deploy em producao NAO muda nada: o cron chama, isto aqui responde
-  // "disabled" e nao envia/grava nada. Testes manuais controlados continuam
-  // liberados (dry_run = preview sem enviar; only_lead_id = envio unico de
-  // validacao), pra dar pro master testar sem ligar o motor pra todo mundo.
-  const reactEnabled = (Deno.env.get("PEDRO_FF_AUTO_REACTIVATION") ?? "").toLowerCase() === "on";
-  if (!reactEnabled && !dryRun && !onlyLeadId) {
+  // Depois do hotfix TODO envio real depende da flag: cron, body vazio,
+  // only_lead_id, only_user_id e chamada manual. `only_lead_id` NAO e mais
+  // excecao — ele e envio real e atravessava a trava desligada.
+  // `dry_run` continua liberado com a flag off (nao envia nem grava), mas ja
+  // passou por autenticacao e escopo de tenant acima.
+  // Semantica da secret preservada de proposito: liga so com "on".
+  const reactEnabled = reactivationFlagEnabled(Deno.env.get("PEDRO_FF_AUTO_REACTIVATION"));
+  if (reactivationSendsBlocked({ flagEnabled: reactEnabled, dryRun })) {
     return new Response(
       JSON.stringify({ ok: true, disabled: true, reason: "PEDRO_FF_AUTO_REACTIVATION off", total_sent: 0 }),
       { headers: { ...cors, "Content-Type": "application/json" } },
